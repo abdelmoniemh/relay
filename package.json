@@ -1,0 +1,17 @@
+{
+  "name": "relay",
+  "private": true,
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev:server": "npm -w server run dev",
+    "dev:web": "npm -w web run dev",
+    "build": "npm -w web run build",
+    "test": "npm -w server test"
+  },
+  "overrides": {
+    "preact": "10.29.8"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "relay-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "build:tizen": "tsc --noEmit && vite build --mode tizen --outDir ../tizen/build"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.11.4",
+    "hls.js": "^1.7.4",
+    "mpegts.js": "^1.8.2",
+    "preact": "^10.29.8"
+  }
+}

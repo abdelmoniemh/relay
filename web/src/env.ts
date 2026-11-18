@@ -1,0 +1,20 @@
+import type { DeviceKind } from '@shared/protocol.ts';
+
+export const isTizen = __TIZEN__ || typeof window.tizen !== 'undefined';
+export const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+export const isMobile = isIOS || /Android|Mobile/.test(navigator.userAgent);
+export const deviceKind: DeviceKind = isTizen ? 'tv' : isMobile ? 'phone' : 'desktop';
+export const defaultName = isTizen ? 'Samsung TV' : isIOS ? 'iPhone' : isMobile ? 'Phone' : 'Linux PC';
+
+/** TMDB images can be fetched at any size: never download 600px+ posters for 180px tiles. */
+export function img(url: string | null | undefined, w: 92 | 154 | 185 | 342 | 500 | 780 | 1280 = 185) {
+  if (!url) return undefined;
+  return url.replace(/(image\.tmdb\.org\/t\/p\/)[^/]+\//, `$1w${w}/`);
+}
+
+export const fmtTime = (s: number) => {
+  s = Math.max(0, Math.floor(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return (h ? `${h}:${String(m).padStart(2, '0')}` : String(m)) + ':' + String(sec).padStart(2, '0');
+};
+export const clock = (unix: number) => new Date(unix * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

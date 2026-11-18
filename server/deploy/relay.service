@@ -1,0 +1,15 @@
+[Unit]
+Description=Relay IPTV sync server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/relay/server
+ExecStart=/home/moniem/.local/share/mise/installs/node/26.13.1/bin/node --env-file=%h/relay/server/.env --disable-warning=ExperimentalWarning src/main.ts
+Environment=NODE_ENV=production LOG_LEVEL=warn
+Restart=always
+RestartSec=2
+Nice=-0
+
+[Install]
+WantedBy=default.target

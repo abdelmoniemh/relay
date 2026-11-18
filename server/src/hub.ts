@@ -1,0 +1,157 @@
+// Coordinates the provider's single allowed connection across devices.
+// Invariant: a device is only told to start (`granted`) after the previous holder confirmed it stopped
+// (or timed out / is offline), so the provider never sees two simultaneous streams from us.
+import type { ClientMsg, DeviceInfo, Item, Lease, ServerMsg } from '../../shared/protocol.ts';
+
+export interface HubDeps {
+  listDevices(): Omit<DeviceInfo, 'online'>[];
+  saveProgress(item: Item, position: number, duration: number): void;
+  resumePosition(item: Item): number; // 0 if none
+  urls(item: Item): string[];
+  now?: () => number;
+  stopTimeoutMs?: number;
+  log?: (m: string) => void;
+}
+
+type Send = (m: ServerMsg) => void;
+
+export class Hub {
+  private clients = new Map<string, Set<Send>>();
+  private lease: Lease | null = null;
+  private stopWaiters = new Map<string, () => void>();
+  private queue: Promise<unknown> = Promise.resolve();
+  private deps: HubDeps;
+
+  constructor(deps: HubDeps) { this.deps = deps; }
+
+  private now() { return this.deps.now?.() ?? Date.now(); }
+  private online(id: string) { return (this.clients.get(id)?.size ?? 0) > 0; }
+
+  getLease() { return this.lease; }
+
+  connect(deviceId: string, send: Send) {
+    let set = this.clients.get(deviceId);
+    if (!set) this.clients.set(deviceId, (set = new Set()));
+    set.add(send);
+    send({ t: 'hello', deviceId });
+    this.broadcastState();
+    return () => {
+      set!.delete(send);
+      if (!set!.size) {
+        this.clients.delete(deviceId);
+        this.stopWaiters.get(deviceId)?.(); // an offline device can't be streaming
+      }
+      this.broadcastState();
+    };
+  }
+
+  private sendTo(deviceId: string, m: ServerMsg) {
+    for (const s of this.clients.get(deviceId) ?? []) s(m);
+  }
+
+  state(): ServerMsg {
+    const devices = this.deps.listDevices().map((d) => ({ ...d, online: this.online(d.id) }));
+    return { t: 'state', devices, lease: this.lease };
+  }
+
+  broadcastState() {
+    const s = this.state();
+    for (const sends of this.clients.values()) for (const send of sends) send(s);
+  }
+
+  /** Serialize lease changes so concurrent requests can't interleave stop/grant. */
+  private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const p = this.queue.then(fn, fn);
+    this.queue = p.catch(() => {});
+    return p;
+  }
+
+  private persist(lease: Lease) {
+    if (lease.item.kind === 'live' || lease.duration > 0) this.deps.saveProgress(lease.item, lease.position, lease.duration);
+  }
+
+  /** Ask the current holder to stop and wait for its ack (or timeout / disconnect). */
+  private async revoke(to: string) {
+    const holder = this.lease;
+    if (!holder || holder.deviceId === to || !this.online(holder.deviceId)) return;
+    const ack = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => { this.deps.log?.(`stop ack timeout from ${holder.deviceId}`); done(); }, this.deps.stopTimeoutMs ?? 2500);
+      const done = () => { clearTimeout(timer); this.stopWaiters.delete(holder.deviceId); resolve(); };
+      this.stopWaiters.set(holder.deviceId, done);
+    });
+    this.sendTo(holder.deviceId, { t: 'stop', reason: 'handoff', to });
+    await ack;
+  }
+
+  play(deviceId: string, item: Item, startAt?: number) {
+    return this.exclusive(async () => {
+      const prev = this.lease;
+      await this.revoke(deviceId);
+      if (prev) this.persist(this.lease ?? prev);
+      const handedOver = this.lease ?? prev;
+      let start = 0;
+      if (item.kind !== 'live') {
+        if (startAt != null) start = startAt;
+        else if (handedOver && handedOver.item.id === item.id) start = handedOver.position;
+        else start = this.deps.resumePosition(item);
+      }
+      this.lease = { deviceId, item, position: start, duration: handedOver?.item.id === item.id ? handedOver.duration : 0, paused: false, since: this.now() };
+      if (item.kind === 'live') this.deps.saveProgress(item, 0, 0);
+      this.deps.log?.(`lease -> ${deviceId}: ${item.name} @${Math.round(start)}s`);
+      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item) });
+      this.broadcastState();
+    });
+  }
+
+  async handle(deviceId: string, msg: ClientMsg) {
+    switch (msg.t) {
+      case 'play':
+        return this.play(deviceId, msg.item, msg.startAt);
+      case 'takeover':
+        if (this.lease) return this.play(deviceId, this.lease.item);
+        return;
+      case 'heartbeat': {
+        const l = this.lease;
+        if (!l || l.deviceId !== deviceId) {
+          // Playing without the lease (missed a stop?) — enforce the single connection.
+          this.sendTo(deviceId, { t: 'stop', reason: 'handoff', to: l?.deviceId });
+          return;
+        }
+        l.position = msg.position; l.duration = msg.duration; l.paused = msg.paused;
+        this.persist(l);
+        this.broadcastState();
+        return;
+      }
+      case 'stopped': {
+        const l = this.lease;
+        if (l && l.deviceId === deviceId) {
+          if (msg.duration > 0 || l.item.kind === 'live') { l.position = msg.position; l.duration = msg.duration; }
+          this.persist(l);
+          const waiter = this.stopWaiters.get(deviceId);
+          if (waiter) waiter(); // handoff in progress: play() will replace the lease
+          else { this.lease = null; this.broadcastState(); }
+        } else {
+          this.stopWaiters.get(deviceId)?.();
+        }
+        return;
+      }
+      case 'sendTo': {
+        const item = msg.item ?? this.lease?.item;
+        if (!item) return;
+        if (!this.online(msg.target)) {
+          this.sendTo(deviceId, { t: 'error', message: 'That device is offline' });
+          return;
+        }
+        this.sendTo(msg.target, { t: 'play', item, startAt: msg.startAt, from: deviceId });
+        return;
+      }
+      case 'remote':
+        if (msg.cmd === 'stop' && this.lease?.deviceId === msg.target) {
+          this.sendTo(msg.target, { t: 'stop', reason: 'remote' });
+          return;
+        }
+        this.sendTo(msg.target, { t: 'remote', cmd: msg.cmd, arg: msg.arg, from: deviceId });
+        return;
+    }
+  }
+}
