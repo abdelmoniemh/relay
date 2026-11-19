@@ -101,6 +101,7 @@ export const api = {
   event: (id: string) => req<SportEvent>('GET', `/api/events/${id}?hevc=${hevcParam()}`),
   family: (id: string) => req<RankedSource[]>('GET', `/api/family/${id}?hevc=${hevcParam()}`),
   probe: (ids: string[]) => req<{ queued: number; active: number | null; blocked: boolean }>('POST', '/api/probe', { ids }),
+  clientLog: (msg: string) => req('POST', '/api/clientlog', { msg }).catch(() => {}),
   observed: (o: { id: string; width: number; height: number; fps?: number; vcodec?: string; kbps?: number }) => req('POST', '/api/observed', o),
   browse: (kind: 'movie' | 'series') => req<BrowseRow[]>('GET', `/api/browse/${kind}`),
   genres: (kind: 'movie' | 'series') => cachedGet<{ name: string; count: number }[]>(`/api/genres/${kind}`),

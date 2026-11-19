@@ -63,7 +63,7 @@ export class Transcoder {
   /** Bumped by every start(): an older start still retrying gives up instead of killing the newer one's process. */
   private startGen = 0;
 
-  /** Current HLS session (iPhone/iPad Safari can't play MKV/AVI or raw MPEG-TS, but plays HLS natively). */
+  /** Current HLS session (iPhone/iPad Safari can't play MKV/AVI, raw MPEG-TS or HEVC in TS-based HLS, but plays fMP4 HLS natively). */
   private hls: { sid: string; dir: string; proc: Proc; lastHit: number; pruned: number } | null = null;
 
   constructor() {
@@ -82,7 +82,7 @@ export class Transcoder {
    * HLS (fMP4 segments) for Safari. H.264/HEVC video is copied untouched; anything else is encoded to H.264.
    * Audio always becomes stereo AAC (AC3/DTS/… in MKV are the usual reason a file won't play).
    */
-  private hlsArgs(src: string, startAt: number, vcodec: string | null, gpu: boolean, dir: string): string[] {
+  private hlsArgs(src: string, startAt: number, vcodec: string | null, gpu: boolean, dir: string, live: boolean): string[] {
     const video = vcodec === 'h264' ? ['-c:v', 'copy']
       : vcodec === 'hevc' ? ['-c:v', 'copy', '-tag:v', 'hvc1']
       : gpu ? [...encoderArgs({ ...VOD, gopSec: 4 }, true, 24), '-pix_fmt', 'yuv420p']
@@ -91,18 +91,24 @@ export class Transcoder {
       // 'info' so the input's codec shows up on stderr (startHls reads it instead of a separate ffprobe)
       '-hide_banner', '-loglevel', 'info', '-nostats', '-nostdin',
       '-fflags', '+genpts+discardcorrupt', '-user_agent', 'Relay/1.0 (like VLC/3.0.20)',
-      '-readrate', '1', '-readrate_initial_burst', '45',
-      // From the start nothing needs to jump around the file, so read it straight through. Otherwise ffmpeg
-      // peeks at the end (MKV cues, AVI index): every jump is a new provider request, and the provider is slow
-      // to answer one that follows a closed one. Measured: opening 1.5–9s → 0.5–0.8s.
-      ...(startAt > 0 ? ['-ss', String(startAt)] : ['-seekable', '0']),
-      '-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4',
+      // Live arrives in real time by itself (after the provider's backlog burst, which makes it start fast).
+      ...(live ? ['-probesize', '5M', '-analyzeduration', '2000000'] : [
+        '-readrate', '1', '-readrate_initial_burst', '45',
+        // From the start nothing needs to jump around the file, so read it straight through. Otherwise ffmpeg
+        // peeks at the end (MKV cues, AVI index): every jump is a new provider request, and the provider is slow
+        // to answer one that follows a closed one. Measured: opening 1.5–9s → 0.5–0.8s.
+        ...(startAt > 0 ? ['-ss', String(startAt)] : ['-seekable', '0']),
+        '-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4',
+      ]),
       '-i', src,
       '-map', '0:v:0', '-map', '0:a:0?', ...video,
+      ...(live ? ['-af', 'aresample=async=1:first_pts=0'] : []), // live: absorb provider timestamp gaps
       '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-max_muxing_queue_size', '2048',
-      '-f', 'hls', '-hls_time', '4', '-hls_list_size', '0', '-hls_playlist_type', 'event',
+      '-f', 'hls', '-hls_time', '4',
+      // Movies: every segment stays listed (seekable). Live: a sliding window; ffmpeg deletes what falls out.
+      ...(live ? ['-hls_list_size', '8', '-hls_delete_threshold', '4'] : ['-hls_list_size', '0', '-hls_playlist_type', 'event']),
       '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
-      '-hls_segment_filename', join(dir, 'seg%05d.m4s'), '-hls_flags', 'independent_segments+temp_file',
+      '-hls_segment_filename', join(dir, 'seg%05d.m4s'), '-hls_flags', `independent_segments+temp_file${live ? '+delete_segments' : ''}`,
       join(dir, 'index.m3u8'),
     ];
   }
@@ -114,7 +120,7 @@ export class Transcoder {
    * That's much faster than a separate ffprobe, which costs an extra provider connection that the provider
    * keeps counting for a moment (so the real one then fails and has to retry).
    */
-  async startHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}): Promise<{ sid: string; vcodec: string | null }> {
+  async startHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false): Promise<{ sid: string; vcodec: string | null }> {
     await this.stop();
     await Promise.all([...this.dying]);
     let vcodec = guess, lastErr = '', corrected = false;
@@ -125,7 +131,7 @@ export class Transcoder {
       const dir = join(HLS_ROOT, sid);
       mkdirSync(dir, { recursive: true });
       const gpu = this.gpu && attempt < 2;
-      const proc = spawn('ffmpeg', this.hlsArgs(src, startAt, vcodec, gpu, dir), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
+      const proc = spawn('ffmpeg', this.hlsArgs(src, live ? 0 : startAt, vcodec, gpu, dir, live), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
       this.current = proc; this.owner = owner;
       this.hls = { sid, dir, proc, lastHit: Date.now(), pruned: 0 };
       let stderr = '', head = '', detected: string | null | undefined;
@@ -152,7 +158,7 @@ export class Transcoder {
           }, 100);
         });
         const how = hlsVideoPlan(vcodec) === 'encode' ? (gpu ? 'nvenc' : 'x264') : `copy ${vcodec}`;
-        log(`hls started in ${Date.now() - t0}ms (${how}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
+        log(`hls started in ${Date.now() - t0}ms (${live ? 'live, ' : ''}${how}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
         return { sid, vcodec: detected ?? vcodec };
       } catch (e) {
         await this.stop();

@@ -237,8 +237,9 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     proc.on('exit', () => res.end());
   });
 
-  // ---- HLS for iPhone/iPad Safari (movies & episodes) ----
-  // Safari plays neither MKV/AVI nor a raw MPEG-TS stream, but plays HLS natively: repackage (or convert) on the fly.
+  // ---- HLS for iPhone/iPad Safari (movies, episodes, and HEVC channels) ----
+  // Safari plays neither MKV/AVI, a raw MPEG-TS stream, nor HEVC inside the provider's TS-based HLS (Apple only
+  // takes HEVC in fMP4), but plays fMP4 HLS natively: repackage (or convert) on the fly.
   // Video codec per title, learned from earlier plays/probes; decides copy (instant, lossless) vs conversion.
   const vcodecs = new Map<string, string | null>(Object.entries(JSON.parse(kvGet(db, 'hls_vcodecs') ?? '{}')));
   const probedCodec = db.prepare('SELECT vcodec FROM vod_probes WHERE id = ? AND ok = 1');
@@ -256,13 +257,21 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const id = String((req.params as any).id);
     const q = req.query as Record<string, string>;
     const { kind, sid } = parseId(id);
-    if (kind !== 'movie' && kind !== 'episode') return reply.code(400).send({ error: 'bad id' });
+    if (kind !== 'movie' && kind !== 'episode' && kind !== 'live') return reply.code(400).send({ error: 'bad id' });
     if (kind !== 'episode' && !catalog.playable({ id, kind })) return reply.code(404).send({ error: 'not found' });
     if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
-    const src = streamUrls(provider, { id, kind, name: '', ext: q.ext })[0];
+    const live = kind === 'live';
+    const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
+    // Live: one continuous MPEG-TS connection rather than the provider's HLS (a request per segment).
+    const src = live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
+    // Live: the iPhone only asks for channels that didn't play directly, which are almost always HEVC.
+    const guess = live ? (vcodecs.get(id) ?? sourceInfo(id, kind)?.vcodec ?? 'hevc') : guessCodec(id, kind, sid, q.ext);
     await prober.abort(); // a background probe may hold the provider connection
     try {
-      const r = await transcoder.startHls(src, Number(q.start) || 0, guessCodec(id, kind, sid, q.ext), req.deviceId, (m) => app.log.warn(m));
+      const r = await transcoder.startHls(src, Number(q.start) || 0, guess, req.deviceId, (m) => app.log.warn(m), live);
+      // Really HEVC: every device now skips the failing direct attempt. (Not on a mere failure: the first try
+      // often fails only because the provider still counts the previous connection.)
+      if (live && r.vcodec === 'hevc') hevc.add(id, 'full');
       if (r.vcodec && vcodecs.get(id) !== r.vcodec) {
         vcodecs.set(id, r.vcodec);
         kvSet(db, 'hls_vcodecs', JSON.stringify(Object.fromEntries([...vcodecs].slice(-5000))));
@@ -281,7 +290,8 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
       const pl = (await readFile(p, 'utf8')).replace(/^(seg\d+\.m4s)$/gm, `$1${tok}`).replace(/URI="init\.mp4"/, `URI="init.mp4${tok}"`)
         // The playlist grows while Safari watches, so it may treat it as live and start near the newest
         // segment (≈40s into the movie, thanks to ffmpeg's head start). Always start at the beginning.
-        .replace(/^#EXTM3U\n/, '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n');
+        // (A live channel's sliding playlist has no #EXT-X-PLAYLIST-TYPE: Safari starts it near the live edge.)
+        .replace(/^#EXTM3U\n(?=[\s\S]*^#EXT-X-PLAYLIST-TYPE:EVENT$)/m, '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n');
       return reply.type('application/vnd.apple.mpegurl').send(pl);
     }
     return reply.type(file.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment').send(await readFile(p));
@@ -315,6 +325,12 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     return { queued: prober.pending(), active: prober.active, blocked: hub.streamActive() };
   });
 
+  /** Player problems seen on a device (iPhone Safari has no console we can read): logged for debugging. */
+  app.post('/api/clientlog', async (req) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    app.log.warn(`client ${req.deviceId ?? '?'}: ${String(b.msg ?? '').slice(0, 300)}`);
+    return { ok: true };
+  });
   app.post('/api/observed', async (req) => {
     const b = req.body as { id?: string; width?: number; height?: number; fps?: number; vcodec?: string; kbps?: number };
     if (!b?.id?.startsWith('l') || !(Number(b.height) > 0)) return { ok: false };

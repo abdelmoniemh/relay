@@ -1,5 +1,6 @@
 import type { LoadOpts, Player, PlayerEvent } from './types.ts';
 import { isIOS } from '../env.ts';
+import { api } from '../api.ts';
 
 const HEVC_KEY = 'relay.hevc';
 const hevcIds: Set<string> = (() => { try { return new Set(JSON.parse(localStorage.getItem(HEVC_KEY) ?? '[]')); } catch { return new Set<string>(); } })();
@@ -38,13 +39,27 @@ export class Html5Player implements Player {
 
   constructor(video: HTMLVideoElement) {
     this.v = video;
+    // iOS only lets a video start with sound right after a tap. Our streams start later (after the server's
+    // answer, 1-3s for a conversion), so Safari refused and left a black, paused picture at 0:00. A media
+    // element that was once started during a tap keeps the permission: do that on the first tap.
+    if (isIOS) {
+      const unlock = () => {
+        if (this.v.getAttribute('src') == null) { this.v.load(); this.v.play().catch(() => {}); }
+        document.removeEventListener('touchend', unlock, true); document.removeEventListener('click', unlock, true);
+      };
+      document.addEventListener('touchend', unlock, true); document.addEventListener('click', unlock, true);
+    }
     // Prefer MSE engines (faster start, better live handling); native HLS only on iOS or browsers without MSE.
     this.nativeHls = !!video.canPlayType('application/vnd.apple.mpegurl') && (isIOS || !this.mse);
     const fire = (e: PlayerEvent) => () => this.cb(e);
     video.addEventListener('playing', () => { clearTimeout(this.parkTimer); this.cb('playing'); this.scheduleAudioCheck(); });
     video.addEventListener('pause', () => { this.cb('paused'); this.maybePark(); });
     video.addEventListener('waiting', fire('waiting'));
-    video.addEventListener('ended', fire('ended'));
+    video.addEventListener('ended', () => {
+      // The server's live session ended (provider dropped the connection): reconnect instead of freezing.
+      if (this.opts?.live && this.hlsSession && this.liveRestarts()) { this.releaseHls(); this.toLiveHls(); return; }
+      this.cb('ended');
+    });
     video.addEventListener('timeupdate', fire('time'));
     video.addEventListener('loadedmetadata', () => {
       // Direct movie whose video track can't be decoded (e.g. HEVC in MKV): metadata loads but there's no picture.
@@ -53,11 +68,43 @@ export class Html5Player implements Player {
     video.addEventListener('error', () => {
       if (!this.v.getAttribute('src')) return;
       if (this.isDirectVod()) { this.toVodTranscode('full', this.opts!.startAt); return; }
+      if (this.isDirectLiveHls()) { this.toLiveHls(); return; }
+      if (isIOS) api.clientLog(`media error ${video.error?.code ?? '?'} ${video.error?.message ?? ''} (${this.opts?.id}, ${this.hlsSession ? 'server hls' : 'direct'})`);
       this.cb('error', video.error?.message || 'Playback error');
     });
   }
 
   on(cb: (e: PlayerEvent, d?: string) => void) { this.cb = cb; }
+
+  /**
+   * iPhone/iPad playing a channel straight from the provider's HLS. Safari refuses HEVC in MPEG-TS segments
+   * (Apple only takes HEVC in fMP4), which is how the provider sends its 4K channels: fall back to the server,
+   * which repackages them into fMP4 HLS without re-encoding.
+   */
+  private isDirectLiveHls() { return !!this.opts?.live && this.nativeHls && !!this.opts.hlsUrl && !this.hlsSession; }
+
+  private toLiveHls() {
+    this.cb('waiting');
+    this.startLiveHls();
+  }
+
+  private restarts: number[] = [];
+  /** At most 3 reconnects a minute: a channel that keeps dying should surface an error, not loop. */
+  private liveRestarts() {
+    const now = Date.now();
+    this.restarts = this.restarts.filter((t) => now - t < 60_000);
+    if (this.restarts.length >= 3) return false;
+    this.restarts.push(now);
+    return true;
+  }
+
+  private startLiveHls() {
+    const gen = ++this.gen;
+    const v = this.v;
+    v.pause();
+    if (v.getAttribute('src') != null) { v.removeAttribute('src'); v.load(); } // release the provider connection first
+    this.startHls(gen, 0);
+  }
 
   /** Playing a movie file as-is, with a conversion to fall back on if this browser can't decode it. */
   private isDirectVod() { return !!this.opts && !this.opts.live && this.txOffset === null && !!(this.nativeHls ? this.opts.hlsUrl : this.opts.transcodeUrl); }
@@ -74,6 +121,11 @@ export class Html5Player implements Player {
       // Channels we already know are HEVC go straight to the server's GPU transcode: no failed first attempt.
       const useTx = !!o.transcodeUrl && ((!canHevc && (o.hevc || (!!o.id && hevcIds.has(o.id)))) || !!o.interlaced);
       if (await this.mpegts(useTx ? o.transcodeUrl! : ts, gen, useTx ? undefined : o)) return;
+    }
+    if (o.live && this.nativeHls && o.hlsUrl && o.hevc) {
+      // iPhone, channel known to be HEVC: the provider's HLS won't play, go straight to the server's.
+      this.startLiveHls();
+      return;
     }
     if (!o.live && this.nativeHls && o.hlsUrl && !/\.(mp4|m4v|mov)$/i.test(urls[0] ?? '')) {
       // iPhone Safari can't open MKV/AVI at all: straight to the server's HLS version.
@@ -103,7 +155,7 @@ export class Html5Player implements Player {
       const seek = () => { v.currentTime = o.startAt; };
       v.readyState >= 1 ? seek() : v.addEventListener('loadedmetadata', seek, { once: true });
     }
-    v.play().catch(() => {});
+    this.startPlay();
   }
 
   /** Chrome plays AC3/E-AC3/DTS movies silently: if no audio got decoded after a few seconds, convert the audio. */
@@ -138,25 +190,25 @@ export class Html5Player implements Player {
     this.txMode = mode;
     this.txOffset = Math.max(0, Math.floor(at));
     this.parked = null;
-    if (this.nativeHls) { this.releaseHls(); this.startHls(gen); return; }
+    if (this.nativeHls) { this.releaseHls(); this.startHls(gen, this.txOffset); return; }
     const url = `${this.opts!.transcodeUrl}&mode=${mode}&start=${this.txOffset}`;
     this.mpegts(url, gen);
   }
 
-  /** iPhone/iPad: ask the server for an HLS version starting at txOffset and play it natively. */
-  private async startHls(gen: number) {
+  /** iPhone/iPad: ask the server for an HLS version (of a movie from `start`, or of a channel) and play it natively. */
+  private async startHls(gen: number, start: number) {
     const base = this.opts!.hlsUrl!;
     try {
-      const r = await fetch(`${base}&start=${this.txOffset}`, { method: 'POST' });
+      const r = await fetch(`${base}&start=${start}`, { method: 'POST' });
       const j = await r.json().catch(() => ({})) as { url?: string; error?: string };
       const url = j.url ? new URL(j.url, base).href : null;
       if (gen !== this.gen) { if (url) this.deleteHls(url); return; } // stopped/seeked meanwhile: don't hold the connection
       if (!r.ok || !url) { this.cb('error', j.error ?? `Conversion failed (HTTP ${r.status})`); return; }
       this.hlsSession = url;
       this.v.src = url;
-      this.v.play().catch(() => {});
+      this.startPlay();
     } catch {
-      if (gen === this.gen) this.cb('error', 'Could not reach the server for the converted movie');
+      if (gen === this.gen) this.cb('error', `Could not reach the server for the converted ${this.opts?.live ? 'channel' : 'movie'}`);
     }
   }
 
@@ -225,6 +277,15 @@ export class Html5Player implements Player {
     const v = this.v;
     if (!v.videoWidth || this.media.transcoded) return null; // a converted stream says nothing about the source
     return { width: v.videoWidth, height: v.videoHeight, fps: this.media.fps, vcodec: this.media.vcodec };
+  }
+
+  /** play(), and if Safari refuses (no tap to start it), show it as paused so one tap starts it, not a black 0:00. */
+  private startPlay() {
+    this.v.play().catch((e: DOMException) => {
+      if (e?.name !== 'NotAllowedError') return;
+      if (isIOS) api.clientLog(`play() refused: ${e.message} (${this.opts?.id})`);
+      this.cb('paused');
+    });
   }
 
   play() {
