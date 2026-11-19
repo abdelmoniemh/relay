@@ -7,12 +7,14 @@ import { go, push, railFocused } from '../router.ts';
 import { useAsync, useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
 import { Logo, NowLine, Poster, ProgBar, clean } from '../ui/common.tsx';
 import { img } from '../env.ts';
+import { Card } from './Browse.tsx';
 
 interface Card { key: string; render: (f: boolean) => any; act: () => void }
 
 export function Home() {
   const cont = useAsync(() => api.continueWatching(), [current.value?.id]);
   const recent = useAsync(() => api.recent(), [current.value?.id]);
+  const wl = useAsync(() => api.watchlist().catch(() => null), []);
   epgVersion.value;
   const l = lease.value;
   const elsewhere = l && l.deviceId !== myDeviceId.value && !current.value ? l : null;
@@ -41,6 +43,11 @@ export function Home() {
         </div>
       ),
     })) });
+    const wlItems = wl.data?.items ?? [];
+    if (wlItems.length) out.push({ title: `From your Letterboxd watchlist · ${wl.data!.available} of ${wl.data!.total} available`, cards: wlItems.slice(0, 30).map((c) => ({
+      key: `wl${c.tid}`, act: () => push({ name: 'title', tid: c.tid }),
+      render: (f: boolean) => <div style={{ width: '100%' }}><Card c={c} focused={f} /></div>,
+    })) });
     const favLive = [...favorites.value.values()].filter((i) => i.kind === 'live');
     const chanCard = (it: Item): Card => ({
       key: it.id, act: () => play(it, { mode: 'full' }),
@@ -61,7 +68,7 @@ export function Home() {
       render: (f) => <div class={`card ${f ? 'focus' : ''}`}><Poster item={it} /><div class="cap">{clean(it.name)}</div></div>,
     })) });
     return out;
-  }, [cont.data, recent.data, favorites.value, elsewhere?.item.id, elsewhere?.position, devName, epgVersion.value]);
+  }, [cont.data, recent.data, wl.data, favorites.value, elsewhere?.item.id, elsewhere?.position, devName, epgVersion.value]);
 
   const [r, setR] = useState(0);
   const [c, setC] = useState<number[]>([]);

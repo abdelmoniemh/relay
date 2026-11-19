@@ -21,6 +21,7 @@ import { EventsIndex } from './events.ts';
 import { Prober } from './prober.ts';
 import { Tmdb } from './tmdb.ts';
 import { Library } from './library.ts';
+import { Letterboxd } from './letterboxd.ts';
 import type { Item } from '../../shared/protocol.ts';
 
 const provider = parseProvider();
@@ -41,6 +42,9 @@ const tmdb = new Tmdb(db, () => process.env.TMDB_API_KEY || process.env.TMDB_TOK
 const library = new Library(db, tmdb);
 library.providerInfo = (sid) => getJson(apiUrl(provider, 'get_vod_info', { vod_id: String(sid) }), 8000);
 const tmdbTick = tmdb.start(() => library.mask, () => library.invalidate());
+const letterboxd = new Letterboxd(db, () => library.invalidate());
+library.lb = letterboxd;
+const lbTick = letterboxd.start();
 // Background quality checks: only while no device holds a stream. Sources of live/soon events first, football first.
 let hubRef: Hub | null = null;
 const prober = new Prober(db, provider, {
@@ -79,7 +83,7 @@ await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
 hubRef = hub;
-registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick });
+registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick });
 app.log.warn(`transcoding: ${transcoder.available ? (transcoder.gpu ? 'NVENC (GPU)' : 'x264 (CPU)') : 'unavailable (install ffmpeg)'}`);
 
 if (existsSync(config.webDir)) {

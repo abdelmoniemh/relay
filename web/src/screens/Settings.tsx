@@ -28,6 +28,14 @@ export function Settings() {
         if (k === null) return;
         api.settings({ tmdbKey: k }).then(() => { clearCache(); setTick((t) => t + 1); }).catch((e) => alert(e.message));
       } },
+    { label: 'Letterboxd', value: !s ? '…' : s.letterboxd.user
+        ? `@${s.letterboxd.user} · ${s.letterboxd.watchlist} on watchlist${s.letterboxd.syncing ? ' · syncing…' : s.letterboxd.syncedAt ? ` · synced ${ago(s.letterboxd.syncedAt)}` : ''}${s.letterboxd.error ? ` · ${s.letterboxd.error}` : ''}`
+        : 'not linked — add your username',
+      act: () => {
+        const u = prompt('Your Letterboxd username (your watchlist must be public). Leave empty to unlink.', s?.letterboxd.user ?? '');
+        if (u === null) return;
+        api.settings({ letterboxd: u }).then(() => { clearCache(); setTimeout(() => setTick((t) => t + 1), 1500); });
+      } },
     { label: 'Live sports delay', value: lowLatencySports.value ? 'Lowest (jump to live edge)' : 'Smooth (play provider backlog)', act: () => setLowLatency(!lowLatencySports.value) },
     ...regionRows(),
     ...devices.value.filter((d) => d.id !== myDeviceId.value).map((d) => ({

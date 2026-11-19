@@ -64,6 +64,7 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS titles_rating ON titles (kind, rating DESC);
     CREATE INDEX IF NOT EXISTS titles_pop ON titles (kind, popularity DESC);
     CREATE INDEX IF NOT EXISTS titles_tmdb ON titles (kind, tmdb);
+    CREATE INDEX IF NOT EXISTS titles_year ON titles (kind, year);
     CREATE VIRTUAL TABLE IF NOT EXISTS titles_fts USING fts5 (name, content='titles', content_rowid='tid', tokenize='unicode61 remove_diacritics 2');
     CREATE TABLE IF NOT EXISTS tmdb_cache (k TEXT PRIMARY KEY, json TEXT NOT NULL, at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS vod_probes (

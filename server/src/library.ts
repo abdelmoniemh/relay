@@ -3,6 +3,7 @@ import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Item } from '../../shared/protocol.ts';
 import type { Tmdb } from './tmdb.ts';
 import { kvGet, kvSet } from './db.ts';
+import type { Letterboxd } from './letterboxd.ts';
 
 export const LANG_BITS: Record<string, number> = { en: 1, ar: 2, 'ar-sub': 4, other: 8 };
 const GENRE_ROWS = ['Action', 'Comedy', 'Drama', 'Thriller', 'Crime', 'Horror', 'Science Fiction', 'Sci-Fi', 'Animation', 'Family', 'Adventure', 'Mystery', 'Romance', 'Documentary', 'Fantasy', 'War', 'Reality', 'Kids'];
@@ -10,6 +11,11 @@ const GENRE_ROWS = ['Action', 'Comedy', 'Drama', 'Thriller', 'Crime', 'Horror', 
 export interface TitleCard {
   tid: number; kind: 'movie' | 'series'; name: string; year: number | null; poster: string | null; rating: number | null; uhd: boolean;
   langs: string[]; progress?: { position: number; duration: number; label?: string };
+  tmdb?: number | null;
+  wl?: boolean;            // on the Letterboxd watchlist
+  watched?: number | true; // logged on Letterboxd (rating 0.5-5, or true if unrated)
+  fresh?: boolean;         // added by the provider in the last 2 weeks
+  added?: number | null;
 }
 export interface Row { id: string; title: string; items: TitleCard[]; more?: Record<string, string> }
 export interface VersionInfo {
@@ -18,10 +24,11 @@ export interface VersionInfo {
 }
 export interface Device { tv: boolean; hevcOk: boolean }
 
-const CARD = `tid, kind, name, year, poster, rating, uhd, lmask`;
+const CARD = `tid, kind, name, year, poster, rating, uhd, lmask, tmdb, added`;
 const toCard = (r: any): TitleCard => ({
   tid: r.tid, kind: r.kind, name: r.name, year: r.year, poster: r.poster, rating: r.rating, uhd: !!r.uhd,
   langs: Object.entries(LANG_BITS).filter(([, b]) => r.lmask & b).map(([l]) => l),
+  tmdb: r.tmdb ?? null, added: r.added ?? null,
 });
 
 export class Library {
@@ -31,6 +38,8 @@ export class Library {
   private rowCache = new Map<string, { at: number; rows: Row[] }>();
   langs: string[];
 
+  lb: Letterboxd | null = null;
+  private wlCache: { at: number; tids: number[]; missing: { name: string; year: number | null }[]; total: number } | null = null;
   /** Provider per-film info (plot, cast, genre...) — used when TMDB has nothing yet. */
   providerInfo: ((sid: number) => Promise<any>) | null = null;
 
@@ -41,7 +50,49 @@ export class Library {
 
   get mask() { return this.langs.reduce((m, l) => m | (LANG_BITS[l] ?? 0), 0) || 1; }
   setLangs(langs: string[]) { this.langs = langs.filter((l) => l in LANG_BITS); kvSet(this.db, 'vod_langs', JSON.stringify(this.langs)); this.invalidate(); }
-  invalidate() { this.rowCache.clear(); }
+  invalidate() { this.rowCache.clear(); this.wlCache = null; }
+
+  // ---------------- Letterboxd watchlist ----------------
+
+  /** Watchlist films that are available here, in Letterboxd order (+ the ones that aren't). */
+  private watchlistResolved() {
+    if (this.wlCache && Date.now() - this.wlCache.at < 60_000) return this.wlCache;
+    const wl = this.lb?.user ? this.lb.watchlist() : [];
+    const byTmdb = this.st(`SELECT tid FROM titles WHERE kind = ? AND tmdb = ? AND (lmask & ?) != 0`);
+    const byName = this.st(`SELECT tid FROM titles WHERE kind = 'movie' AND year = ? AND name = ? COLLATE NOCASE AND (lmask & ?) != 0 LIMIT 1`);
+    const tids: number[] = [], missing: { name: string; year: number | null }[] = [];
+    for (const w of wl) {
+      const hit = (w.tmdb ? (byTmdb.get('movie', w.tmdb, this.mask) ?? byTmdb.get('series', w.tmdb, this.mask)) : byName.get(w.year ?? 0, w.name, this.mask)) as { tid: number } | undefined;
+      if (hit && !tids.includes(hit.tid)) tids.push(hit.tid);
+      else if (!hit) missing.push({ name: w.name, year: w.year });
+    }
+    this.wlCache = { at: Date.now(), tids, missing, total: wl.length };
+    return this.wlCache;
+  }
+
+  /** Add watchlist/watched/new flags; watchlist titles first (stable) when `prioritize`. */
+  decorate(cards: TitleCard[], prioritize = true): TitleCard[] {
+    if (!this.lb?.user) return cards;
+    const wl = new Set(this.watchlistResolved().tids);
+    const watched = this.lb.watched();
+    const twoWeeks = Date.now() / 1000 - 14 * 86400;
+    const out = cards.map((c) => {
+      const w = c.tmdb ? watched.get(c.tmdb) : undefined;
+      return { ...c, wl: wl.has(c.tid), watched: w ? (w.rating ?? (true as const)) : undefined, fresh: !!c.added && c.added > twoWeeks } as TitleCard;
+    });
+    return prioritize ? [...out.filter((c) => c.wl && !c.watched), ...out.filter((c) => !(c.wl && !c.watched))] : out;
+  }
+
+  watchlistRow(limit = 60): { items: TitleCard[]; available: number; total: number; missing: { name: string; year: number | null }[] } {
+    const r = this.watchlistResolved();
+    if (!r.tids.length) return { items: [], available: 0, total: r.total, missing: r.missing };
+    const rows = this.db.prepare(`SELECT ${CARD} FROM titles WHERE tid IN (${r.tids.map(() => '?').join(',')})`).all(...r.tids) as any[];
+    const by = new Map(rows.map((x) => [x.tid, toCard(x)]));
+    let items = this.decorate(r.tids.map((t) => by.get(t)!).filter(Boolean), false).filter((c) => !c.watched);
+    // Newly available ones first: that's the news.
+    items = [...items.filter((c) => c.fresh), ...items.filter((c) => !c.fresh)];
+    return { items: items.slice(0, limit), available: items.length, total: r.total, missing: r.missing };
+  }
 
   private st(sql: string) {
     let s = this.stmts.get(sql);
@@ -89,7 +140,12 @@ export class Library {
     const rows: Row[] = hit && Date.now() - hit.at < 5 * 60_000 ? hit.rows : await this.buildRows(kind);
     if (!hit || hit.rows !== rows) this.rowCache.set(key, { at: Date.now(), rows });
     const cont = this.continueRow(kind);
-    return cont.length ? [{ id: 'continue', title: 'Continue watching', items: cont }, ...rows] : rows;
+    const out: Row[] = [];
+    if (cont.length) out.push({ id: 'continue', title: 'Continue watching', items: cont });
+    const wl = this.watchlistRow();
+    const wlItems = wl.items.filter((c) => c.kind === kind);
+    if (wlItems.length) out.push({ id: 'watchlist', title: `Your Letterboxd watchlist · ${wl.available} of ${wl.total} available`, items: wlItems, more: { wl: '1', sort: 'watchlist' } });
+    return [...out, ...rows.map((r) => ({ ...r, items: this.decorate(r.items) }))];
   }
 
   private async buildRows(kind: 'movie' | 'series'): Promise<Row[]> {
@@ -132,10 +188,17 @@ export class Library {
     if (f.min_rating) { where.push('rating >= ?'); args.push(Number(f.min_rating) / 2); }
     if (f.uhd === '1') where.push('uhd = 1');
     if (f.top250 === '1') where.push('top250 IS NOT NULL');
+    let wlOrder: number[] | null = null;
+    if (f.wl === '1') {
+      wlOrder = this.watchlistResolved().tids;
+      where.push(`tid IN (${wlOrder.map(() => '?').join(',') || 'NULL'})`); args.push(...wlOrder);
+    }
     const order = ({ popular: 'popularity DESC NULLS LAST, added DESC', added: 'added DESC', rating: 'rating DESC NULLS LAST, votes DESC NULLS LAST', year: 'year DESC NULLS LAST, added DESC', name: 'name COLLATE NOCASE' } as Record<string, string>)[f.sort ?? ''] ?? (f.top250 === '1' ? 'top250' : 'popularity DESC NULLS LAST, added DESC');
     const w = where.length ? 'AND ' + where.join(' AND ') : '';
-    const items = (this.st(`SELECT ${CARD} FROM titles WHERE kind = ? AND (lmask & ?) != 0 ${w} ORDER BY ${order} LIMIT ? OFFSET ?`)
-      .all(kind, this.mask, ...(args as any[]), limit, offset) as any[]).map(toCard);
+    const wlSort = wlOrder && (f.sort === 'watchlist' || !f.sort);
+    const ord = wlSort ? `CASE tid ${wlOrder!.map((t, i) => `WHEN ${Number(t)} THEN ${i}`).join(' ')} END` : order;
+    const items = this.decorate((this.db.prepare(`SELECT ${CARD} FROM titles WHERE kind = ? AND (lmask & ?) != 0 ${w} ORDER BY ${ord} LIMIT ? OFFSET ?`)
+      .all(kind, this.mask, ...(args as any[]), limit, offset) as any[]).map(toCard), false);
     const total = (this.st(`SELECT count(*) AS n FROM titles WHERE kind = ? AND (lmask & ?) != 0 ${w}`).get(kind, this.mask, ...(args as any[])) as { n: number }).n;
     return { items, total };
   }
@@ -144,9 +207,10 @@ export class Library {
     const terms = q.normalize('NFKD').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/).filter(Boolean);
     if (!terms.length || terms.join('').length < 2) return [];
     const match = terms.map((t) => `"${t}"*`).join(' ');
-    return (this.st(`SELECT t.tid, t.kind, t.name, t.year, t.poster, t.rating, t.uhd, t.lmask FROM titles_fts f JOIN titles t ON t.tid = f.rowid
+    const rows = this.st(`SELECT t.tid, t.kind, t.name, t.year, t.poster, t.rating, t.uhd, t.lmask, t.tmdb, t.added FROM titles_fts f JOIN titles t ON t.tid = f.rowid
       WHERE titles_fts MATCH ? AND (t.lmask & ?) != 0 ${kind ? 'AND t.kind = ?' : ''} ORDER BY rank, t.popularity DESC NULLS LAST LIMIT ?`)
-      .all(...([match, this.mask, ...(kind ? [kind] : []), limit] as any[])) as any[]).map(toCard);
+      .all(...([match, this.mask, ...(kind ? [kind] : []), limit] as any[])) as any[];
+    return this.decorate(rows.map(toCard)); // watchlist matches first
   }
 
   /** Copies of a title in the visible languages, best first for this device. */
@@ -220,10 +284,12 @@ export class Library {
       const extra = this.query(fresh.kind, `AND tid != ? AND ${g.map(() => 'genres LIKE ?').join(' AND ')}`, 'popularity DESC NULLS LAST, rating DESC', [tid, ...g.map((x) => `%,${x},%`)], 20);
       similar = [...similar, ...extra.filter((e) => !similar.some((s) => s.tid === e.tid))].slice(0, 20);
     }
+    const [me] = this.decorate([toCard(fresh)], false);
     return {
       ...toCard(fresh), backdrop: fresh.backdrop, plot: fresh.plot, genres: String(fresh.genres ?? '').split(',').filter(Boolean),
       cast: fresh.cast, director: fresh.director, trailer: fresh.trailer, runtime: fresh.runtime, votes: fresh.votes,
-      top250: fresh.top250, origLang: fresh.orig_lang, versions, similar, collection,
+      top250: fresh.top250, origLang: fresh.orig_lang, versions, similar: this.decorate(similar), collection: this.decorate(collection, false),
+      wl: me.wl, watched: me.watched,
     };
   }
 }

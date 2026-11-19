@@ -15,6 +15,9 @@ export function Card({ c, focused, onClick, size = 'md' }: { c: TitleCard; focus
         {c.poster ? <img class="poster" src={img(c.poster, size === 'lg' ? 342 : 185)} loading="lazy" decoding="async" alt="" onError={(e) => ((e.currentTarget as HTMLImageElement).style.opacity = '0')} />
           : <div class="poster ph">{c.name.slice(0, 1)}</div>}
         {c.uhd && <span class="b4k">4K</span>}
+        {c.fresh && c.wl && <span class="bnew">NEW</span>}
+        {c.wl && !c.watched && <span class="bwl" title="On your Letterboxd watchlist">▼</span>}
+        {c.watched && <span class="bseen">✓{typeof c.watched === 'number' ? ` ${'★'.repeat(Math.floor(c.watched))}${c.watched % 1 ? '½' : ''}` : ''}</span>}
         {c.progress && c.progress.duration > 0 && <div class="bar card-bar"><i style={{ width: `${Math.min(100, (c.progress.position / c.progress.duration) * 100)}%` }} /></div>}
       </div>
       <div class="cap">{c.name}</div>
@@ -30,6 +33,7 @@ export function Browse({ kind }: { kind: 'movie' | 'series' }) {
     { label: kind === 'movie' ? 'All movies' : 'All series', act: () => push({ name: 'grid', kind, filters: {}, title: kind === 'movie' ? 'All movies' : 'All series' }) },
     { label: '4K', act: () => push({ name: 'grid', kind, filters: { uhd: '1' }, title: 'In 4K' }) },
     { label: 'Arabic', act: () => push({ name: 'grid', kind, filters: { lang: 'ar', sort: 'added' }, title: 'Arabic' }) },
+    { label: 'Watchlist', act: () => push({ name: 'grid', kind, filters: { wl: '1', sort: 'watchlist' }, title: 'Your Letterboxd watchlist' }) },
     { label: 'Provider categories', act: () => push({ name: 'categories', kind }) },
   ], [kind]);
   const list: BrowseRow[] = rows.data ?? [];
@@ -117,10 +121,11 @@ export function Browse({ kind }: { kind: 'movie' | 'series' }) {
 // ---------------- filterable grid ----------------
 
 type Opt = { v: string; label: string };
-const SORTS: Opt[] = [{ v: 'popular', label: 'Popular' }, { v: 'added', label: 'Recently added' }, { v: 'rating', label: 'Top rated' }, { v: 'year', label: 'Newest' }, { v: 'name', label: 'A–Z' }];
+const SORTS: Opt[] = [{ v: 'watchlist', label: 'Watchlist order' }, { v: 'popular', label: 'Popular' }, { v: 'added', label: 'Recently added' }, { v: 'rating', label: 'Top rated' }, { v: 'year', label: 'Newest' }, { v: 'name', label: 'A–Z' }];
 const LANGS: Opt[] = [{ v: '', label: 'Any language' }, { v: 'en', label: 'English' }, { v: 'ar', label: 'Arabic' }];
 const RATINGS: Opt[] = [{ v: '', label: 'Any rating' }, { v: '7', label: '★ 7+' }, { v: '8', label: '★ 8+' }];
 const UHD: Opt[] = [{ v: '', label: 'Any quality' }, { v: '1', label: '4K only' }];
+const WL: Opt[] = [{ v: '', label: 'All titles' }, { v: '1', label: 'My watchlist' }];
 const year = new Date().getFullYear();
 const DECADES: { v: string; label: string; from?: string; to?: string }[] = [
   { v: '', label: 'Any year' }, { v: 'new', label: `${year - 1}–${year}`, from: String(year - 1) }, { v: '2020', label: '2020s', from: '2020', to: '2029' },
@@ -132,7 +137,8 @@ export function Grid({ kind, filters, title }: { kind: 'movie' | 'series'; filte
   const [f, setF] = useState<Record<string, string>>({ sort: filters.sort ?? (filters.top250 ? '' : 'popular'), ...filters });
   const decade = DECADES.find((d) => d.from === f.year_from && d.to === f.year_to)?.v ?? (f.year_from ? 'new' : '');
   const chips: { label: string; opts: Opt[]; value: string; set: (v: string) => void }[] = [
-    { label: 'Sort', opts: SORTS, value: f.sort ?? '', set: (v) => setF({ ...f, sort: v }) },
+    { label: 'Watchlist', opts: WL, value: f.wl ?? '', set: (v) => setF({ ...f, wl: v, sort: v ? 'watchlist' : f.sort === 'watchlist' ? 'popular' : f.sort }) },
+    { label: 'Sort', opts: f.wl ? SORTS : SORTS.slice(1), value: f.sort ?? '', set: (v) => setF({ ...f, sort: v }) },
     { label: 'Genre', opts: [{ v: '', label: 'All genres' }, ...(genres.data ?? []).map((g) => ({ v: g.name, label: g.name }))], value: f.genre ?? '', set: (v) => setF({ ...f, genre: v }) },
     { label: 'Language', opts: LANGS, value: f.lang ?? '', set: (v) => setF({ ...f, lang: v }) },
     { label: 'Quality', opts: UHD, value: f.uhd ?? '', set: (v) => setF({ ...f, uhd: v }) },

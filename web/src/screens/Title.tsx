@@ -167,7 +167,9 @@ export function TitleScreen({ tid }: { tid: number }) {
         <div class="hero-txt">
           <button class="back-link" onClick={() => back()}>‹ Back</button>
           <h1>{t.name}</h1>
-          <div class="facts">{meta.join(' · ')} {t.uhd && <span class="b4k inline">4K</span>} {t.top250 && <span class="badge imdb">IMDb Top 250 #{t.top250}</span>}</div>
+          <div class="facts">{meta.join(' · ')} {t.uhd && <span class="b4k inline">4K</span>} {t.top250 && <span class="badge imdb">IMDb Top 250 #{t.top250}</span>}
+            {t.wl && !t.watched && <span class="badge lbwl">On your watchlist</span>}
+            {t.watched && <span class="badge lbseen">Watched{typeof t.watched === 'number' ? ` · you rated ${'★'.repeat(Math.floor(t.watched))}${t.watched % 1 ? '½' : ''}` : ''}</span>}</div>
           {ver && <div class="muted small vline">Version: {ver.label}{ver.probe?.alangs ? ` · Audio: ${langs(ver.probe.alangs)}` : ''}{ver.probe?.slangs ? ` · Subtitles: ${langs(ver.probe.slangs)}` : ''}</div>}
           {resumeAt && t.kind === 'movie' && <ProgBar p={resumeAt.p} d={resumeAt.d} />}
           <div class="btns">{buttons.map((b, i) => <button key={b.label} class={f('buttons') && i === bi ? 'focus' : ''} onClick={b.act}>{b.label}</button>)}</div>

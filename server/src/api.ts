@@ -14,6 +14,7 @@ import type { Prober } from './prober.ts';
 import { rankSources } from './quality.ts';
 import type { Tmdb } from './tmdb.ts';
 import type { Library } from './library.ts';
+import type { Letterboxd } from './letterboxd.ts';
 
 declare module 'fastify' { interface FastifyRequest { deviceId: string } }
 
@@ -21,8 +22,8 @@ const KINDS = new Set<Kind>(['live', 'movie', 'series']);
 const isLocal = (ip: string) => ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : d; };
 
-export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void }) {
-  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick } = ctx;
+export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void }) {
+  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick } = ctx;
   const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.regions.join('')}`; events.invalidate(); };
   db.prepare(`DELETE FROM kv WHERE k = 'show_adult'`).run();
   catalog.regions = JSON.parse(kvGet(db, 'regions') ?? '["UK","US","CA","AR","4K"]');
@@ -60,7 +61,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   app.get('/api/status', async () => ({
     syncing: isSyncing(), counts: catalog.counts(),
     catalogSynced: Number(kvGet(db, 'catalog_synced') ?? 0), epgSynced: Number(kvGet(db, 'epg_synced') ?? 0),
-    pairingCode: auth.pairingCode(), regions: catalog.regions, vodLangs: library.langs,
+    pairingCode: auth.pairingCode(), regions: catalog.regions, vodLangs: library.langs, letterboxd: letterboxd.status(),
     tmdb: { enabled: tmdb.enabled, enriched: tmdb.enriched, lastError: tmdb.lastError,
       pending: (db.prepare('SELECT count(*) AS n FROM titles WHERE tmdb IS NOT NULL AND meta_at IS NULL AND (lmask & ?) != 0').get(library.mask) as { n: number }).n },
     probing: prober.active, probeQueue: prober.pending(), liveSynced: Number(kvGet(db, 'live_synced') ?? 0),
@@ -72,7 +73,8 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   });
 
   app.put('/api/settings', async (req, reply) => {
-    const b = req.body as { regions?: string[]; vodLangs?: string[]; tmdbKey?: string };
+    const b = req.body as { regions?: string[]; vodLangs?: string[]; tmdbKey?: string; letterboxd?: string };
+    if (typeof b.letterboxd === 'string') { letterboxd.setUser(b.letterboxd); library.invalidate(); if (letterboxd.user) lbTick(); }
     if (Array.isArray(b.vodLangs)) { library.setLangs(b.vodLangs.map(String)); tmdbTick(); }
     if (typeof b.tmdbKey === 'string') {
       const k = b.tmdbKey.trim();
@@ -254,6 +256,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   const device = (q: Record<string, string>) => ({ tv: q.dev === 'tv', hevcOk: q.hevc === '1' });
   const vkind = (k: string) => (k === 'series' ? 'series' : 'movie') as 'movie' | 'series';
   app.get('/api/browse/:kind', async (req) => library.rows(vkind((req.params as any).kind)));
+  app.get('/api/watchlist', async () => ({ ...library.watchlistRow(500), status: letterboxd.status() }));
   app.get('/api/genres/:kind', async (req) => library.genres(vkind((req.params as any).kind)));
   app.get('/api/titles/:kind', async (req) => {
     const q = req.query as Record<string, string>;
