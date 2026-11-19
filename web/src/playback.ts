@@ -3,7 +3,7 @@
 import { signal } from '@preact/signals';
 import type { Item, ServerMsg } from '@shared/protocol.ts';
 import { send, onServer, devices, lease } from './ws.ts';
-import { api, myDeviceId } from './api.ts';
+import { api, myDeviceId, server, token } from './api.ts';
 import { dispatchKey, type Key } from './keys.ts';
 import type { Player } from './player/types.ts';
 import { isTizen } from './env.ts';
@@ -25,6 +25,7 @@ let suspended: { item: Item; position: number } | null = null;
 let retried = false;
 let lastUrls: string[] = [];
 let lastStart = 0;
+let lastHevc = false;
 
 export function showToast(msg: string, ms = 3500) {
   toast.value = msg;
@@ -50,12 +51,20 @@ export function attachPlayer(p: Player) {
       if (!retried && current.value) {
         retried = true; status.value = 'loading';
         const item = current.value;
-        setTimeout(() => { if (current.value === item) p.load(lastUrls, { startAt: p.position() || lastStart, live: item.kind === 'live', uhd: /4K|UHD|2160/i.test(item.name) }).catch(() => {}); }, 1200);
+        setTimeout(() => { if (current.value === item) p.load(lastUrls, loadOpts(item, p.position() || lastStart)).catch(() => {}); }, 1200);
         return;
       }
       status.value = 'error'; errorMsg.value = detail ?? 'Playback failed';
     }
   });
+}
+
+function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
+  const q = new URLSearchParams({ token: token.value ?? '', ...(item.ext ? { ext: item.ext } : {}) });
+  return {
+    startAt, live: item.kind === 'live', uhd: /4K|UHD|2160/i.test(item.name), id: item.id,
+    transcodeUrl: `${server.value}/api/transcode/${item.id}.ts?${q}`, hevc,
+  };
 }
 
 function beat() {
@@ -135,10 +144,10 @@ onServer((m: ServerMsg) => {
       if (pending) mode.value = pending.mode;
       pending = null;
       status.value = 'loading';
-      lastUrls = m.urls; lastStart = m.startAt; retried = false;
+      lastUrls = m.urls; lastStart = m.startAt; lastHevc = !!m.hevc; retried = false;
       position.value = m.startAt;
       if (m.urls[0]) preconnect(m.urls[0]);
-      player.load(m.urls, { startAt: m.startAt, live: item.kind === 'live', uhd: /4K|UHD|2160/i.test(item.name) }).catch(() => {});
+      player.load(m.urls, loadOpts(item, m.startAt, !!m.hevc)).catch(() => {});
       return;
     }
     case 'stop': {

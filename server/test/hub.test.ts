@@ -87,3 +87,20 @@ test('sendTo forwards play to target; concurrent plays are serialized', async ()
   await Promise.all([a, b]);
   assert.deepEqual(events.filter((e) => e !== 'tv:play'), ['tv:granted', 'tv:stop', 'pc:granted', 'pc:stop', 'ph:granted']);
 });
+
+test('server-side streams are released when the lease moves or stops, before the new grant', async () => {
+  const moved: (string | null)[] = [];
+  const order: string[] = [];
+  const hub = new Hub({
+    listDevices: () => [{ id: 'pc', name: 'PC', kind: 'desktop' }, { id: 'tv', name: 'TV', kind: 'tv' }],
+    saveProgress: () => {}, resumePosition: () => 0, urls: () => [], stopTimeoutMs: 50,
+    leaseMoved: (d) => { moved.push(d); order.push(`moved:${d}`); },
+  });
+  hub.connect('pc', (m) => m.t === 'granted' && order.push('pc:granted'));
+  hub.connect('tv', (m) => m.t === 'granted' && order.push('tv:granted'));
+  await hub.handle('pc', { t: 'play', item: live });
+  await hub.handle('tv', { t: 'play', item: live });
+  assert.deepEqual(order, ['moved:pc', 'pc:granted', 'moved:tv', 'tv:granted']);
+  await hub.handle('tv', { t: 'stopped', position: 0, duration: 0 });
+  assert.deepEqual(moved.at(-1), null);
+});

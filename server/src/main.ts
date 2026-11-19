@@ -15,12 +15,18 @@ import { Hub } from './hub.ts';
 import { registerApi } from './api.ts';
 import { scheduleSync } from './sync.ts';
 import { streamUrls } from './xtream.ts';
+import { Transcoder, HevcRegistry } from './transcode.ts';
+import { kvGet, kvSet } from './db.ts';
 import type { Item } from '../../shared/protocol.ts';
 
 const provider = parseProvider();
 const db = openDb(config.dbPath);
 const catalog = new Catalog(db);
 const auth = new Auth(db);
+const transcoder = new Transcoder();
+const hevc = new HevcRegistry(JSON.parse(kvGet(db, 'hevc_ids') ?? '[]'), (ids) => kvSet(db, 'hevc_ids', JSON.stringify(ids)));
+process.on('exit', () => { transcoder.stop(); });
+for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { transcoder.stop().finally(() => process.exit(0)); });
 
 const upsertProgress = db.prepare(`INSERT INTO progress (item, json, position, duration, updated, series) VALUES (?, ?, ?, ?, ?, ?)
   ON CONFLICT(item) DO UPDATE SET json = excluded.json, position = excluded.position, duration = excluded.duration, updated = excluded.updated`);
@@ -34,6 +40,8 @@ const hub = new Hub({
     return r && r.duration > 0 && r.position < r.duration * 0.95 ? r.position : 0;
   },
   urls: (item) => streamUrls(provider, item),
+  leaseMoved: (deviceId) => transcoder.releaseExcept(deviceId),
+  isHevc: (item) => hevc.has(item.id),
   log: (m) => app.log.info(m),
 });
 
@@ -41,7 +49,8 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transpor
 await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
-registerApi(app, { db, catalog, auth, hub, provider });
+registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc });
+app.log.warn(`transcoding: ${transcoder.available ? (transcoder.gpu ? 'NVENC (GPU)' : 'x264 (CPU)') : 'unavailable (install ffmpeg)'}`);
 
 if (existsSync(config.webDir)) {
   await app.register(fstatic, {

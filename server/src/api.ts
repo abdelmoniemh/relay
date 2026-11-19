@@ -8,6 +8,7 @@ import type { Provider } from './config.ts';
 import { apiUrl, getJson, streamUrls } from './xtream.ts';
 import { kvGet, kvSet } from './db.ts';
 import { isSyncing, runSync } from './sync.ts';
+import type { Transcoder, HevcRegistry } from './transcode.ts';
 
 declare module 'fastify' { interface FastifyRequest { deviceId: string } }
 
@@ -15,8 +16,8 @@ const KINDS = new Set<Kind>(['live', 'movie', 'series']);
 const isLocal = (ip: string) => ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : d; };
 
-export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider }) {
-  const { db, catalog, auth, hub, provider } = ctx;
+export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry }) {
+  const { db, catalog, auth, hub, provider, transcoder, hevc } = ctx;
   const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.showAdult ? 1 : 0}`; };
   catalog.showAdult = kvGet(db, 'show_adult') === '1';
   refreshVersion();
@@ -165,6 +166,33 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const { kind } = parseId(id);
     return { urls: streamUrls(provider, { id, kind, name: '', ext: (req.query as any).ext }) };
   });
+
+  // HEVC -> H.264 stream for browsers without an HEVC decoder. Raw MPEG-TS, consumed by mpegts.js.
+  app.get('/api/transcode/:id', async (req, reply) => {
+    const id = String((req.params as any).id).replace(/\.ts$/, '');
+    const q = req.query as Record<string, string>;
+    const { kind } = parseId(id);
+    if (!kind || kind === 'series') return reply.code(400).send({ error: 'bad id' });
+    if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
+    hevc.add(id);
+    const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
+    const src = kind === 'live' ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
+    let started;
+    try { started = await transcoder.start(src, Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId); }
+    catch (e) { return reply.code(502).send({ error: `Transcode failed: ${(e as Error).message}` }); }
+    const { proc, first } = started;
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, { 'content-type': 'video/mp2t', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+    res.write(first);
+    proc.stdout.pipe(res);
+    const end = () => { if (transcoder.owns(proc)) transcoder.stop(); else if (proc.exitCode === null) proc.kill('SIGKILL'); };
+    res.on('close', end);
+    req.raw.socket?.once('close', end);
+    proc.on('exit', () => res.end());
+  });
+
+  app.get('/api/capabilities', async () => ({ transcode: transcoder.available, gpu: transcoder.gpu }));
 
   // ---- library: favorites / continue watching / recent channels ----
   app.get('/api/favorites', async () =>

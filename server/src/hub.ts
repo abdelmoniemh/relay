@@ -8,6 +8,9 @@ export interface HubDeps {
   saveProgress(item: Item, position: number, duration: number): void;
   resumePosition(item: Item): number; // 0 if none
   urls(item: Item): string[];
+  isHevc?(item: Item): boolean;
+  /** The lease now belongs to `deviceId` (or nobody): free server-side streams held for anyone else. */
+  leaseMoved?(deviceId: string | null): void | Promise<void>;
   now?: () => number;
   stopTimeoutMs?: number;
   log?: (m: string) => void;
@@ -87,6 +90,7 @@ export class Hub {
     return this.exclusive(async () => {
       const prev = this.lease;
       await this.revoke(deviceId);
+      await this.deps.leaseMoved?.(deviceId);
       if (prev) this.persist(this.lease ?? prev);
       const handedOver = this.lease ?? prev;
       let start = 0;
@@ -98,7 +102,7 @@ export class Hub {
       this.lease = { deviceId, item, position: start, duration: handedOver?.item.id === item.id ? handedOver.duration : 0, paused: false, since: this.now() };
       if (item.kind === 'live') this.deps.saveProgress(item, 0, 0);
       this.deps.log?.(`lease -> ${deviceId}: ${item.name} @${Math.round(start)}s`);
-      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item) });
+      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item), ...(this.deps.isHevc?.(item) ? { hevc: true } : {}) });
       this.broadcastState();
     });
   }
@@ -129,7 +133,7 @@ export class Hub {
           this.persist(l);
           const waiter = this.stopWaiters.get(deviceId);
           if (waiter) waiter(); // handoff in progress: play() will replace the lease
-          else { this.lease = null; this.broadcastState(); }
+          else { this.lease = null; this.deps.leaseMoved?.(null); this.broadcastState(); }
         } else {
           this.stopWaiters.get(deviceId)?.();
         }

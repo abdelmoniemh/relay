@@ -74,7 +74,7 @@ export type ClientMsg =
 export type ServerMsg =
   | { t: 'hello'; deviceId: string }
   | { t: 'state'; devices: DeviceInfo[]; lease: Lease | null }
-  | { t: 'granted'; item: Item; startAt: number; urls: string[] }
+  | { t: 'granted'; item: Item; startAt: number; urls: string[]; hevc?: boolean } // hevc: known to need decoding support
   | { t: 'stop'; reason: 'handoff' | 'remote'; to?: string }
   | { t: 'play'; item: Item; startAt?: number; from: string } // asked to start playing (send-to)
   | { t: 'remote'; cmd: RemoteCmd; arg?: number | string; from: string }

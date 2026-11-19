@@ -1,6 +1,12 @@
 import type { LoadOpts, Player, PlayerEvent } from './types.ts';
 import { isIOS } from '../env.ts';
 
+const HEVC_KEY = 'relay.hevc';
+const hevcIds: Set<string> = (() => { try { return new Set(JSON.parse(localStorage.getItem(HEVC_KEY) ?? '[]')); } catch { return new Set<string>(); } })();
+/** Can this browser decode HEVC itself (Safari, Chrome/Edge on Windows/Mac with a hardware decoder)? */
+const canHevc = (() => { try { return MediaSource.isTypeSupported('video/mp4; codecs="hvc1.2.4.L153.B0"') || MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90"'); } catch { return false; } })();
+const saveHevc = () => { try { localStorage.setItem(HEVC_KEY, JSON.stringify([...hevcIds].slice(-1000))); } catch {} };
+
 /** Browser / iPhone player. Live: raw MPEG-TS via mpegts.js (≈0.5s to first frame); HLS via hls.js or native. */
 export class Html5Player implements Player {
   private v: HTMLVideoElement;
@@ -32,24 +38,9 @@ export class Html5Player implements Player {
     const ts = urls.find((u) => u.endsWith('.ts'));
     const v = this.v;
     if (o.live && ts && this.mse && !this.nativeHls) {
-      const { default: mpegts } = await import('mpegts.js');
-      if (gen !== this.gen) return;
-      if (mpegts.isSupported()) {
-        const p = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: ts }, {
-          enableWorker: true, enableStashBuffer: false, stashInitialSize: 256 * 1024, lazyLoad: false,
-          liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 8, liveBufferLatencyMinRemain: 2, autoCleanupSourceBuffer: true,
-        });
-        p.on(mpegts.Events.ERROR, (type: string, detail: string) => gen === this.gen && this.cb('error', `${type}: ${detail}`));
-        p.on(mpegts.Events.MEDIA_INFO, (mi: any) => {
-          const codec = String(mi?.videoCodec ?? '');
-          if (gen === this.gen && codec && !MediaSource.isTypeSupported(`video/mp4; codecs="${codec}"`)) this.cb('error', `This browser can't decode ${codec.startsWith('hvc') || codec.startsWith('hev') ? 'HEVC/H.265' : codec} video — try the HD version of this channel`);
-        });
-        p.attachMediaElement(v);
-        p.load();
-        this.engine = { destroy: () => { try { p.pause(); p.unload(); p.detachMediaElement(); p.destroy(); } catch {} } };
-        v.play().catch(() => {});
-        return;
-      }
+      // Channels we already know are HEVC go straight to the server's GPU transcode: no failed first attempt.
+      const useTx = !!o.transcodeUrl && !canHevc && (o.hevc || (!!o.id && hevcIds.has(o.id)));
+      if (await this.mpegts(useTx ? o.transcodeUrl! : ts, gen, useTx ? undefined : o, useTx)) return;
     }
     if (hls && (o.live || !urls[0].match(/\.(mp4|mkv|avi|mov)$/))) {
       if (this.nativeHls) { v.src = hls; }
@@ -70,6 +61,49 @@ export class Html5Player implements Player {
       v.readyState >= 1 ? seek() : v.addEventListener('loadedmetadata', seek, { once: true });
     }
     v.play().catch(() => {});
+  }
+
+  /** Live MPEG-TS via mpegts.js. With `fallback`, switches to the transcode URL if the codec isn't decodable here. */
+  private async mpegts(url: string, gen: number, fallback?: LoadOpts, _transcoded = false): Promise<boolean> {
+    const { default: mpegts } = await import('mpegts.js');
+    if (gen !== this.gen) return true;
+    if (!mpegts.isSupported()) return false;
+    const v = this.v;
+    const p = mpegts.createPlayer({ type: 'mpegts', isLive: true, url }, {
+      enableWorker: true, enableStashBuffer: false, stashInitialSize: 256 * 1024, lazyLoad: false, autoCleanupSourceBuffer: true,
+      // Direct streams: jump to the live edge. Transcoded streams arrive in a 3x burst: drift to the edge by
+      // playing slightly faster instead of skipping (no visible jumps).
+      // Providers replay a ~20-30s backlog on connect: that's what makes channels start instantly. Play it
+      // continuously like VLC does: skipping to the live edge would show visible jumps.
+      liveBufferLatencyChasing: false, liveSync: false,
+    } as any);
+    let switched = false;
+    const toTranscode = () => {
+      if (switched || gen !== this.gen) return;
+      switched = true;
+      if (fallback?.id) { hevcIds.add(fallback.id); saveHevc(); }
+      this.cb('waiting');
+      // Free the provider connection first, then let the server open its own.
+      this.engine?.destroy();
+      this.engine = null;
+      this.mpegts(fallback!.transcodeUrl!, gen, undefined, true);
+    };
+    p.on(mpegts.Events.ERROR, (type: string, detail: string, info: any) => {
+      if (gen !== this.gen || switched) return;
+      if (fallback?.transcodeUrl && /hvc|hev|unsupported/i.test(`${detail} ${info?.msg ?? ''}`)) return toTranscode();
+      this.cb('error', `${type}: ${detail}`);
+    });
+    p.on(mpegts.Events.MEDIA_INFO, (mi: any) => {
+      const codec = String(mi?.videoCodec ?? '');
+      if (gen !== this.gen || !codec || MediaSource.isTypeSupported(`video/mp4; codecs="${codec}"`)) return;
+      if (fallback?.transcodeUrl) return toTranscode();
+      this.cb('error', `This browser can't decode ${/^(hvc|hev)/.test(codec) ? 'HEVC/H.265' : codec} video`);
+    });
+    p.attachMediaElement(v);
+    p.load();
+    this.engine = { destroy: () => { try { p.pause(); p.unload(); p.detachMediaElement(); p.destroy(); } catch {} } };
+    v.play().catch(() => {});
+    return true;
   }
 
   play() { this.v.play().catch(() => {}); }

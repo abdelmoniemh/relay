@@ -1,5 +1,14 @@
 export type PlayerEvent = 'playing' | 'paused' | 'waiting' | 'ended' | 'error' | 'time';
-export interface LoadOpts { startAt: number; live: boolean; uhd?: boolean }
+export interface LoadOpts {
+  startAt: number;
+  live: boolean;
+  uhd?: boolean;
+  id?: string;
+  /** Server-side HEVC->H.264 stream, used when this browser can't decode the original. */
+  transcodeUrl?: string;
+  /** Server says this item is HEVC. */
+  hevc?: boolean;
+}
 
 export interface Player {
   load(urls: string[], opts: LoadOpts): Promise<void>;
