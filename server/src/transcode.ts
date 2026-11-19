@@ -7,11 +7,18 @@ import { transcodeArgs, encoderArgs, VOD, type SourceInfo } from './media.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
-/** Where HLS sessions (iPhone movie playback) write their segments. */
-const HLS_ROOT = join(tmpdir(), 'relay-hls');
+/**
+ * Where HLS sessions (iPhone movie playback) write their segments. On disk, not /tmp: /tmp is RAM here and
+ * a whole movie (4K ≈ 20–40 GB) would fill it. Old segments are pruned while playing (HLS_KEEP_BEHIND).
+ */
+const HLS_ROOT = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'relay-hls');
+/** Segments (4s each, so ≈20 min) kept behind the newest one the player asked for; seeking further back restarts. */
+const HLS_KEEP_BEHIND = 300;
+/** How each source video codec goes into HLS for Safari. */
+const hlsVideoPlan = (c: string | null) => (c === 'h264' || c === 'hevc' ? c : 'encode');
 /** No playlist/segment request for this long (app closed, phone locked): free the provider connection. */
 const HLS_IDLE_MS = 45_000;
 
@@ -57,14 +64,14 @@ export class Transcoder {
   private startGen = 0;
 
   /** Current HLS session (iPhone/iPad Safari can't play MKV/AVI or raw MPEG-TS, but plays HLS natively). */
-  private hls: { sid: string; dir: string; proc: Proc; lastHit: number } | null = null;
+  private hls: { sid: string; dir: string; proc: Proc; lastHit: number; pruned: number } | null = null;
 
   constructor() {
     let ok = true;
     try { execFileSync('ffmpeg', ['-version'], { timeout: 5000 }); } catch { ok = false; }
     this.available = ok;
     this.gpu = ok && detectGpu();
-    try { rmSync(HLS_ROOT, { recursive: true, force: true }); } catch {}
+    for (const d of [HLS_ROOT, join(tmpdir(), 'relay-hls')]) { try { rmSync(d, { recursive: true, force: true }); } catch {} }
     setInterval(() => {
       const h = this.hls;
       if (h && h.proc.exitCode === null && h.proc.signalCode === null && Date.now() - h.lastHit > HLS_IDLE_MS) this.stop();
@@ -81,10 +88,14 @@ export class Transcoder {
       : gpu ? [...encoderArgs({ ...VOD, gopSec: 4 }, true, 24), '-pix_fmt', 'yuv420p']
       : ['-vf', 'scale=w=min(iw\\,1920):h=-2,format=yuv420p', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-maxrate', '12M', '-bufsize', '12M', '-g', '96'];
     return [
-      '-hide_banner', '-loglevel', 'error', '-nostdin',
+      // 'info' so the input's codec shows up on stderr (startHls reads it instead of a separate ffprobe)
+      '-hide_banner', '-loglevel', 'info', '-nostats', '-nostdin',
       '-fflags', '+genpts+discardcorrupt', '-user_agent', 'Relay/1.0 (like VLC/3.0.20)',
       '-readrate', '1', '-readrate_initial_burst', '45',
-      ...(startAt > 0 ? ['-ss', String(startAt)] : []),
+      // From the start nothing needs to jump around the file, so read it straight through. Otherwise ffmpeg
+      // peeks at the end (MKV cues, AVI index): every jump is a new provider request, and the provider is slow
+      // to answer one that follows a closed one. Measured: opening 1.5–9s → 0.5–0.8s.
+      ...(startAt > 0 ? ['-ss', String(startAt)] : ['-seekable', '0']),
       '-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4',
       '-i', src,
       '-map', '0:v:0', '-map', '0:a:0?', ...video,
@@ -96,41 +107,64 @@ export class Transcoder {
     ];
   }
 
-  /** Starts an HLS session; resolves with its id once the first segments are ready to play. */
-  async startHls(src: string, startAt: number, vcodec: string | null, owner: string | null, log: (m: string) => void = () => {}): Promise<string> {
+  /**
+   * Starts an HLS session; resolves once the first segment is ready to play.
+   * `guess` is the expected video codec. ffmpeg reports the real one as it opens the file: if the guess
+   * was wrong (e.g. HEVC copied without Apple's tag, or MPEG-4 that needs converting) it restarts right away.
+   * That's much faster than a separate ffprobe, which costs an extra provider connection that the provider
+   * keeps counting for a moment (so the real one then fails and has to retry).
+   */
+  async startHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}): Promise<{ sid: string; vcodec: string | null }> {
     await this.stop();
     await Promise.all([...this.dying]);
-    let lastErr = '';
-    for (let attempt = 0; attempt < 3; attempt++) {
+    let vcodec = guess, lastErr = '', corrected = false;
+    for (let attempt = 0; attempt < 3;) {
       if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
+      const t0 = Date.now();
       const sid = randomBytes(12).toString('base64url');
       const dir = join(HLS_ROOT, sid);
       mkdirSync(dir, { recursive: true });
       const gpu = this.gpu && attempt < 2;
       const proc = spawn('ffmpeg', this.hlsArgs(src, startAt, vcodec, gpu, dir), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
       this.current = proc; this.owner = owner;
-      this.hls = { sid, dir, proc, lastHit: Date.now() };
-      let stderr = '';
-      proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+      this.hls = { sid, dir, proc, lastHit: Date.now(), pruned: 0 };
+      let stderr = '', head = '', detected: string | null | undefined;
+      proc.stderr.on('data', (d) => {
+        stderr = (stderr + d).slice(-2000);
+        if (detected !== undefined) return;
+        head += d;
+        // First real video stream of the input (cover art in MKVs shows up as an "attached pic" video stream).
+        const line = head.split('\n').find((l) => /Stream #0:\d+.*: Video: /.test(l) && !/attached pic/.test(l));
+        if (line) detected = /Video: (\w+)/.exec(line)![1];
+        else if (/Stream mapping|Output #0/.test(head) || head.length > 64_000) detected = null;
+      });
       proc.stdout.resume();
+      const wrong = () => detected != null && hlsVideoPlan(detected) !== hlsVideoPlan(vcodec);
       try {
         await new Promise<void>((resolve, reject) => {
-          const t0 = Date.now();
           const tick = setInterval(() => {
+            if (wrong()) { clearInterval(tick); reject(new Error('codec')); return; }
             let pl = '';
             try { pl = readFileSync(join(dir, 'index.m3u8'), 'utf8'); } catch {}
-            const segs = (pl.match(/^seg\d+\.m4s$/gm) ?? []).length;
-            if (segs >= 2 || (segs >= 1 && pl.includes('#EXT-X-ENDLIST'))) { clearInterval(tick); resolve(); }
-            else if (proc.exitCode !== null || proc.signalCode !== null) { clearInterval(tick); reject(new Error(`ffmpeg exited ${proc.exitCode ?? proc.signalCode}: ${stderr.trim().split('\n').pop() ?? ''}`)); }
+            if (/^seg\d+\.m4s$/m.test(pl)) { clearInterval(tick); resolve(); }
+            else if (proc.exitCode !== null || proc.signalCode !== null) { clearInterval(tick); reject(new Error(wrong() ? 'codec' : `ffmpeg exited ${proc.exitCode ?? proc.signalCode}: ${stderr.trim().split('\n').pop() ?? ''}`)); }
             else if (Date.now() - t0 > 25_000) { clearInterval(tick); reject(new Error('no output after 25s')); }
-          }, 150);
+          }, 100);
         });
-        log(`hls started (${vcodec === 'h264' || vcodec === 'hevc' ? `copy ${vcodec}` : gpu ? 'nvenc' : 'x264'}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
-        return sid;
+        const how = hlsVideoPlan(vcodec) === 'encode' ? (gpu ? 'nvenc' : 'x264') : `copy ${vcodec}`;
+        log(`hls started in ${Date.now() - t0}ms (${how}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
+        return { sid, vcodec: detected ?? vcodec };
       } catch (e) {
-        lastErr = (e as Error).message;
         await this.stop();
+        if ((e as Error).message === 'codec' && !corrected) {
+          log(`hls: source is ${detected}, not ${vcodec ?? 'unknown'}: restarting`);
+          vcodec = detected!; corrected = true;
+          await new Promise((r) => setTimeout(r, 300)); // let the provider drop the connection we just closed
+          continue; // not a failure: doesn't use up an attempt
+        }
+        lastErr = (e as Error).message;
         log(`hls attempt ${attempt + 1} failed: ${lastErr}`);
+        attempt++;
       }
     }
     throw new Error(lastErr);
@@ -143,6 +177,11 @@ export class Transcoder {
     const p = join(h.dir, name);
     if (!existsSync(p)) return null;
     h.lastHit = Date.now();
+    // Keep disk use bounded: drop segments far behind what the player is fetching.
+    const n = /^seg(\d+)\.m4s$/.exec(name);
+    for (const upto = n ? Number(n[1]) - HLS_KEEP_BEHIND : 0; h.pruned < upto; h.pruned++) {
+      rm(join(h.dir, `seg${String(h.pruned).padStart(5, '0')}.m4s`), { force: true }).catch(() => {});
+    }
     return p;
   }
 

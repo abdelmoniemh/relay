@@ -32,6 +32,9 @@ export class Html5Player implements Player {
   private media: { fps?: number; vcodec?: string; transcoded: boolean } = { transcoded: false };
   /** iPhone/iPad: playlist URL of the server's HLS session for the converted movie. */
   private hlsSession: string | null = null;
+  /** Seek waiting to restart the conversion (dragging the seek bar fires dozens of seeks: only the last one counts). */
+  private pendingSeek: number | null = null;
+  private seekTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(video: HTMLVideoElement) {
     this.v = video;
@@ -237,15 +240,25 @@ export class Html5Player implements Player {
       // Inside what's already buffered: seek locally; otherwise restart the conversion at the new position.
       // (HLS: anything already converted is seekable; mpegts.js: only what's buffered)
       const rel = t - this.txOffset, b = this.hlsSession ? this.v.seekable : this.v.buffered;
-      for (let i = 0; i < b.length; i++) if (rel >= b.start(i) && rel <= b.end(i) - 1) { this.v.currentTime = rel; return; }
+      for (let i = 0; i < b.length; i++) if (rel >= b.start(i) && rel <= b.end(i) - 1) { this.cancelPendingSeek(); this.v.currentTime = rel; return; }
+      // Restarting the conversion costs a new provider connection: wait until the seeking stops.
+      this.pendingSeek = t;
       this.cb('waiting');
-      this.startVodTranscode(this.txMode, t);
+      clearTimeout(this.seekTimer);
+      this.seekTimer = setTimeout(() => {
+        const at = this.pendingSeek;
+        this.pendingSeek = null;
+        if (at !== null) this.startVodTranscode(this.txMode, at);
+      }, 350);
       return;
     }
     this.v.currentTime = t;
   }
+  private cancelPendingSeek() { clearTimeout(this.seekTimer); this.pendingSeek = null; }
+
   stop() {
     this.gen++;
+    this.cancelPendingSeek();
     clearTimeout(this.parkTimer); clearTimeout(this.audioCheck);
     this.releaseHls();
     this.engine?.destroy();
@@ -254,6 +267,7 @@ export class Html5Player implements Player {
     if (this.v.getAttribute('src') != null) { this.v.removeAttribute('src'); this.v.load(); } // aborts the HTTP connection
   }
   position() {
+    if (this.pendingSeek !== null) return this.pendingSeek;
     if (this.parked !== null) return this.parked;
     return (this.txOffset ?? 0) + (this.v.currentTime || 0);
   }

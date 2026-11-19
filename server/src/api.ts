@@ -10,7 +10,7 @@ import { kvGet, kvSet } from './db.ts';
 import { isSyncing, runSync } from './sync.ts';
 import type { Transcoder, HevcRegistry } from './transcode.ts';
 import type { EventsIndex } from './events.ts';
-import { probeVodUrl, type Prober } from './prober.ts';
+import type { Prober } from './prober.ts';
 import { readFile } from 'node:fs/promises';
 import { rankSources } from './quality.ts';
 import { probeToSource } from './prober.ts';
@@ -239,27 +239,35 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
 
   // ---- HLS for iPhone/iPad Safari (movies & episodes) ----
   // Safari plays neither MKV/AVI nor a raw MPEG-TS stream, but plays HLS natively: repackage (or convert) on the fly.
-  const vcodecs = new Map<string, string | null>();
+  // Video codec per title, learned from earlier plays/probes; decides copy (instant, lossless) vs conversion.
+  const vcodecs = new Map<string, string | null>(Object.entries(JSON.parse(kvGet(db, 'hls_vcodecs') ?? '{}')));
   const probedCodec = db.prepare('SELECT vcodec FROM vod_probes WHERE id = ? AND ok = 1');
+  const itemName = db.prepare('SELECT name FROM items WHERE kind = ? AND sid = ?');
+  const guessCodec = (id: string, kind: string, sid: number, ext?: string): string | null => {
+    if (vcodecs.has(id)) return vcodecs.get(id)!;
+    const probed = (probedCodec.get(id) as { vcodec: string | null } | undefined)?.vcodec;
+    if (probed) return probed;
+    // Unknown: guess from the name; ffmpeg tells startHls the truth within a second and it corrects itself.
+    if (ext === 'avi' || ext === 'flv') return null; // old Xvid/DivX era: needs converting
+    const name = (itemName.get(kind, sid) as { name: string } | undefined)?.name ?? '';
+    return /\b(x265|h\.?265|hevc|hdr|dv|2160p?|4k|uhd)\b/i.test(name) ? 'hevc' : 'h264';
+  };
   app.post('/api/hls/:id', async (req, reply) => {
     const id = String((req.params as any).id);
     const q = req.query as Record<string, string>;
-    const { kind } = parseId(id);
+    const { kind, sid } = parseId(id);
     if (kind !== 'movie' && kind !== 'episode') return reply.code(400).send({ error: 'bad id' });
     if (kind !== 'episode' && !catalog.playable({ id, kind })) return reply.code(404).send({ error: 'not found' });
     if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
     const src = streamUrls(provider, { id, kind, name: '', ext: q.ext })[0];
-    // Which video codec? Decides between a lossless copy and a real conversion.
-    let vcodec: string | null | undefined = vcodecs.has(id) ? vcodecs.get(id)! : ((probedCodec.get(id) as { vcodec: string | null } | undefined)?.vcodec ?? undefined);
-    if (vcodec === undefined) {
-      await prober.abort();
-      await transcoder.stop(); // one provider connection: nothing else may hold it while we look
-      try { vcodec = (await probeVodUrl(src, AbortSignal.timeout(15_000))).vcodec; } catch { vcodec = null; }
-      vcodecs.set(id, vcodec);
-    }
+    await prober.abort(); // a background probe may hold the provider connection
     try {
-      const sid = await transcoder.startHls(src, Number(q.start) || 0, vcodec ?? null, req.deviceId, (m) => app.log.warn(m));
-      return { url: `/api/hls/${sid}/index.m3u8?token=${encodeURIComponent(String(q.token ?? ''))}` };
+      const r = await transcoder.startHls(src, Number(q.start) || 0, guessCodec(id, kind, sid, q.ext), req.deviceId, (m) => app.log.warn(m));
+      if (r.vcodec && vcodecs.get(id) !== r.vcodec) {
+        vcodecs.set(id, r.vcodec);
+        kvSet(db, 'hls_vcodecs', JSON.stringify(Object.fromEntries([...vcodecs].slice(-5000))));
+      }
+      return { url: `/api/hls/${r.sid}/index.m3u8?token=${encodeURIComponent(String(q.token ?? ''))}` };
     } catch (e) { return reply.code(502).send({ error: `Conversion failed: ${(e as Error).message}` }); }
   });
   app.get('/api/hls/:sid/:file', async (req, reply) => {
@@ -270,7 +278,10 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     if (file.endsWith('.m3u8')) {
       // Segment requests from Safari's player carry no auth header: put the token on every URI.
       const tok = `?token=${encodeURIComponent(String((req.query as any).token ?? ''))}`;
-      const pl = (await readFile(p, 'utf8')).replace(/^(seg\d+\.m4s)$/gm, `$1${tok}`).replace(/URI="init\.mp4"/, `URI="init.mp4${tok}"`);
+      const pl = (await readFile(p, 'utf8')).replace(/^(seg\d+\.m4s)$/gm, `$1${tok}`).replace(/URI="init\.mp4"/, `URI="init.mp4${tok}"`)
+        // The playlist grows while Safari watches, so it may treat it as live and start near the newest
+        // segment (≈40s into the movie, thanks to ffmpeg's head start). Always start at the beginning.
+        .replace(/^#EXTM3U\n/, '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n');
       return reply.type('application/vnd.apple.mpegurl').send(pl);
     }
     return reply.type(file.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment').send(await readFile(p));
