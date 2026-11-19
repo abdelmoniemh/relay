@@ -29,9 +29,10 @@ export function Settings() {
         api.settings({ tmdbKey: k }).then(() => { clearCache(); setTick((t) => t + 1); }).catch((e) => alert(e.message));
       } },
     { label: 'Letterboxd', value: !s ? '…' : s.letterboxd.user
-        ? `@${s.letterboxd.user} · ${s.letterboxd.watchlist} on watchlist${s.letterboxd.syncing ? ' · syncing…' : s.letterboxd.syncedAt ? ` · synced ${ago(s.letterboxd.syncedAt)}` : ''}${s.letterboxd.error ? ` · ${s.letterboxd.error}` : ''}`
+        ? `@${s.letterboxd.user}${s.letterboxd.fromConfig ? ' (from server config)' : ''} · ${s.letterboxd.watchlist} on watchlist${s.letterboxd.syncing ? ' · syncing…' : s.letterboxd.syncedAt ? ` · synced ${ago(s.letterboxd.syncedAt)}` : ''}${s.letterboxd.error ? ` · ${s.letterboxd.error}` : ''}`
         : 'not linked — add your username',
       act: () => {
+        if (s?.letterboxd.fromConfig) { alert('Set by LETTERBOXD_USER in server/.env — change it there.'); return; }
         const u = prompt('Your Letterboxd username (your watchlist must be public). Leave empty to unlink.', s?.letterboxd.user ?? '');
         if (u === null) return;
         api.settings({ letterboxd: u }).then(() => { clearCache(); setTimeout(() => setTick((t) => t + 1), 1500); });

@@ -62,7 +62,7 @@ export interface TitleCard {
   langs: string[]; progress?: { position: number; duration: number; label?: string };
   tmdb?: number | null; wl?: boolean; watched?: number | true; fresh?: boolean;
 }
-export interface LbStatus { user: string | null; watchlist: number; resolved: number; watched: number; syncedAt: number | null; error: string | null; syncing: boolean }
+export interface LbStatus { user: string | null; fromConfig: boolean; watchlist: number; resolved: number; watched: number; syncedAt: number | null; error: string | null; syncing: boolean }
 export interface BrowseRow { id: string; title: string; items: TitleCard[]; more?: Record<string, string> }
 export interface VersionInfo {
   item: Item; lang: string; uhd: boolean; hdr: boolean; dv: boolean; dolby: boolean; src: string | null; score: number; label: string;

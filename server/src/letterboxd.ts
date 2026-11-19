@@ -40,7 +40,7 @@ export function parseDiary(xml: string): { tmdb: number; rating: number | null; 
   return out;
 }
 
-export interface LbStatus { user: string | null; watchlist: number; resolved: number; watched: number; syncedAt: number | null; error: string | null; syncing: boolean }
+export interface LbStatus { user: string | null; fromConfig: boolean; watchlist: number; resolved: number; watched: number; syncedAt: number | null; error: string | null; syncing: boolean }
 
 export class Letterboxd {
   private db: DatabaseSync;
@@ -57,9 +57,13 @@ export class Letterboxd {
     `);
   }
 
-  get user() { return kvGet(this.db, 'lb_user'); }
+  /** Username from config (LETTERBOXD_USER in server/.env) wins; otherwise the one set in the app's Settings. */
+  get user() { return Letterboxd.clean(process.env.LETTERBOXD_USER ?? '') || kvGet(this.db, 'lb_user') || ''; }
+  get fromConfig() { return !!Letterboxd.clean(process.env.LETTERBOXD_USER ?? ''); }
+  static clean(u: string) { return u.trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?letterboxd\.com\//, '').replace(/\/.*$/, '').toLowerCase(); }
   setUser(u: string | null) {
-    const clean = u ? u.trim().replace(/^@/, '').replace(/^https?:\/\/letterboxd\.com\//, '').replace(/\/.*$/, '').toLowerCase() : '';
+    if (this.fromConfig) return this.user; // configured in server/.env: change it there
+    const clean = u ? Letterboxd.clean(u) : '';
     kvSet(this.db, 'lb_user', clean);
     if (!clean) { this.db.exec('DELETE FROM lb_watchlist; DELETE FROM lb_watched;'); this.onChange(); }
     return clean;
@@ -68,7 +72,7 @@ export class Letterboxd {
   status(): LbStatus {
     const n = (sql: string) => (this.db.prepare(sql).get() as { n: number }).n;
     return {
-      user: this.user || null,
+      user: this.user || null, fromConfig: this.fromConfig,
       watchlist: n('SELECT count(*) AS n FROM lb_watchlist'),
       resolved: n('SELECT count(*) AS n FROM lb_watchlist w JOIN lb_films f ON f.slug = w.slug WHERE f.tmdb IS NOT NULL'),
       watched: n('SELECT count(*) AS n FROM lb_watched'),
