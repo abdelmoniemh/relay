@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Item } from '@shared/protocol.ts';
-import { api } from '../api.ts';
+import { api, type TitleCard } from '../api.ts';
 import { play } from '../playback.ts';
 import { push, railFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
@@ -12,6 +12,7 @@ const KLABEL: Record<string, string> = { live: 'LIVE', movie: 'MOVIE', series: '
 let lastQ = '';
 
 export function openItem(it: Item) {
+  if (it.id.startsWith('t')) { push({ name: 'title', tid: Number(it.id.slice(1)) }); return; }
   if (it.kind === 'live') play(it, { mode: 'full' });
   else if (it.kind === 'movie') push({ name: 'movie', item: it });
   else if (it.kind === 'series') push({ name: 'show', item: it });
@@ -22,7 +23,15 @@ export function Search({ onPick, autoFocus = true }: { onPick?: (it: Item) => vo
   const [q, setQ] = useState(lastQ);
   const dq = useDebounced(q.trim(), 220);
   const [kind, setKind] = useState<'' | 'live' | 'movie' | 'series'>('');
-  const res = useAsync(() => (dq.length >= 2 ? api.search(dq, kind || undefined) : Promise.resolve([] as Item[])), [dq, kind]);
+  // Live channels come from the catalog; movies & series as titles (one result per film/show, not per copy).
+  const res = useAsync(async () => {
+    if (dq.length < 2) return [] as Item[];
+    const asItem = (t: TitleCard): Item => ({ id: `t${t.tid}`, kind: t.kind, name: t.year ? `${t.name} (${t.year})` : t.name, icon: t.poster, rating: t.rating });
+    if (kind === 'live') return api.search(dq, 'live');
+    if (kind) return (await api.titleSearch(dq, kind)).map(asItem);
+    const [live, titles] = await Promise.all([api.search(dq, 'live'), api.titleSearch(dq)]);
+    return [...titles.slice(0, 30).map(asItem), ...live.slice(0, 30)];
+  }, [dq, kind]);
   const items = res.data ?? [];
   const [fi, setFi] = useState(-1);
   const input = useRef<HTMLInputElement>(null);
@@ -62,7 +71,7 @@ export function Search({ onPick, autoFocus = true }: { onPick?: (it: Item) => vo
             {it.kind === 'live' ? <Logo src={it.icon} name={it.name} size={56} /> : <img class="thumb small" src={img(it.icon, 92)} loading="lazy" alt="" />}
             <div class="meta">
               <div class="name">{clean(it.name)} <Star id={it.id} /></div>
-              {it.kind === 'live' ? <NowLine list={nowNext(it.epg)} /> : <div class="muted small">{it.rating ? `★ ${it.rating.toFixed(1)}` : ''}</div>}
+              {it.kind === 'live' ? <NowLine list={nowNext(it.epg)} /> : <div class="muted small">{it.rating ? `★ ${(it.rating * 2).toFixed(1)}` : ''}</div>}
             </div>
             <span class={`badge k-${it.kind}`}>{KLABEL[it.kind]}</span>
           </div>

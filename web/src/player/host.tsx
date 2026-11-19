@@ -6,7 +6,7 @@ import { AvPlayer } from './avplay.ts';
 import type { Player } from './types.ts';
 import {
   attachPlayer, current, mode, status, position, duration, errorMsg, play, stop, togglePause, seekBy, seekTo, zap, setMode, volume,
-  sources, nextSource, sourceEvent,
+  sources, nextSource, sourceEvent, nextUp, nextEpisode, playNextEpisode, cancelNextUp,
 } from '../playback.ts';
 import { useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
 import { Logo, clean } from '../ui/common.tsx';
@@ -103,6 +103,11 @@ function Overlay() {
   const others = devices.value.filter((d) => d.online && d.id !== myDeviceId.value);
 
   useKeys((k) => {
+    if (nextUp.value) {
+      if (k === 'ok' || k === 'play' || k === 'playpause') { playNextEpisode(); return true; }
+      if (k === 'back') { cancelNextUp(); stop(); return true; }
+      return true;
+    }
     if (sendMenu) {
       if (k === 'back') { setSendMenu(false); return true; }
       if (k.startsWith('digit')) {
@@ -202,11 +207,13 @@ function Overlay() {
             <button class="big" onClick={togglePause}>{st === 'paused' ? '▶' : '❚❚'}</button>
             <button onClick={() => seekBy(10)}>10 ⟳</button>
           </>}
-          <button onClick={() => toggleFavorite(it)}>{favorites.value.has(it.id) ? '★' : '☆'}</button>
+          {it.kind === 'episode' && nextEpisode() && <button onClick={playNextEpisode}>Next episode ⏭</button>}
+          {live && <button onClick={() => toggleFavorite(it)}>{favorites.value.has(it.id) ? '★' : '☆'}</button>}
           {others.length > 0 && <button onClick={() => setSendMenu(true)}>Send to… <span class="key blue" /></button>}
           {!isMobile && !isTizen && <button onClick={() => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()}>⤢ Full screen</button>}
         </div>
       </div>
+      {nextUp.value && <NextUp />}
       {sendMenu && (
         <div class="dialog" onClick={(e) => e.stopPropagation()}>
           <h3>Continue on…</h3>
@@ -216,6 +223,21 @@ function Overlay() {
           <button class="muted" onClick={() => setSendMenu(false)}>Cancel</button>
         </div>
       )}
+    </div>
+  );
+}
+
+function NextUp() {
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 250); return () => clearInterval(t); }, []);
+  const n = nextUp.value;
+  if (!n) return null;
+  const secs = Math.max(0, Math.ceil((n.at - Date.now()) / 1000));
+  return (
+    <div class="nextup" onClick={(e) => e.stopPropagation()}>
+      <div class="muted small">Next episode in {secs}s</div>
+      <div class="name">S{n.item.season} E{n.item.episode} · {n.item.name}</div>
+      <div class="ctl"><button class="big" onClick={playNextEpisode}>▶ Play now</button><button onClick={cancelNextUp}>Cancel</button></div>
     </div>
   );
 }

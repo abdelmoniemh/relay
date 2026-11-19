@@ -5,6 +5,7 @@ import { openDb, kvSet } from './db.ts';
 import { apiUrl, getJson, getStream, xmltvUrl } from './xtream.ts';
 import { parseXmltv } from './epg.ts';
 import { channelKey, isAdultCategory, isAdultChannel, regionOf } from './normalize.ts';
+import { classify, parseTmdb, titleKey, type Lang } from './vod.ts';
 import type { Provider } from './config.ts';
 
 const { dbPath, provider, epgUrl, what } = workerData as {
@@ -23,8 +24,8 @@ const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n
 
 async function syncCatalog(only?: 'live') {
   const insCat = db.prepare('INSERT INTO categories (kind, id, name, sort, count) VALUES (?, ?, ?, ?, 0)');
-  const ins = db.prepare(`INSERT OR IGNORE INTO items (kind, sid, name, icon, cat, sort, epg, ext, rating, added, archive, adult, sep)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const ins = db.prepare(`INSERT OR IGNORE INTO items (kind, sid, name, icon, cat, sort, epg, ext, rating, added, archive, adult, sep, tmdb, meta)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   // Download all catalogs concurrently (network-bound), import sequentially (CPU/disk-bound).
   const t0 = performance.now();
   const kinds = only ? KINDS.filter((k) => k.kind === only) : KINDS;
@@ -52,7 +53,8 @@ async function syncCatalog(only?: 'live') {
           k.kind, Number(x[k.id]), name, x[k.icon] || null, x.category_id != null ? String(x.category_id) : null,
           num(x.num) ?? i, x.epg_channel_id || null, x.container_extension || null,
           num(x.rating_5based ?? x.rating), num(x.added ?? x.last_modified), num(x.tv_archive_duration) ?? 0,
-          0, sep,
+          0, sep, parseTmdb(x.tmdb),
+          k.kind === 'series' ? seriesMeta(x) : k.kind === 'movie' && x.trailer ? JSON.stringify({ trailer: x.trailer }) : null,
         );
       }
       db.prepare(`UPDATE categories SET count = (SELECT count(*) FROM items i WHERE i.kind = categories.kind AND i.cat = categories.id AND i.sep = 0),
@@ -62,6 +64,7 @@ async function syncCatalog(only?: 'live') {
       purgeLibrary();
       if (skipped) log(`${k.kind}: excluded ${skipped} adult items`);
       if (k.kind === 'live') assignFamilies();
+      else buildTitles(k.kind);
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
     log(`${k.kind}: ${items.length} items, ${cats.length} categories (ready after ${((t1 - t0) / 1000).toFixed(1)}s, import ${((performance.now() - t1) / 1000).toFixed(1)}s)`);
@@ -72,6 +75,77 @@ async function syncCatalog(only?: 'live') {
   log(`search index rebuilt in ${((performance.now() - t) / 1000).toFixed(1)}s`);
   kvSet(db, only ? 'live_synced' : 'catalog_synced', String(Date.now()));
   if (!only) kvSet(db, 'live_synced', String(Date.now()));
+}
+
+/** Provider series list already carries genre/plot/cast: keep it as a fallback for TMDB metadata. */
+function seriesMeta(x: any): string | null {
+  const m: Record<string, unknown> = {};
+  if (x.genre) m.genre = String(x.genre);
+  if (x.plot) m.plot = String(x.plot).slice(0, 1200);
+  if (x.cast) m.cast = String(x.cast).slice(0, 300);
+  if (x.director) m.director = String(x.director).slice(0, 120);
+  const rd = x.releaseDate || x.release_date; if (rd) m.release = String(rd).slice(0, 10);
+  const bd = Array.isArray(x.backdrop_path) ? x.backdrop_path[0] : x.backdrop_path; if (bd) m.backdrop = String(bd);
+  if (x.youtube_trailer) m.trailer = String(x.youtube_trailer);
+  return Object.keys(m).length ? JSON.stringify(m) : null;
+}
+
+const LANG_BIT: Record<Lang, number> = { en: 1, ar: 2, 'ar-sub': 4, other: 8 };
+
+/** Classify every movie/series copy and merge copies into titles (by TMDB id, else name + year). */
+function buildTitles(kind: string) {
+  const t0 = performance.now();
+  const syncId = Date.now();
+  const rows = db.prepare(`SELECT i.rid, i.name, i.icon, i.rating, i.added, i.tmdb, i.meta, c.name AS catname
+    FROM items i LEFT JOIN categories c ON c.kind = i.kind AND c.id = i.cat WHERE i.kind = ? AND i.sep = 0`).all(kind) as any[];
+  const upItem = db.prepare('UPDATE items SET lang = ?, vq = ?, vsrc = ? WHERE rid = ?');
+  interface Agg { key: string; tmdb: number | null; name: string; nameRank: number; year: number | null; poster: string | null; rating: number; added: number; lmask: number; uhd: number; nver: number; top250: number | null; meta: any; rids: number[] }
+  const groups = new Map<string, Agg>();
+  for (const r of rows) {
+    const v = classify(r.name, r.catname ?? '');
+    const vq = [v.uhd && 'uhd', v.hdr && 'hdr', v.dv && 'dv', v.dolby && 'dolby'].filter(Boolean).join(',');
+    upItem.run(v.lang, vq || null, v.src, r.rid);
+    const key = titleKey(kind, r.tmdb, v.name, v.year);
+    let g = groups.get(key);
+    // Display name: prefer an English copy's title, then Arabic, then anything
+    const nameRank = v.lang === 'en' ? 3 : v.lang === 'ar' ? 2 : 1;
+    if (!g) groups.set(key, (g = { key, tmdb: r.tmdb, name: v.name, nameRank, year: v.year, poster: r.icon, rating: 0, added: 0, lmask: 0, uhd: 0, nver: 0, top250: null, meta: null, rids: [] }));
+    else if (nameRank > g.nameRank && v.name) { g.name = v.name; g.nameRank = nameRank; if (r.icon) g.poster = r.icon; }
+    if (!g.poster && r.icon) g.poster = r.icon;
+    if (!g.year && v.year) g.year = v.year;
+    if (r.rating > g.rating) g.rating = r.rating;
+    if (r.added > g.added) g.added = r.added;
+    g.lmask |= LANG_BIT[v.lang];
+    if (v.uhd && (v.lang === 'en' || v.lang === 'ar')) g.uhd = 1;
+    g.nver++;
+    if (v.top250 && (!g.top250 || v.top250 < g.top250)) g.top250 = v.top250;
+    if (r.meta && (!g.meta || v.lang === 'en')) { try { g.meta = JSON.parse(r.meta); } catch {} }
+    g.rids.push(r.rid);
+  }
+  const upsert = db.prepare(`INSERT INTO titles (kind, tkey, tmdb, name, year, poster, rating, added, lmask, uhd, nver, top250, seen, genres, plot, cast, director, trailer, backdrop)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(tkey) DO UPDATE SET name = excluded.name, year = COALESCE(titles.year, excluded.year), poster = COALESCE(excluded.poster, titles.poster),
+      rating = excluded.rating, added = excluded.added, lmask = excluded.lmask, uhd = excluded.uhd, nver = excluded.nver, top250 = excluded.top250,
+      seen = excluded.seen,
+      genres = CASE WHEN titles.meta_at IS NULL THEN excluded.genres ELSE titles.genres END,
+      plot = CASE WHEN titles.meta_at IS NULL THEN excluded.plot ELSE titles.plot END,
+      cast = CASE WHEN titles.meta_at IS NULL THEN excluded.cast ELSE titles.cast END,
+      director = CASE WHEN titles.meta_at IS NULL THEN excluded.director ELSE titles.director END,
+      trailer = COALESCE(titles.trailer, excluded.trailer),
+      backdrop = COALESCE(titles.backdrop, excluded.backdrop)`);
+  const getTid = db.prepare('SELECT tid FROM titles WHERE tkey = ?');
+  const setTid = db.prepare('UPDATE items SET tid = ? WHERE rid = ?');
+  for (const g of groups.values()) {
+    const m = g.meta ?? {};
+    const genres = m.genre ? ',' + String(m.genre).split(/\s*[,/&]\s*/).filter(Boolean).join(',') + ',' : null;
+    upsert.run(kind, g.key, g.tmdb, g.name || '?', g.year, g.poster, g.rating || null, g.added || null, g.lmask, g.uhd, g.nver, g.top250, syncId,
+      genres, m.plot ?? null, m.cast ?? null, m.director ?? null, m.trailer ?? null, m.backdrop ?? null);
+    const tid = (getTid.get(g.key) as { tid: number }).tid;
+    for (const rid of g.rids) setTid.run(tid, rid);
+  }
+  db.prepare('DELETE FROM titles WHERE kind = ? AND (seen IS NULL OR seen != ?)').run(kind, syncId);
+  db.exec(`INSERT INTO titles_fts(titles_fts) VALUES ('rebuild')`);
+  log(`${kind}: ${groups.size} titles from ${rows.length} copies (${((performance.now() - t0) / 1000).toFixed(1)}s)`);
 }
 
 /** Favorites / history entries for things no longer in the catalog (e.g. adult content stored before) are removed. */

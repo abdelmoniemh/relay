@@ -57,14 +57,28 @@ export interface SeriesInfo {
   seasons: { season: number; episodes: (Item & { plot?: string; duration?: number })[] }[];
 }
 export interface MovieInfo { plot: string | null; genre: string | null; year: string | null; duration: number | null; backdrop: string | null; cast: string | null; director: string | null; rating: number | null }
-export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; liveSynced: number; pairingCode: string; regions: string[]; probing: number | null; probeQueue: number }
+export interface TitleCard {
+  tid: number; kind: 'movie' | 'series'; name: string; year: number | null; poster: string | null; rating: number | null; uhd: boolean;
+  langs: string[]; progress?: { position: number; duration: number; label?: string };
+}
+export interface BrowseRow { id: string; title: string; items: TitleCard[]; more?: Record<string, string> }
+export interface VersionInfo {
+  item: Item; lang: string; uhd: boolean; hdr: boolean; dv: boolean; dolby: boolean; src: string | null; score: number; label: string;
+  probe?: { width: number | null; height: number | null; hdr: string | null; vcodec: string | null; acodec: string | null; channels: number | null; alangs: string | null; slangs: string | null };
+}
+export interface TitleDetail extends TitleCard {
+  backdrop: string | null; plot: string | null; genres: string[]; cast: string | null; director: string | null; trailer: string | null;
+  runtime: number | null; votes: number | null; top250: number | null; origLang: string | null;
+  versions: VersionInfo[]; similar: TitleCard[]; collection: TitleCard[];
+}
+export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; liveSynced: number; pairingCode: string; regions: string[]; vodLangs: string[]; tmdb: { enabled: boolean; enriched: number; pending: number; lastError: string | null }; probing: number | null; probeQueue: number }
 
 export const api = {
   ping: () => req<{ ok: boolean }>('GET', '/api/ping'),
   pair: (code: string, name: string, kind: string) => req<{ token: string; deviceId: string }>('POST', '/api/pair', { code, name, kind }),
   status: () => req<Status>('GET', '/api/status'),
   sync: () => req('POST', '/api/sync'),
-  settings: (s: { regions?: string[] }) => req('PUT', '/api/settings', s).then(() => clearCache()),
+  settings: (s: { regions?: string[]; vodLangs?: string[]; tmdbKey?: string }) => req('PUT', '/api/settings', s).then(() => clearCache()),
   categories: (kind: Kind) => cachedGet<Category[]>(`/api/categories/${kind}`),
   items: (kind: Kind, cat: string | null, sort: Sort, offset: number, limit: number) =>
     cachedGet<{ items: Item[]; total: number }>(`/api/items/${kind}?${new URLSearchParams({ ...(cat ? { cat } : {}), sort, offset: String(offset), limit: String(limit) })}`),
@@ -86,6 +100,13 @@ export const api = {
   family: (id: string) => req<RankedSource[]>('GET', `/api/family/${id}?hevc=${hevcParam()}`),
   probe: (ids: string[]) => req<{ queued: number; active: number | null; blocked: boolean }>('POST', '/api/probe', { ids }),
   observed: (o: { id: string; width: number; height: number; fps?: number; vcodec?: string; kbps?: number }) => req('POST', '/api/observed', o),
+  browse: (kind: 'movie' | 'series') => req<BrowseRow[]>('GET', `/api/browse/${kind}`),
+  genres: (kind: 'movie' | 'series') => cachedGet<{ name: string; count: number }[]>(`/api/genres/${kind}`),
+  titles: (kind: 'movie' | 'series', f: Record<string, string>, offset: number, limit: number) =>
+    cachedGet<{ items: TitleCard[]; total: number }>(`/api/titles/${kind}?${new URLSearchParams({ ...f, offset: String(offset), limit: String(limit) })}`),
+  titleSearch: (q: string, kind?: 'movie' | 'series') => cachedGet<TitleCard[]>(`/api/title-search?${new URLSearchParams({ q, ...(kind ? { kind } : {}) })}`),
+  title: (tid: number) => req<TitleDetail>('GET', `/api/title/${tid}?dev=${__TIZEN__ || typeof (window as any).tizen !== 'undefined' ? 'tv' : 'desktop'}&hevc=${hevcParam()}`),
+  titleOf: (itemId: string) => cachedGet<{ tid: number }>(`/api/title-of/${itemId}`),
   regions: () => req<{ enabled: string[]; all: { code: string; channels: number }[] }>('GET', '/api/regions'),
   devices: () => req<{ id: string; name: string; kind: string }[]>('GET', '/api/devices'),
   renameDevice: (id: string, name: string) => req('PUT', `/api/devices/${id}`, { name }),

@@ -56,7 +56,8 @@ export function Home() {
     if (recent.data?.length) out.push({ title: 'Recently watched channels', cards: recent.data.map(chanCard) });
     const favVod = [...favorites.value.values()].filter((i) => i.kind === 'movie' || i.kind === 'series');
     if (favVod.length) out.push({ title: 'My list', cards: favVod.map((it) => ({
-      key: it.id, act: () => push(it.kind === 'movie' ? { name: 'movie', item: it } : { name: 'show', item: it }),
+      key: it.id, act: () => it.id.startsWith('t') ? push({ name: 'title', tid: Number(it.id.slice(1)) })
+        : api.titleOf(it.id).then((r) => push({ name: 'title', tid: r.tid })).catch(() => push(it.kind === 'movie' ? { name: 'movie', item: it } : { name: 'show', item: it })),
       render: (f) => <div class={`card ${f ? 'focus' : ''}`}><Poster item={it} /><div class="cap">{clean(it.name)}</div></div>,
     })) });
     return out;

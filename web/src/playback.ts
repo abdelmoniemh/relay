@@ -21,6 +21,32 @@ export const toast = signal<string | null>(null);
 /** Equivalent streams for what's playing (same match / copies of the same channel), best first. */
 export const sources = signal<RankedSource[]>([]);
 export const sourceEvent = signal<string | null>(null); // event id when playing a sports event
+/** Series being watched: episodes in order, so the next one can start automatically. */
+export const episodeQueue = signal<Item[]>([]);
+export const nextUp = signal<{ item: Item; at: number } | null>(null); // countdown to the next episode
+let nextTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function nextEpisode(): Item | null {
+  const cur = current.value, q = episodeQueue.value;
+  if (!cur || cur.kind !== 'episode') return null;
+  const i = q.findIndex((e) => e.id === cur.id);
+  return i >= 0 && i + 1 < q.length ? q[i + 1] : null;
+}
+export function playNextEpisode() {
+  clearTimeout(nextTimer);
+  const n = nextUp.value?.item ?? nextEpisode();
+  nextUp.value = null;
+  if (n) play(n, { mode: 'full', episodes: episodeQueue.value, startAt: 0 });
+}
+export function cancelNextUp() { clearTimeout(nextTimer); nextUp.value = null; }
+function scheduleNextEpisode() {
+  const n = nextEpisode();
+  if (!n) return false;
+  nextUp.value = { item: n, at: Date.now() + 10_000 };
+  clearTimeout(nextTimer);
+  nextTimer = setTimeout(playNextEpisode, 10_000);
+  return true;
+}
 /** Sports: chase the live edge (lowest delay) instead of playing the provider's backlog smoothly. */
 export const lowLatencySports = signal<boolean>((() => { try { return localStorage.getItem('relay.lowLatency') !== '0'; } catch { return true; } })());
 export function setLowLatency(v: boolean) { lowLatencySports.value = v; try { localStorage.setItem('relay.lowLatency', v ? '1' : '0'); } catch {} }
@@ -60,7 +86,10 @@ export function attachPlayer(p: Player) {
     }
     else if (e === 'paused') { if (status.value !== 'idle') { status.value = 'paused'; beat(); } }
     else if (e === 'waiting') { if (status.value === 'playing') status.value = 'buffering'; }
-    else if (e === 'ended') { if (current.value?.kind !== 'live') stop(); }
+    else if (e === 'ended') {
+      if (current.value?.kind === 'episode' && scheduleNextEpisode()) { beat(); return; }
+      if (current.value?.kind !== 'live') stop();
+    }
     else if (e === 'error') {
       // Most common cause: provider hasn't released our previous connection yet (1-connection limit). Retry once.
       if (!retried && current.value) {
@@ -121,7 +150,10 @@ function beat() {
 setInterval(() => { if (status.value === 'playing' || status.value === 'buffering') beat(); }, 5000);
 
 /** Start playing `item` on this device. Other devices are stopped by the server before we're granted. */
-export function play(item: Item, opts: { startAt?: number; mode?: Mode; sources?: RankedSource[]; eventId?: string | null; keepSources?: boolean } = {}) {
+export function play(item: Item, opts: { startAt?: number; mode?: Mode; sources?: RankedSource[]; eventId?: string | null; keepSources?: boolean; episodes?: Item[] } = {}) {
+  cancelNextUp();
+  if (opts.episodes) episodeQueue.value = opts.episodes;
+  else if (item.kind !== 'episode') episodeQueue.value = [];
   if (!opts.keepSources) {
     sources.value = opts.sources ?? [];
     sourceEvent.value = opts.eventId ?? null;
@@ -164,7 +196,7 @@ export function stop() {
 
 function reset() {
   current.value = null; mode.value = 'off'; status.value = 'idle'; pending = null; errorMsg.value = null;
-  sources.value = []; sourceEvent.value = null;
+  sources.value = []; sourceEvent.value = null; episodeQueue.value = []; cancelNextUp();
 }
 
 /** Play a sports event: best working source, with every other source one key press away. */

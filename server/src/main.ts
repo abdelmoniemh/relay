@@ -14,11 +14,13 @@ import { Auth } from './auth.ts';
 import { Hub } from './hub.ts';
 import { registerApi } from './api.ts';
 import { scheduleSync } from './sync.ts';
-import { streamUrls } from './xtream.ts';
+import { apiUrl, getJson, streamUrls } from './xtream.ts';
 import { Transcoder, HevcRegistry } from './transcode.ts';
 import { kvGet, kvSet } from './db.ts';
 import { EventsIndex } from './events.ts';
 import { Prober } from './prober.ts';
+import { Tmdb } from './tmdb.ts';
+import { Library } from './library.ts';
 import type { Item } from '../../shared/protocol.ts';
 
 const provider = parseProvider();
@@ -35,6 +37,10 @@ const upsertProgress = db.prepare(`INSERT INTO progress (item, json, position, d
 const getProgress = db.prepare('SELECT position, duration FROM progress WHERE item = ?');
 
 const events = new EventsIndex(db);
+const tmdb = new Tmdb(db, () => process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || kvGet(db, 'tmdb_key'), (m) => app.log.warn(m));
+const library = new Library(db, tmdb);
+library.providerInfo = (sid) => getJson(apiUrl(provider, 'get_vod_info', { vod_id: String(sid) }), 8000);
+const tmdbTick = tmdb.start(() => library.mask, () => library.invalidate());
 // Background quality checks: only while no device holds a stream. Sources of live/soon events first, football first.
 let hubRef: Hub | null = null;
 const prober = new Prober(db, provider, {
@@ -73,7 +79,7 @@ await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
 hubRef = hub;
-registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober });
+registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick });
 app.log.warn(`transcoding: ${transcoder.available ? (transcoder.gpu ? 'NVENC (GPU)' : 'x264 (CPU)') : 'unavailable (install ffmpeg)'}`);
 
 if (existsSync(config.webDir)) {
@@ -87,6 +93,8 @@ if (existsSync(config.webDir)) {
 scheduleSync(db, provider, () => {
   catalog.version = `${Date.now()}.${catalog.regions.join('')}`;
   events.invalidate();
+  library.invalidate();
+  tmdbTick();
 });
 
 await app.listen({ host: '0.0.0.0', port: config.port });

@@ -12,6 +12,8 @@ import type { Transcoder, HevcRegistry } from './transcode.ts';
 import type { EventsIndex } from './events.ts';
 import type { Prober } from './prober.ts';
 import { rankSources } from './quality.ts';
+import type { Tmdb } from './tmdb.ts';
+import type { Library } from './library.ts';
 
 declare module 'fastify' { interface FastifyRequest { deviceId: string } }
 
@@ -19,8 +21,8 @@ const KINDS = new Set<Kind>(['live', 'movie', 'series']);
 const isLocal = (ip: string) => ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : d; };
 
-export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober }) {
-  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober } = ctx;
+export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void }) {
+  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick } = ctx;
   const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.regions.join('')}`; events.invalidate(); };
   db.prepare(`DELETE FROM kv WHERE k = 'show_adult'`).run();
   catalog.regions = JSON.parse(kvGet(db, 'regions') ?? '["UK","US","CA","AR","4K"]');
@@ -58,7 +60,9 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   app.get('/api/status', async () => ({
     syncing: isSyncing(), counts: catalog.counts(),
     catalogSynced: Number(kvGet(db, 'catalog_synced') ?? 0), epgSynced: Number(kvGet(db, 'epg_synced') ?? 0),
-    pairingCode: auth.pairingCode(), regions: catalog.regions,
+    pairingCode: auth.pairingCode(), regions: catalog.regions, vodLangs: library.langs,
+    tmdb: { enabled: tmdb.enabled, enriched: tmdb.enriched, lastError: tmdb.lastError,
+      pending: (db.prepare('SELECT count(*) AS n FROM titles WHERE tmdb IS NOT NULL AND meta_at IS NULL AND (lmask & ?) != 0').get(library.mask) as { n: number }).n },
     probing: prober.active, probeQueue: prober.pending(), liveSynced: Number(kvGet(db, 'live_synced') ?? 0),
   }));
 
@@ -67,8 +71,16 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     return { started: true };
   });
 
-  app.put('/api/settings', async (req) => {
-    const b = req.body as { regions?: string[] };
+  app.put('/api/settings', async (req, reply) => {
+    const b = req.body as { regions?: string[]; vodLangs?: string[]; tmdbKey?: string };
+    if (Array.isArray(b.vodLangs)) { library.setLangs(b.vodLangs.map(String)); tmdbTick(); }
+    if (typeof b.tmdbKey === 'string') {
+      const k = b.tmdbKey.trim();
+      if (k && !(await tmdb.verify(k))) return reply.code(400).send({ error: 'TMDB rejected that key' });
+      kvSet(db, 'tmdb_key', k);
+      library.invalidate();
+      if (k) tmdbTick();
+    }
     if (Array.isArray(b.regions)) { catalog.regions = b.regions.map((r) => String(r).toUpperCase().replace(/[^A-Z0-9]/g, '')).filter(Boolean).slice(0, 50); kvSet(db, 'regions', JSON.stringify(catalog.regions)); }
     refreshVersion();
     return { ok: true };
@@ -150,7 +162,9 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
       .map(([s, eps]) => ({
         season: Number(s),
         episodes: eps.map((e): Item & { plot?: string; duration?: number } => ({
-          id: itemId('episode', e.id), kind: 'episode', name: e.title || `Episode ${e.episode_num}`,
+          // "NF - The Roshans (2025) (IN) - S01E02 - Little we have" -> "Little we have"
+          id: itemId('episode', e.id), kind: 'episode',
+          name: String(e.title ?? '').replace(/^.*?\bS\d{1,2}\s?E\d{1,3}\b\s*[-:]?\s*/i, '').trim() || e.info?.name || `Episode ${e.episode_num}`,
           icon: e.info?.movie_image || null, ext: e.container_extension || 'mp4', seriesId: itemId('series', sid),
           season: Number(s), episode: Number(e.episode_num), plot: e.info?.plot || undefined,
           duration: Number(e.info?.duration_secs) || undefined,
@@ -234,6 +248,33 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     if (!b?.id?.startsWith('l') || !(Number(b.height) > 0)) return { ok: false };
     prober.observed(Number(b.id.slice(1)), { width: Number(b.width), height: Number(b.height), fps: b.fps ? Number(b.fps) : null, vcodec: b.vcodec ?? null, kbps: b.kbps ? Number(b.kbps) : null });
     return { ok: true };
+  });
+
+  // ---- movies & series (titles = one entry per film/show, versions = provider copies) ----
+  const device = (q: Record<string, string>) => ({ tv: q.dev === 'tv', hevcOk: q.hevc === '1' });
+  const vkind = (k: string) => (k === 'series' ? 'series' : 'movie') as 'movie' | 'series';
+  app.get('/api/browse/:kind', async (req) => library.rows(vkind((req.params as any).kind)));
+  app.get('/api/genres/:kind', async (req) => library.genres(vkind((req.params as any).kind)));
+  app.get('/api/titles/:kind', async (req) => {
+    const q = req.query as Record<string, string>;
+    return library.grid(vkind((req.params as any).kind), q, Math.max(0, Number(q.offset) || 0), Math.min(200, Number(q.limit) || 60));
+  });
+  app.get('/api/title-search', async (req) => {
+    const q = req.query as Record<string, string>;
+    return library.search(String(q.q ?? '').slice(0, 100), q.kind === 'movie' || q.kind === 'series' ? q.kind : null);
+  });
+  /** Which title does this provider copy belong to? (old favorites, category browsing) */
+  app.get('/api/title-of/:id', async (req, reply) => {
+    const { kind, sid } = parseId((req.params as any).id);
+    const r = db.prepare('SELECT tid FROM items WHERE kind = ? AND sid = ?').get(kind, sid) as { tid: number | null } | undefined;
+    return r?.tid ? { tid: r.tid } : reply.code(404).send({ error: 'not found' });
+  });
+  app.get('/api/title/:tid', async (req, reply) => {
+    const d = await library.detail(Number((req.params as any).tid), device(req.query as any));
+    if (!d) return reply.code(404).send({ error: 'not found' });
+    // Check the real quality of the movie files while nothing is playing.
+    if (d.kind === 'movie') prober.requestVod(d.versions.slice(0, 8).map((v) => ({ id: v.item.id, url: streamUrls(provider, v.item)[0] })));
+    return d;
   });
 
   app.get('/api/capabilities', async () => ({ transcode: transcoder.available, gpu: transcoder.gpu }));

@@ -51,6 +51,26 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS progress_updated ON progress (updated DESC);
     CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 
+    -- One row per film/show; provider copies (items) point here via items.tid. Rows persist across syncs
+    -- (stable ids, TMDB metadata kept); titles whose copies all disappeared are removed.
+    CREATE TABLE IF NOT EXISTS titles (
+      tid INTEGER PRIMARY KEY, kind TEXT NOT NULL, tkey TEXT NOT NULL UNIQUE, tmdb INTEGER,
+      name TEXT NOT NULL, year INTEGER, poster TEXT, backdrop TEXT, rating REAL, added INTEGER,
+      lmask INTEGER NOT NULL DEFAULT 0, uhd INTEGER NOT NULL DEFAULT 0, nver INTEGER NOT NULL DEFAULT 0, top250 INTEGER, seen INTEGER,
+      genres TEXT, plot TEXT, cast TEXT, director TEXT, trailer TEXT, runtime INTEGER,
+      popularity REAL, votes INTEGER, orig_lang TEXT, collection INTEGER, meta_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS titles_added ON titles (kind, added DESC);
+    CREATE INDEX IF NOT EXISTS titles_rating ON titles (kind, rating DESC);
+    CREATE INDEX IF NOT EXISTS titles_pop ON titles (kind, popularity DESC);
+    CREATE INDEX IF NOT EXISTS titles_tmdb ON titles (kind, tmdb);
+    CREATE VIRTUAL TABLE IF NOT EXISTS titles_fts USING fts5 (name, content='titles', content_rowid='tid', tokenize='unicode61 remove_diacritics 2');
+    CREATE TABLE IF NOT EXISTS tmdb_cache (k TEXT PRIMARY KEY, json TEXT NOT NULL, at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS vod_probes (
+      id TEXT PRIMARY KEY, at INTEGER NOT NULL, ok INTEGER NOT NULL, width INTEGER, height INTEGER, hdr TEXT,
+      vcodec TEXT, acodec TEXT, channels INTEGER, alangs TEXT, slangs TEXT, err TEXT
+    );
+
     -- Measured stream quality (one row per live stream, latest probe wins).
     CREATE TABLE IF NOT EXISTS probes (
       sid INTEGER PRIMARY KEY, at INTEGER NOT NULL, ok INTEGER NOT NULL,
@@ -65,6 +85,10 @@ export function openDb(path: string): DatabaseSync {
   const icols = (db.prepare(`PRAGMA table_info(items)`).all() as { name: string }[]).map((c) => c.name);
   if (!icols.includes('region')) db.exec('ALTER TABLE items ADD COLUMN region TEXT');
   if (!icols.includes('fam')) db.exec('ALTER TABLE items ADD COLUMN fam INTEGER');
+  for (const [c, t] of [['tmdb', 'INTEGER'], ['meta', 'TEXT'], ['lang', 'TEXT'], ['vq', 'TEXT'], ['vsrc', 'TEXT'], ['tid', 'INTEGER']] as const) {
+    if (!icols.includes(c)) db.exec(`ALTER TABLE items ADD COLUMN ${c} ${t}`);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS items_tid ON items (tid) WHERE tid IS NOT NULL');
   db.exec('CREATE INDEX IF NOT EXISTS items_fam ON items (fam) WHERE fam IS NOT NULL');
   db.exec('CREATE INDEX IF NOT EXISTS items_epg ON items (epg) WHERE epg IS NOT NULL');
   return db;

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Category, Item } from '@shared/protocol.ts';
 import { api, favorites, toggleFavorite, type Sort } from '../api.ts';
-import { push, railFocused } from '../router.ts';
+import { back, push, railFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, usePaged } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
 import { Poster, Star, clean } from '../ui/common.tsx';
@@ -45,7 +45,11 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
   const colW = (gridRef.current?.clientWidth ?? 1200) / cols;
   const rowH = Math.round(colW * 1.5 + 56);
 
-  const open = (it?: Item) => it && push(kind === 'movie' ? { name: 'movie', item: it } : { name: 'show', item: it });
+  const open = (it?: Item) => {
+    if (!it) return;
+    api.titleOf(it.id).then((r) => push({ name: 'title', tid: r.tid }))
+      .catch(() => push(kind === 'movie' ? { name: 'movie', item: it } : { name: 'show', item: it }));
+  };
 
   useKeys((k) => {
     if (railFocused.value) return false;
@@ -55,6 +59,7 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
       if (k === 'right' || k === 'ok') { setZone('grid'); return true; }
       return false;
     }
+    if (k === 'back') { back(); return true; }
     if (k === 'left') { if (fi % cols === 0) setZone('cats'); else setFi(fi - 1); return true; }
     if (k === 'right') { setFi(Math.min(count - 1, fi + 1)); return true; }
     if (k === 'up') { if (fi >= cols) setFi(fi - cols); return true; }
@@ -69,7 +74,7 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
   return (
     <div class={`vod z-${zone}`}>
       <div class={`col cats ${zone === 'cats' && !railFocused.value ? 'active' : ''}`}>
-        <h2>{kind === 'movie' ? 'Movies' : 'Series'}</h2>
+        <h2><button class="back-link" onClick={() => back()}>‹</button> Categories</h2>
         <VList count={all.length} rowH={52} focus={zone === 'cats' ? ci : -1} render={(i, f) => (
           <div class={`row cat ${f ? 'focus' : ''} ${i === ci ? 'sel' : ''}`} onClick={() => { setCi(i); setZone('grid'); }}>
             <span class="name">{all[i].name}</span><span class="count">{all[i].id === '__fav' ? favs.length || '' : all[i].count || ''}</span>

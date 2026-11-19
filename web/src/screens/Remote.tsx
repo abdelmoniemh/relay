@@ -103,7 +103,17 @@ export function Remote() {
           })}
         </div>
       ) : (
-        <Search onPick={(it) => { if (it.kind === 'series') return; sendItem(it); }} autoFocus={false} />
+        <Search onPick={async (it) => {
+          if (it.id.startsWith('t')) {
+            // A movie title: send its best version. (Series: pick the episode on the TV.)
+            const d = await api.title(Number(it.id.slice(1))).catch(() => null);
+            const v = d?.versions[0];
+            if (d?.kind === 'movie' && v) sendItem({ ...v.item, duration: (d.runtime ?? 0) * 60 || null });
+            return;
+          }
+          if (it.kind === 'series') return;
+          sendItem(it);
+        }} autoFocus={false} />
       )}
     </div>
   );

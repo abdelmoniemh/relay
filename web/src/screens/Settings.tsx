@@ -21,6 +21,13 @@ export function Settings() {
     { label: 'Server', value: `${server.value || location.origin} · ${connected.value ? 'connected' : 'offline'}`, act: isTizen ? () => { const u = prompt('Server URL', server.value); if (u) { setServer(u); location.reload(); } } : undefined },
     { label: 'Library', value: s ? `${(s.counts.live ?? 0).toLocaleString()} channels · ${(s.counts.movie ?? 0).toLocaleString()} movies · ${(s.counts.series ?? 0).toLocaleString()} series` : '…' },
     { label: s?.syncing ? 'Syncing…' : 'Refresh catalog & guide now', value: s ? `catalog ${ago(s.catalogSynced)}, guide ${ago(s.epgSynced)}` : '', act: () => { api.sync().then(() => { clearCache(); setTimeout(() => setTick((t) => t + 1), 500); }); } },
+    ...vodLangRows(),
+    { label: 'Movie & series info (TMDB)', value: !s ? '…' : s.tmdb.enabled ? `on · ${s.tmdb.pending ? `${s.tmdb.pending.toLocaleString()} titles to fetch` : 'up to date'}${s.tmdb.lastError ? ` · ${s.tmdb.lastError}` : ''}` : 'off — add a free TMDB key',
+      act: () => {
+        const k = prompt('TMDB API key or read-access token (themoviedb.org → Settings → API). Leave empty to remove.', '');
+        if (k === null) return;
+        api.settings({ tmdbKey: k }).then(() => { clearCache(); setTick((t) => t + 1); }).catch((e) => alert(e.message));
+      } },
     { label: 'Live sports delay', value: lowLatencySports.value ? 'Lowest (jump to live edge)' : 'Smooth (play provider backlog)', act: () => setLowLatency(!lowLatencySports.value) },
     ...regionRows(),
     ...devices.value.filter((d) => d.id !== myDeviceId.value).map((d) => ({
@@ -28,6 +35,19 @@ export function Settings() {
     })),
     { label: 'Unpair this device', act: () => { setCredentials(null, null); location.reload(); } },
   ];
+  function vodLangRows() {
+    if (!s) return [];
+    const on = new Set(s.vodLangs);
+    const L: [string, string][] = [['en', 'English'], ['ar', 'Arabic audio'], ['ar-sub', 'Arabic subtitles'], ['other', 'Other languages']];
+    return L.map(([code, name]) => ({
+      label: `${on.has(code) ? '☑' : '☐'} Movies & series: ${name}`, value: '',
+      act: () => {
+        const next = on.has(code) ? s.vodLangs.filter((x) => x !== code) : [...s.vodLangs, code];
+        if (!next.length) return;
+        api.settings({ vodLangs: next }).then(() => { clearCache(); setTick((t) => t + 1); });
+      },
+    }));
+  }
   function regionRows() {
     const r = regions.data;
     if (!r) return [];
