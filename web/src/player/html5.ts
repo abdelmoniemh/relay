@@ -30,6 +30,8 @@ export class Html5Player implements Player {
   private parkTimer: ReturnType<typeof setTimeout> | undefined;
   private audioCheck: ReturnType<typeof setTimeout> | undefined;
   private media: { fps?: number; vcodec?: string; transcoded: boolean } = { transcoded: false };
+  /** iPhone/iPad: playlist URL of the server's HLS session for the converted movie. */
+  private hlsSession: string | null = null;
 
   constructor(video: HTMLVideoElement) {
     this.v = video;
@@ -54,7 +56,8 @@ export class Html5Player implements Player {
 
   on(cb: (e: PlayerEvent, d?: string) => void) { this.cb = cb; }
 
-  private isDirectVod() { return !!this.opts && !this.opts.live && this.txOffset === null && !!this.opts.transcodeUrl && !this.nativeHls; }
+  /** Playing a movie file as-is, with a conversion to fall back on if this browser can't decode it. */
+  private isDirectVod() { return !!this.opts && !this.opts.live && this.txOffset === null && !!(this.nativeHls ? this.opts.hlsUrl : this.opts.transcodeUrl); }
 
   async load(urls: string[], o: LoadOpts) {
     this.stop();
@@ -68,6 +71,11 @@ export class Html5Player implements Player {
       // Channels we already know are HEVC go straight to the server's GPU transcode: no failed first attempt.
       const useTx = !!o.transcodeUrl && !canHevc && (o.hevc || (!!o.id && hevcIds.has(o.id)));
       if (await this.mpegts(useTx ? o.transcodeUrl! : ts, gen, useTx ? undefined : o)) return;
+    }
+    if (!o.live && this.nativeHls && o.hlsUrl && !/\.(mp4|m4v|mov)$/i.test(urls[0] ?? '')) {
+      // iPhone Safari can't open MKV/AVI at all: straight to the server's HLS version.
+      this.startVodTranscode('full', o.startAt);
+      return;
     }
     if (!o.live && o.tx && o.transcodeUrl && this.mse && !this.nativeHls && !(o.tx === 'full' && canHevc)) {
       // Known not to play directly here: go straight to the conversion.
@@ -124,9 +132,31 @@ export class Html5Player implements Player {
     this.txMode = mode;
     this.txOffset = Math.max(0, Math.floor(at));
     this.parked = null;
+    if (this.nativeHls) { this.releaseHls(); this.startHls(gen); return; }
     const url = `${this.opts!.transcodeUrl}&mode=${mode}&start=${this.txOffset}`;
     this.mpegts(url, gen);
   }
+
+  /** iPhone/iPad: ask the server for an HLS version starting at txOffset and play it natively. */
+  private async startHls(gen: number) {
+    const base = this.opts!.hlsUrl!;
+    try {
+      const r = await fetch(`${base}&start=${this.txOffset}`, { method: 'POST' });
+      const j = await r.json().catch(() => ({})) as { url?: string; error?: string };
+      const url = j.url ? new URL(j.url, base).href : null;
+      if (gen !== this.gen) { if (url) this.deleteHls(url); return; } // stopped/seeked meanwhile: don't hold the connection
+      if (!r.ok || !url) { this.cb('error', j.error ?? `Conversion failed (HTTP ${r.status})`); return; }
+      this.hlsSession = url;
+      this.v.src = url;
+      this.v.play().catch(() => {});
+    } catch {
+      if (gen === this.gen) this.cb('error', 'Could not reach the server for the converted movie');
+    }
+  }
+
+  private deleteHls(url: string) { fetch(url.replace('/index.m3u8?', '?'), { method: 'DELETE', keepalive: true }).catch(() => {}); }
+  /** Tell the server to stop the HLS conversion (frees the provider connection right away). */
+  private releaseHls() { if (this.hlsSession) this.deleteHls(this.hlsSession); this.hlsSession = null; }
 
   /** Paused for a while on a converted movie: stop the stream (frees the provider connection) and resume later. */
   private maybePark() {
@@ -137,6 +167,7 @@ export class Html5Player implements Player {
       this.parked = this.position();
       this.gen++;
       this.engine?.destroy(); this.engine = null;
+      if (this.hlsSession) { this.releaseHls(); this.v.removeAttribute('src'); this.v.load(); }
     }, 30_000);
   }
 
@@ -201,7 +232,8 @@ export class Html5Player implements Player {
     t = Math.max(0, d ? Math.min(t, d - 1) : t);
     if (this.txOffset !== null) {
       // Inside what's already buffered: seek locally; otherwise restart the conversion at the new position.
-      const rel = t - this.txOffset, b = this.v.buffered;
+      // (HLS: anything already converted is seekable; mpegts.js: only what's buffered)
+      const rel = t - this.txOffset, b = this.hlsSession ? this.v.seekable : this.v.buffered;
       for (let i = 0; i < b.length; i++) if (rel >= b.start(i) && rel <= b.end(i) - 1) { this.v.currentTime = rel; return; }
       this.cb('waiting');
       this.startVodTranscode(this.txMode, t);
@@ -212,6 +244,7 @@ export class Html5Player implements Player {
   stop() {
     this.gen++;
     clearTimeout(this.parkTimer); clearTimeout(this.audioCheck);
+    this.releaseHls();
     this.engine?.destroy();
     this.engine = null;
     this.v.pause();
@@ -222,7 +255,10 @@ export class Html5Player implements Player {
     return (this.txOffset ?? 0) + (this.v.currentTime || 0);
   }
   duration() {
-    if (this.txOffset !== null) return this.opts?.duration ?? 0;
+    if (this.txOffset !== null) {
+      if (this.opts?.duration) return this.opts.duration;
+      return this.hlsSession && Number.isFinite(this.v.duration) ? this.txOffset + this.v.duration : 0;
+    }
     const d = this.v.duration;
     return Number.isFinite(d) ? d : 0;
   }

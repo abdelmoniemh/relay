@@ -6,6 +6,8 @@ export interface LoadOpts {
   id?: string;
   /** Server-side HEVC->H.264 stream, used when this browser can't decode the original. */
   transcodeUrl?: string;
+  /** Server-side HLS for movies on iPhone/iPad Safari (POST it to start a session). */
+  hlsUrl?: string;
   /** Server says this item is HEVC. */
   hevc?: boolean;
   /** Live sports: jump to the live edge instead of playing the provider's backlog. */

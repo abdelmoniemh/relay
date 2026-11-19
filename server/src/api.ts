@@ -10,7 +10,8 @@ import { kvGet, kvSet } from './db.ts';
 import { isSyncing, runSync } from './sync.ts';
 import type { Transcoder, HevcRegistry } from './transcode.ts';
 import type { EventsIndex } from './events.ts';
-import type { Prober } from './prober.ts';
+import { probeVodUrl, type Prober } from './prober.ts';
+import { readFile } from 'node:fs/promises';
 import { rankSources } from './quality.ts';
 import type { Tmdb } from './tmdb.ts';
 import type { Library } from './library.ts';
@@ -217,6 +218,46 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     req.raw.socket?.once('close', end);
     proc.on('exit', () => res.end());
   });
+
+  // ---- HLS for iPhone/iPad Safari (movies & episodes) ----
+  // Safari plays neither MKV/AVI nor a raw MPEG-TS stream, but plays HLS natively: repackage (or convert) on the fly.
+  const vcodecs = new Map<string, string | null>();
+  const probedCodec = db.prepare('SELECT vcodec FROM vod_probes WHERE id = ? AND ok = 1');
+  app.post('/api/hls/:id', async (req, reply) => {
+    const id = String((req.params as any).id);
+    const q = req.query as Record<string, string>;
+    const { kind } = parseId(id);
+    if (kind !== 'movie' && kind !== 'episode') return reply.code(400).send({ error: 'bad id' });
+    if (kind !== 'episode' && !catalog.playable({ id, kind })) return reply.code(404).send({ error: 'not found' });
+    if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
+    const src = streamUrls(provider, { id, kind, name: '', ext: q.ext })[0];
+    // Which video codec? Decides between a lossless copy and a real conversion.
+    let vcodec: string | null | undefined = vcodecs.has(id) ? vcodecs.get(id)! : ((probedCodec.get(id) as { vcodec: string | null } | undefined)?.vcodec ?? undefined);
+    if (vcodec === undefined) {
+      await prober.abort();
+      await transcoder.stop(); // one provider connection: nothing else may hold it while we look
+      try { vcodec = (await probeVodUrl(src, AbortSignal.timeout(15_000))).vcodec; } catch { vcodec = null; }
+      vcodecs.set(id, vcodec);
+    }
+    try {
+      const sid = await transcoder.startHls(src, Number(q.start) || 0, vcodec ?? null, req.deviceId, (m) => app.log.warn(m));
+      return { url: `/api/hls/${sid}/index.m3u8?token=${encodeURIComponent(String(q.token ?? ''))}` };
+    } catch (e) { return reply.code(502).send({ error: `Conversion failed: ${(e as Error).message}` }); }
+  });
+  app.get('/api/hls/:sid/:file', async (req, reply) => {
+    const { sid, file } = req.params as { sid: string; file: string };
+    const p = transcoder.hlsFile(sid, file);
+    if (!p) return reply.code(404).send({ error: 'gone' });
+    reply.header('cache-control', 'no-store').header('access-control-allow-origin', '*');
+    if (file.endsWith('.m3u8')) {
+      // Segment requests from Safari's player carry no auth header: put the token on every URI.
+      const tok = `?token=${encodeURIComponent(String((req.query as any).token ?? ''))}`;
+      const pl = (await readFile(p, 'utf8')).replace(/^(seg\d+\.m4s)$/gm, `$1${tok}`).replace(/URI="init\.mp4"/, `URI="init.mp4${tok}"`);
+      return reply.type('application/vnd.apple.mpegurl').send(pl);
+    }
+    return reply.type(file.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment').send(await readFile(p));
+  });
+  app.delete('/api/hls/:sid', async (req) => { await transcoder.stopHls((req.params as any).sid); return { ok: true }; });
 
   // ---- sports events & sources ----
   const hevcOk = (q: Record<string, string>) => q.hevc === '1';

@@ -110,7 +110,7 @@ function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
   const src = sources.value.find((s) => s.item.id === item.id);
   return {
     startAt, live: item.kind === 'live', uhd: /4K|UHD|2160/i.test(item.name), id: item.id,
-    transcodeUrl: `${server.value}/api/transcode/${item.id}.ts?${q}`, hevc: hevc || !!src?.hevc,
+    transcodeUrl: `${server.value}/api/transcode/${item.id}.ts?${q}`, hlsUrl: `${server.value}/api/hls/${item.id}?${q}`, hevc: hevc || !!src?.hevc,
     lowLatency: item.kind === 'live' && !!sourceEvent.value && lowLatencySports.value,
     duration: item.duration ?? undefined,
     tx: lastTx,
