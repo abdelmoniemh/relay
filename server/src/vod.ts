@@ -33,7 +33,9 @@ export function cleanTitle(rest: string): { name: string; year: number | null; r
   const r = /^(\d{1,3})\.\s+/.exec(s);
   if (r) { rank = Number(r[1]); s = s.slice(r[0].length); }
   let year: number | null = null;
-  const y = /\((19\d\d|20\d\d)\)/.exec(s) ?? /\b(19\d\d|20\d\d)\s*$/.exec(s);
+  const bare = /\b(19\d\d|20\d\d)\s*$/.exec(s);
+  // "Blade Runner 2049" is a title, not a year: a bare trailing number only counts if it's a plausible year
+  const y = /\((19\d\d|20\d\d)\)/.exec(s) ?? (bare && Number(bare[1]) <= new Date().getFullYear() + 1 ? bare : null);
   if (y) { year = Number(y[1]); s = s.replace(y[0], ' '); }
   s = s.replace(/\((?:[A-Z]{2}|[A-Z]{2}\/[A-Z]{2})\)/g, ' ')   // country codes "(GB)"
     .replace(/\(\s*\)/g, ' ').replace(/\s+-\s*$/, '').replace(/\s+/g, ' ').trim();

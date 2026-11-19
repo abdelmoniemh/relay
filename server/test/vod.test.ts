@@ -31,6 +31,8 @@ test('other languages and oddities', () => {
   assert.equal(classify('IN-EN - The Beekeeper (2024)', 'IN - EN HINDI').lang, 'other');
   assert.equal(classify('SOC - Zalgiris Kaunas vs Partizan', 'SOCCER FOOTBALL').lang, 'other');
   assert.deepEqual(cleanTitle('MobLand (2025) (GB)'), { name: 'MobLand', year: 2025, rank: null });
+  assert.deepEqual(cleanTitle('Blade Runner 2049'), { name: 'Blade Runner 2049', year: null, rank: null });
+  assert.deepEqual(cleanTitle('Blade Runner 2049 (2017)'), { name: 'Blade Runner 2049', year: 2017, rank: null });
   assert.equal(titleKey('movie', 238, 'x', null), 'movie:t238');
   assert.equal(titleKey('movie', null, 'Spider-Man: No Way Home', 2021), titleKey('movie', null, 'spider man  no way home', 2021));
 });
