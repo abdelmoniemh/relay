@@ -11,6 +11,8 @@ export interface HubDeps {
   /** Refuse items that aren't in the catalog (adult content is never stored, so never playable). */
   allowed?(item: Item): boolean;
   txMode?(item: Item): 'full' | 'audio' | undefined;
+  /** Source is interlaced: browsers should take the server's deinterlacing conversion. */
+  interlaced?(item: Item): boolean;
   /** The lease now belongs to `deviceId` (or nobody): free server-side streams held for anyone else. */
   leaseMoved?(deviceId: string | null): void | Promise<void>;
   now?: () => number;
@@ -110,7 +112,7 @@ export class Hub {
       this.lease = { deviceId, item, position: start, duration: handedOver?.item.id === item.id ? handedOver.duration : 0, paused: false, since: this.now() };
       if (item.kind === 'live') this.deps.saveProgress(item, 0, 0);
       this.deps.log?.(`lease -> ${deviceId}: ${item.name} @${Math.round(start)}s`);
-      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item), ...(this.deps.txMode?.(item) ? { hevc: true, tx: this.deps.txMode!(item) } : {}) });
+      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item), ...(this.deps.txMode?.(item) ? { hevc: true, tx: this.deps.txMode!(item) } : {}), ...(this.deps.interlaced?.(item) ? { interlaced: true } : {}) });
       this.broadcastState();
     });
   }

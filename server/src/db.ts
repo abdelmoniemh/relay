@@ -92,6 +92,10 @@ export function openDb(path: string): DatabaseSync {
   db.exec('CREATE INDEX IF NOT EXISTS items_tid ON items (tid) WHERE tid IS NOT NULL');
   db.exec('CREATE INDEX IF NOT EXISTS items_fam ON items (fam) WHERE fam IS NOT NULL');
   db.exec('CREATE INDEX IF NOT EXISTS items_epg ON items (epg) WHERE epg IS NOT NULL');
+  const pcols = (db.prepare(`PRAGMA table_info(probes)`).all() as { name: string }[]).map((c) => c.name);
+  for (const [c, t] of [['interlaced', 'INTEGER'], ['bitdepth', 'INTEGER'], ['hdr', 'TEXT'], ['channels', 'INTEGER']] as const) {
+    if (!pcols.includes(c)) db.exec(`ALTER TABLE probes ADD COLUMN ${c} ${t}`);
+  }
   return db;
 }
 

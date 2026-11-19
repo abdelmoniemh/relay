@@ -13,6 +13,8 @@ import type { EventsIndex } from './events.ts';
 import { probeVodUrl, type Prober } from './prober.ts';
 import { readFile } from 'node:fs/promises';
 import { rankSources } from './quality.ts';
+import { probeToSource } from './prober.ts';
+import type { SourceInfo } from './media.ts';
 import type { Tmdb } from './tmdb.ts';
 import type { Library } from './library.ts';
 import type { Letterboxd } from './letterboxd.ts';
@@ -192,6 +194,16 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     return { urls: streamUrls(provider, { id, kind, name: '', ext: (req.query as any).ext }) };
   });
 
+  /** What the prober / movie probe measured about a source: picks deinterlacing, dithering, tone mapping, audio layout. */
+  const vodProbe = db.prepare('SELECT * FROM vod_probes WHERE id = ? AND ok = 1');
+  const sourceInfo = (id: string, kind: string): SourceInfo | null => {
+    if (kind === 'live') { const sid = Number(id.slice(1)); return probeToSource(prober.results([sid]).get(sid)); }
+    const r = vodProbe.get(id) as any;
+    if (!r) return null;
+    const hdr = r.hdr === 'hdr10' || r.hdr === 'dv' ? 'pq' : r.hdr === 'hlg' ? 'hlg' : null;
+    return { vcodec: r.vcodec, width: r.width, height: r.height, hdr, bitDepth: hdr ? 10 : null, interlaced: false, acodec: r.acodec, channels: r.channels };
+  };
+
   // HEVC -> H.264 stream for browsers without an HEVC decoder. Raw MPEG-TS, consumed by mpegts.js.
   app.get('/api/transcode/:id', async (req, reply) => {
     const id = String((req.params as any).id).replace(/\.ts$/, '');
@@ -205,8 +217,14 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
     const src = kind === 'live' ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
     let started;
-    try { started = await transcoder.start(src, Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live', mode }); }
-    catch (e) { return reply.code(502).send({ error: `Transcode failed: ${(e as Error).message}` }); }
+    // The player gave up on this request (seeked, switched, closed): don't keep starting ffmpeg for it.
+    const ac = new AbortController();
+    req.raw.socket?.once('close', () => ac.abort());
+    try { started = await transcoder.start(src, Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live', mode, info: sourceInfo(id, kind), signal: ac.signal }); }
+    catch (e) {
+      if ((e as Error).message === 'superseded') return reply.code(409).send({ error: 'superseded by a newer request' });
+      return reply.code(502).send({ error: `Transcode failed: ${(e as Error).message}` });
+    }
     const { proc, first } = started;
     reply.hijack();
     const res = reply.raw;

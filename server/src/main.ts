@@ -74,6 +74,7 @@ const hub = new Hub({
     if (probing) await new Promise((r) => setTimeout(r, 400)); // give the provider a moment to release the slot
   },
   txMode: (item) => hevc.mode(item.id),
+  interlaced: (item) => item.kind === 'live' && !!prober.results([Number(item.id.slice(1))]).get(Number(item.id.slice(1)))?.interlaced,
   allowed: (item) => catalog.playable(item),
   log: (m) => app.log.info(m),
 });

@@ -16,6 +16,8 @@ export interface LoadOpts {
   duration?: number;
   /** Server says this movie needs converting for browsers ('audio' = AC3/DTS audio only, 'full' = HEVC video). */
   tx?: 'full' | 'audio';
+  /** Interlaced live source: browsers don't deinterlace, so take the server's deinterlaced (50p) conversion. */
+  interlaced?: boolean;
 }
 
 export interface Player {

@@ -59,6 +59,7 @@ let lastUrls: string[] = [];
 let lastStart = 0;
 let lastHevc = false;
 let lastTx: 'full' | 'audio' | undefined;
+let lastInterlaced = false;
 
 export function showToast(msg: string, ms = 3500) {
   toast.value = msg;
@@ -109,11 +110,13 @@ function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
   const q = new URLSearchParams({ token: token.value ?? '', ...(item.ext ? { ext: item.ext } : {}) });
   const src = sources.value.find((s) => s.item.id === item.id);
   return {
-    startAt, live: item.kind === 'live', uhd: /4K|UHD|2160/i.test(item.name), id: item.id,
+    // 4K by measurement, not just by name (the TV needs SET_MODE_4K for a 4K stream)
+    startAt, live: item.kind === 'live', uhd: /4K|UHD|2160/i.test(item.name) || (src?.height ?? 0) >= 2000, id: item.id,
     transcodeUrl: `${server.value}/api/transcode/${item.id}.ts?${q}`, hlsUrl: `${server.value}/api/hls/${item.id}?${q}`, hevc: hevc || !!src?.hevc,
     lowLatency: item.kind === 'live' && !!sourceEvent.value && lowLatencySports.value,
     duration: item.duration ?? undefined,
     tx: lastTx,
+    interlaced: item.kind === 'live' && (lastInterlaced || !!src?.interlaced),
   };
 }
 
@@ -239,7 +242,7 @@ onServer((m: ServerMsg) => {
       if (pending) mode.value = pending.mode;
       pending = null;
       status.value = 'loading';
-      lastUrls = m.urls; lastStart = m.startAt; lastHevc = !!m.hevc; lastTx = m.tx; retried = false;
+      lastUrls = m.urls; lastStart = m.startAt; lastHevc = !!m.hevc; lastTx = m.tx; lastInterlaced = !!m.interlaced; retried = false;
       position.value = m.startAt;
       if (m.urls[0]) preconnect(m.urls[0]);
       player.load(m.urls, loadOpts(item, m.startAt, !!m.hevc)).catch(() => {});

@@ -75,7 +75,7 @@ export type ClientMsg =
 export type ServerMsg =
   | { t: 'hello'; deviceId: string }
   | { t: 'state'; devices: DeviceInfo[]; lease: Lease | null }
-  | { t: 'granted'; item: Item; startAt: number; urls: string[]; hevc?: boolean; tx?: 'full' | 'audio' } // browsers can't play it directly: use the server conversion
+  | { t: 'granted'; item: Item; startAt: number; urls: string[]; hevc?: boolean; tx?: 'full' | 'audio'; interlaced?: boolean } // browsers can't play it directly: use the server conversion (interlaced: browsers don't deinterlace)
   | { t: 'stop'; reason: 'handoff' | 'remote'; to?: string }
   | { t: 'play'; item: Item; startAt?: number; from: string; eventId?: string } // asked to start playing (send-to)
   | { t: 'remote'; cmd: RemoteCmd; arg?: number | string; from: string }
@@ -94,6 +94,7 @@ export interface RankedSource {
   label: string;
   dead?: boolean;
   height?: number; fps?: number; kbps?: number; hevc?: boolean; ttfb?: number; checkedAt?: number;
+  interlaced?: boolean;
 }
 
 export interface SportEvent {

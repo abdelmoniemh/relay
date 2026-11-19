@@ -4,12 +4,16 @@
 import { spawn } from 'node:child_process';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Provider } from './config.ts';
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Probe } from './quality.ts';
+import type { SourceInfo } from './media.ts';
 
 const CAPTURE_MS = 4500;
 const CAPTURE_MAX = 12 * 1024 * 1024;
 const TTL_S = 60 * 60;            // re-check after an hour
 const MAX_PER_HOUR = 240;         // be gentle with the provider
+const SAMPLES_MAX = 40;           // RELAY_SAMPLES=1 keeps the captured bytes for the quality bench (data/samples)
 
 export class Prober {
   private db: DatabaseSync;
@@ -29,8 +33,8 @@ export class Prober {
   constructor(db: DatabaseSync, provider: Provider, opts: { canRun: () => boolean; background: () => number[]; log?: (m: string) => void }) {
     this.db = db; this.provider = provider; this.canRun = opts.canRun; this.background = opts.background; this.log = opts.log ?? (() => {});
     this.get = db.prepare('SELECT * FROM probes WHERE sid = ?');
-    this.put = db.prepare(`INSERT OR REPLACE INTO probes (sid, at, ok, width, height, fps, vcodec, acodec, kbps, ttfb_ms, backlog_s, err)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    this.put = db.prepare(`INSERT OR REPLACE INTO probes (sid, at, ok, width, height, fps, vcodec, acodec, kbps, ttfb_ms, backlog_s, err, interlaced, bitdepth, hdr, channels)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     setInterval(() => this.tick(), 1500).unref();
   }
 
@@ -63,7 +67,8 @@ export class Prober {
   observed(sid: number, o: { width: number; height: number; fps?: number | null; vcodec?: string | null; kbps?: number | null }) {
     const prev = this.get.get(sid) as Probe | undefined;
     this.put.run(sid, Math.floor(Date.now() / 1000), 1, o.width, o.height, o.fps ?? prev?.fps ?? null, o.vcodec ?? prev?.vcodec ?? null,
-      prev?.acodec ?? null, o.kbps ?? prev?.kbps ?? null, prev?.ttfb_ms ?? null, prev?.backlog_s ?? null, null);
+      prev?.acodec ?? null, o.kbps ?? prev?.kbps ?? null, prev?.ttfb_ms ?? null, prev?.backlog_s ?? null, null,
+      prev?.interlaced ?? null, prev?.bitdepth ?? null, prev?.hdr ?? null, prev?.channels ?? null);
   }
 
   /** Stop probing now; resolves when the provider connection is closed. Returns true if a probe was running. */
@@ -139,12 +144,16 @@ export class Prober {
       const wall = (performance.now() - (first || t0)) / 1000;
       ctl.abort(); // close the provider connection before analysing
       if (size < 50_000) throw new Error('no data');
-      const info = await ffprobe(Buffer.concat(chunks));
+      const buf = Buffer.concat(chunks);
+      const info = await ffprobe(buf);
       if (!info.height) throw new Error('no video');
       const kbps = info.mediaSec > 0.5 ? Math.round((size * 8) / info.mediaSec / 1000) : null;
+      const interlaced = await detectInterlace(buf, info.fieldOrder);
       this.put.run(sid, Math.floor(Date.now() / 1000), 1, info.width, info.height, info.fps, info.vcodec, info.acodec, kbps, ttfb,
-        Math.max(0, +(info.mediaSec - wall).toFixed(1)), null);
-      this.log(`probe ${sid}: ${info.width}x${info.height}@${info.fps} ${info.vcodec} ${kbps}kbps ttfb ${ttfb}ms`);
+        Math.max(0, +(info.mediaSec - wall).toFixed(1)), null, interlaced ? 1 : 0, info.bitDepth, info.hdr, info.channels);
+      this.log(`probe ${sid}: ${info.width}x${info.height}${interlaced ? 'i' : 'p'}@${info.fps} ${info.vcodec} ${info.bitDepth}bit ${info.hdr ?? 'sdr'} ${kbps}kbps ttfb ${ttfb}ms`);
+      if (process.env.RELAY_SAMPLES === '1') saveSample(sid, buf, { vcodec: info.vcodec, width: info.width, height: info.height, fps: info.fps,
+        interlaced, bitDepth: info.bitDepth, hdr: info.hdr, acodec: info.acodec, channels: info.channels });
     } catch (e) {
       if (ctl.signal.aborted && !(size > 50_000) && performance.now() - t0 < CAPTURE_MS + 5900) {
         // aborted because someone pressed play: don't record a failure
@@ -152,7 +161,7 @@ export class Prober {
       }
       const msg = (e as Error).message;
       if (!ctl.signal.aborted || msg !== 'This operation was aborted') {
-        this.put.run(sid, Math.floor(Date.now() / 1000), 0, null, null, null, null, null, null, ttfb || null, null, msg.slice(0, 80));
+        this.put.run(sid, Math.floor(Date.now() / 1000), 0, null, null, null, null, null, null, ttfb || null, null, msg.slice(0, 80), null, null, null, null);
         this.log(`probe ${sid} failed: ${msg}`);
       }
     } finally {
@@ -199,38 +208,73 @@ export function probeVodUrl(url: string, signal: AbortSignal): Promise<VodProbeR
   });
 }
 
-function ffprobe(buf: Buffer): Promise<{ width: number | null; height: number | null; fps: number | null; vcodec: string | null; acodec: string | null; mediaSec: number }> {
-  return new Promise((resolve, reject) => {
-    const p = spawn('ffprobe', ['-v', 'error', '-of', 'json', '-show_streams', '-select_streams', 'v:0', '-show_entries',
-      'stream=codec_name,width,height,avg_frame_rate,r_frame_rate:packet=pts_time', '-show_packets', '-i', 'pipe:0'], { stdio: ['pipe', 'pipe', 'ignore'] });
-    let out = '';
-    p.stdout.on('data', (d) => (out += d));
-    p.on('error', reject);
-    p.on('close', async () => {
-      try {
-        const j = JSON.parse(out || '{}');
-        const v = j.streams?.[0] ?? {};
-        const rate = (s?: string) => { if (!s) return null; const [a, b] = s.split('/').map(Number); return b ? a / b : null; };
-        let fps = rate(v.avg_frame_rate) || rate(v.r_frame_rate);
-        if (fps && fps > 120) fps = rate(v.r_frame_rate);
-        const pts = (j.packets ?? []).map((x: any) => Number(x.pts_time)).filter((x: number) => Number.isFinite(x));
-        const mediaSec = pts.length > 1 ? Math.max(...pts) - Math.min(...pts) : 0;
-        resolve({ width: v.width ?? null, height: v.height ?? null, fps: fps ? Math.round(fps * 100) / 100 : null, vcodec: v.codec_name ?? null, acodec: await audioCodec(buf), mediaSec });
-      } catch (e) { reject(e); }
-    });
+interface SampleInfo {
+  width: number | null; height: number | null; fps: number | null; vcodec: string | null; acodec: string | null; mediaSec: number;
+  bitDepth: number | null; hdr: 'pq' | 'hlg' | null; fieldOrder: string | null; channels: number | null;
+}
+
+/** SourceInfo the transcoder can use, from a probe row. */
+export function probeToSource(p: Probe | undefined | null): SourceInfo | null {
+  if (!p || !p.ok) return null;
+  return { vcodec: p.vcodec, width: p.width, height: p.height, fps: p.fps, interlaced: p.interlaced == null ? null : !!p.interlaced,
+    bitDepth: p.bitdepth ?? null, hdr: p.hdr === 'pq' || p.hdr === 'hlg' ? p.hdr : null, acodec: p.acodec, channels: p.channels ?? null };
+}
+
+function saveSample(sid: number, buf: Buffer, info: SourceInfo) {
+  try {
+    const dir = join(process.env.DATA_DIR ?? './data', 'samples');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${sid}.ts`), buf);
+    writeFileSync(join(dir, `${sid}.json`), JSON.stringify(info));
+    const files = readdirSync(dir).filter((f) => f.endsWith('.ts')).map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    for (const { f } of files.slice(SAMPLES_MAX)) { unlinkSync(join(dir, f)); try { unlinkSync(join(dir, f.replace(/\.ts$/, '.json'))); } catch {} }
+  } catch {}
+}
+
+function runProbe(args: string[], buf: Buffer): Promise<{ out: string; err: string }> {
+  return new Promise((resolve) => {
+    const p = spawn(args[0], args.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
+    p.on('close', () => resolve({ out, err }));
+    p.on('error', () => resolve({ out, err }));
     p.stdin.on('error', () => {});
     p.stdin.end(buf);
   });
 }
 
-function audioCodec(buf: Buffer): Promise<string | null> {
-  return new Promise((resolve) => {
-    const p = spawn('ffprobe', ['-v', 'error', '-of', 'csv=p=0', '-select_streams', 'a:0', '-show_entries', 'stream=codec_name', '-i', 'pipe:0'], { stdio: ['pipe', 'pipe', 'ignore'] });
-    let out = '';
-    p.stdout.on('data', (d) => (out += d));
-    p.on('close', () => resolve(out.trim().split('\n')[0] || null));
-    p.on('error', () => resolve(null));
-    p.stdin.on('error', () => {});
-    p.stdin.end(buf.subarray(0, Math.min(buf.length, 2 * 1024 * 1024)));
-  });
+export async function ffprobe(buf: Buffer): Promise<SampleInfo> {
+  const { out } = await runProbe(['ffprobe', '-v', 'error', '-of', 'json', '-show_streams', '-show_entries',
+    'stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,pix_fmt,field_order,color_transfer,channels:packet=pts_time,stream_index',
+    '-show_packets', '-select_streams', 'v:0', '-i', 'pipe:0'], buf);
+  const j = JSON.parse(out || '{}');
+  const v = j.streams?.[0] ?? {};
+  const rate = (s?: string) => { if (!s) return null; const [a, b] = s.split('/').map(Number); return b ? a / b : null; };
+  let fps = rate(v.avg_frame_rate) || rate(v.r_frame_rate);
+  if (fps && fps > 120) fps = rate(v.r_frame_rate);
+  const pts = (j.packets ?? []).map((x: any) => Number(x.pts_time)).filter((x: number) => Number.isFinite(x));
+  const mediaSec = pts.length > 1 ? Math.max(...pts) - Math.min(...pts) : 0;
+  const depth = /(\d+)(le|be)$/.exec(v.pix_fmt ?? '');
+  const a = await runProbe(['ffprobe', '-v', 'error', '-of', 'json', '-select_streams', 'a:0', '-show_entries', 'stream=codec_name,channels', '-i', 'pipe:0'],
+    buf.subarray(0, Math.min(buf.length, 2 * 1024 * 1024)));
+  const as = JSON.parse(a.out || '{}').streams?.[0] ?? {};
+  return {
+    width: v.width ?? null, height: v.height ?? null, fps: fps ? Math.round(fps * 100) / 100 : null, vcodec: v.codec_name ?? null, mediaSec,
+    bitDepth: v.pix_fmt ? (depth ? Number(depth[1]) : 8) : null,
+    hdr: v.color_transfer === 'smpte2084' ? 'pq' : v.color_transfer === 'arib-std-b67' ? 'hlg' : null,
+    fieldOrder: v.field_order ?? null, acodec: as.codec_name ?? null, channels: as.channels ?? null,
+  };
+}
+
+/** Interlaced content? The container flag is often missing or wrong, so look at the pictures (idet) too. */
+export async function detectInterlace(buf: Buffer, fieldOrder: string | null): Promise<boolean> {
+  const { err } = await runProbe(['ffmpeg', '-hide_banner', '-nostdin', '-i', 'pipe:0', '-an', '-frames:v', '150', '-vf', 'idet', '-f', 'null', '-'], buf);
+  // ffmpeg prints the summary twice (the first from a discarded graph): use the last one
+  const m = [...err.matchAll(/Multi frame detection: TFF:\s*(\d+)\s*BFF:\s*(\d+)\s*Progressive:\s*(\d+)/g)].pop();
+  const [t, b, p] = m ? m.slice(1).map(Number) : [0, 0, 0];
+  // Real interlacing has one consistent field order; busy synthetic/grainy pictures fool idet with a TFF/BFF mix.
+  const dom = Math.max(t, b), idet = t + b + p >= 20 && dom >= 3 * Math.min(t, b) && dom > 2 * p;
+  if (fieldOrder && /^(tt|bb|tb|bt)$/.test(fieldOrder)) return !(t + b + p >= 20 && p > 3 * (t + b)); // coded interlaced, unless clearly PsF
+  if (fieldOrder === 'progressive') return idet && dom > 6 * p; // flagged progressive but visibly combed
+  return idet;
 }

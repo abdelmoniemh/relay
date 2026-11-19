@@ -69,7 +69,7 @@ export class Html5Player implements Player {
     const v = this.v;
     if (o.live && ts && this.mse && !this.nativeHls) {
       // Channels we already know are HEVC go straight to the server's GPU transcode: no failed first attempt.
-      const useTx = !!o.transcodeUrl && !canHevc && (o.hevc || (!!o.id && hevcIds.has(o.id)));
+      const useTx = !!o.transcodeUrl && ((!canHevc && (o.hevc || (!!o.id && hevcIds.has(o.id)))) || !!o.interlaced);
       if (await this.mpegts(useTx ? o.transcodeUrl! : ts, gen, useTx ? undefined : o)) return;
     }
     if (!o.live && this.nativeHls && o.hlsUrl && !/\.(mp4|m4v|mov)$/i.test(urls[0] ?? '')) {
@@ -109,6 +109,9 @@ export class Html5Player implements Player {
     if (!this.isDirectVod()) return;
     const v = this.v as HTMLVideoElement & { webkitAudioDecodedByteCount?: number; audioTracks?: { length: number } };
     if (v.webkitAudioDecodedByteCount === undefined) return; // not Chromium: can't tell
+    // Resuming: 'playing' can fire at 0 before the seek lands. Check from the resume point (the next 'playing' reschedules),
+    // otherwise we'd start a conversion at the wrong position and then a second one.
+    if (v.seeking || (this.opts!.startAt > 5 && v.currentTime < this.opts!.startAt - 5)) return;
     const start = v.currentTime, gen = this.gen;
     this.audioCheck = setTimeout(() => {
       if (gen !== this.gen || !this.isDirectVod() || v.paused || v.currentTime - start < 2) return;
