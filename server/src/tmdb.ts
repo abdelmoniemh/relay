@@ -121,7 +121,7 @@ export class Tmdb {
     this.db.prepare(`UPDATE titles SET genres = COALESCE(?, genres), plot = COALESCE(NULLIF(?, ''), plot), "cast" = COALESCE(NULLIF(?, ''), "cast"),
       director = COALESCE(NULLIF(?, ''), director), trailer = COALESCE(?, trailer), runtime = COALESCE(?, runtime),
       popularity = ?, votes = ?, rating = CASE WHEN ? > 20 THEN ? ELSE rating END, orig_lang = ?, collection = ?,
-      poster = COALESCE(?, poster), backdrop = COALESCE(?, backdrop), year = COALESCE(year, ?), meta_at = ? WHERE tid = ?`)
+      poster = COALESCE(?, poster), backdrop = COALESCE(?, backdrop), year = COALESCE(?, year), meta_at = ? WHERE tid = ?`)
       .run(genres, d.overview ?? '', cast, director, trailer?.key ?? null, runtime || null,
         d.popularity ?? null, d.vote_count ?? null, d.vote_count ?? 0, d.vote_average ? Math.round(d.vote_average * 10) / 20 : null,
         d.original_language ?? null, d.belongs_to_collection?.id ?? null,

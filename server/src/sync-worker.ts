@@ -124,7 +124,7 @@ function buildTitles(kind: string) {
   }
   const upsert = db.prepare(`INSERT INTO titles (kind, tkey, tmdb, name, year, poster, rating, added, lmask, uhd, nver, top250, seen, genres, plot, cast, director, trailer, backdrop)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(tkey) DO UPDATE SET name = excluded.name, year = COALESCE(titles.year, excluded.year), poster = COALESCE(excluded.poster, titles.poster),
+    ON CONFLICT(tkey) DO UPDATE SET name = excluded.name, year = CASE WHEN titles.meta_at IS NULL THEN COALESCE(excluded.year, titles.year) ELSE titles.year END, poster = COALESCE(excluded.poster, titles.poster),
       rating = excluded.rating, added = excluded.added, lmask = excluded.lmask, uhd = excluded.uhd, nver = excluded.nver, top250 = excluded.top250,
       seen = excluded.seen,
       genres = CASE WHEN titles.meta_at IS NULL THEN excluded.genres ELSE titles.genres END,
