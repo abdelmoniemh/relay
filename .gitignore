@@ -7,3 +7,4 @@ tizen/build/
 ios/**/xcuserdata/
 server/bench/.clips/
 server/bench/.out/
+server/bench/.real/

@@ -148,7 +148,7 @@ export class Prober {
       const info = await ffprobe(buf);
       if (!info.height) throw new Error('no video');
       const kbps = info.mediaSec > 0.5 ? Math.round((size * 8) / info.mediaSec / 1000) : null;
-      const interlaced = await detectInterlace(buf, info.fieldOrder);
+      const interlaced = await detectInterlace(buf, info.fieldOrder, info.fps);
       this.put.run(sid, Math.floor(Date.now() / 1000), 1, info.width, info.height, info.fps, info.vcodec, info.acodec, kbps, ttfb,
         Math.max(0, +(info.mediaSec - wall).toFixed(1)), null, interlaced ? 1 : 0, info.bitDepth, info.hdr, info.channels);
       this.log(`probe ${sid}: ${info.width}x${info.height}${interlaced ? 'i' : 'p'}@${info.fps} ${info.vcodec} ${info.bitDepth}bit ${info.hdr ?? 'sdr'} ${kbps}kbps ttfb ${ttfb}ms`);
@@ -267,7 +267,10 @@ export async function ffprobe(buf: Buffer): Promise<SampleInfo> {
 }
 
 /** Interlaced content? The container flag is often missing or wrong, so look at the pictures (idet) too. */
-export async function detectInterlace(buf: Buffer, fieldOrder: string | null): Promise<boolean> {
+export async function detectInterlace(buf: Buffer, fieldOrder: string | null, fps?: number | null): Promise<boolean> {
+  // Coded progressive at 50/60 frames a second can't be carrying weaved fields: motion blur and streaky
+  // textures (race tracks, pitches) are what fool idet there (a real 50p MotoGP feed read TFF 75 / progressive 0).
+  if (fieldOrder === 'progressive' && (fps ?? 0) >= 48) return false;
   const { err } = await runProbe(['ffmpeg', '-hide_banner', '-nostdin', '-i', 'pipe:0', '-an', '-frames:v', '150', '-vf', 'idet', '-f', 'null', '-'], buf);
   // ffmpeg prints the summary twice (the first from a discarded graph): use the last one
   const m = [...err.matchAll(/Multi frame detection: TFF:\s*(\d+)\s*BFF:\s*(\d+)\s*Progressive:\s*(\d+)/g)].pop();

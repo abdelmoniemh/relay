@@ -36,7 +36,7 @@ export const CANDIDATES: Candidate[] = [
   { name: 'new', profile: LIVE, only: (c) => notAudio(c) && !c.vod },
   { name: 'new-vod', profile: VOD, only: (c) => notAudio(c) && c.vod },
   // encoder sweeps (live clips)
-  { name: 'p4', profile: P(LIVE, { preset: 'p4' }), only: (c) => !c.vod && !c.info.hdr },
+  { name: 'p5', profile: P(LIVE, { preset: 'p5' }), only: (c) => !c.vod && !c.info.hdr },
   { name: 'p6', profile: P(LIVE, { preset: 'p6' }), only: (c) => !c.vod && !c.info.hdr },
   { name: 'p7', profile: P(LIVE, { preset: 'p7' }), only: (c) => !c.vod && !c.info.hdr },
   { name: 'cq17', profile: P(LIVE, { cq: 17 }), only: (c) => !c.vod },

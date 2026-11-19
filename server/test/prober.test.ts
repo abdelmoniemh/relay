@@ -12,7 +12,7 @@ test('detects interlaced H.264 with MP2 audio', { skip: !ok }, async () => {
   const buf = make(['-vf', 'tinterlace=mode=interleave_top,setfield=tff', '-c:v', 'libx264', '-flags', '+ildct+ilme', '-x264opts', 'tff=1', '-c:a', 'mp2']);
   const i = await ffprobe(buf);
   assert.equal(i.vcodec, 'h264'); assert.equal(i.bitDepth, 8); assert.equal(i.acodec, 'mp2'); assert.equal(i.fps, 25);
-  assert.equal(await detectInterlace(buf, i.fieldOrder), true);
+  assert.equal(await detectInterlace(buf, i.fieldOrder, i.fps), true);
 });
 
 test('progressive 10-bit HEVC PQ is not interlaced, is 10-bit HDR', { skip: !ok }, async () => {
@@ -20,7 +20,16 @@ test('progressive 10-bit HEVC PQ is not interlaced, is 10-bit HDR', { skip: !ok 
     '-color_trc', 'smpte2084', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-c:a', 'aac', '-ac', '6']);
   const i = await ffprobe(buf);
   assert.equal(i.vcodec, 'hevc'); assert.equal(i.bitDepth, 10); assert.equal(i.hdr, 'pq'); assert.equal(i.channels, 6);
-  assert.equal(await detectInterlace(buf, i.fieldOrder), false);
+  assert.equal(await detectInterlace(buf, i.fieldOrder, i.fps), false);
+});
+
+test('combed-looking pictures in a progressive 50 fps stream are not interlaced', { skip: !ok }, async () => {
+  // woven fields repeated at 50p: idet sees combing, but a 50p progressive stream can't be field-coded
+  const buf = make(['-vf', 'tinterlace=mode=interleave_top,fps=50', '-c:v', 'libx264', '-c:a', 'aac']);
+  const i = await ffprobe(buf);
+  assert.equal(i.fieldOrder, 'progressive'); assert.equal(i.fps, 50);
+  assert.equal(await detectInterlace(buf, i.fieldOrder, i.fps), false);
+  assert.equal(await detectInterlace(buf, i.fieldOrder, 25), true); // the same pictures at 25p are combed
 });
 
 test('probe rows map to SourceInfo', () => {

@@ -39,7 +39,7 @@ export const LEGACY: EncoderProfile = {
 
 // Chosen with bench/quality.ts — see bench/README.md for the numbers behind them.
 export const LIVE: EncoderProfile = {
-  name: 'live', preset: 'p5', tune: 'hq', bf: 3, bref: 'middle', lookahead: 20, aq: true, multipass: 'disabled',
+  name: 'live', preset: 'p4', tune: 'hq', bf: 3, bref: 'middle', lookahead: 20, aq: true, multipass: 'disabled',
   cq: 19, maxrateM: 30, gopSec: 2, x264Preset: 'faster', crf: 19,
 };
 export const VOD: EncoderProfile = {

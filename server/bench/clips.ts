@@ -1,7 +1,7 @@
 // Synthetic test clips, each aimed at one weakness of the conversion. Generated once into bench/.clips/.
 // Real provider samples (captured by the prober when RELAY_SAMPLES=1) are added from data/samples/.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { SourceInfo } from '../src/media.ts';
 
@@ -72,14 +72,27 @@ export function ensureClips(): Clip[] {
   return out;
 }
 
-/** Real provider samples: data/samples/<sid>.ts + <sid>.json (SourceInfo written by the prober). */
-export function realClips(dir = resolve(import.meta.dirname, '../data/samples')): Clip[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith('.ts')).flatMap((f) => {
-    const meta = join(dir, f.replace(/\.ts$/, '.json'));
+export const REAL_DIR = resolve(import.meta.dirname, '.real');
+
+/** Real provider samples: data/samples/<sid>.ts + <sid>.json (SourceInfo written by the prober).
+ *  The prober rotates that folder while it runs, so they are first copied into bench/.real (kept between runs).
+ *  Placeholders (still frames, < 400 kb/s) are skipped, and at most `perKind` clips of each codec/size/rate/scan. */
+export function realClips(from = resolve(import.meta.dirname, '../data/samples'), perKind = 2): Clip[] {
+  mkdirSync(REAL_DIR, { recursive: true });
+  if (existsSync(from)) for (const f of readdirSync(from)) if (!existsSync(join(REAL_DIR, f))) copyFileSync(join(from, f), join(REAL_DIR, f));
+  const seen = new Map<string, number>();
+  return readdirSync(REAL_DIR).filter((f) => f.endsWith('.ts')).sort().flatMap((f) => {
+    const meta = join(REAL_DIR, f.replace(/\.ts$/, '.json'));
     if (!existsSync(meta)) return [];
     const m = JSON.parse(readFileSync(meta, 'utf8')) as SourceInfo & { name?: string };
-    return [{ name: `real-${f.replace(/\.ts$/, '')}-${m.height}${m.interlaced ? 'i' : 'p'}${Math.round(m.fps ?? 0)}-${m.vcodec}`,
-      file: join(dir, f), info: m, vod: false, why: m.name ?? 'provider sample', real: true }];
+    const file = join(REAL_DIR, f);
+    let sec = 0;
+    try { sec = Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString()) || 0; } catch { return []; }
+    if (sec < 2 || (statSync(file).size * 8) / sec / 1000 < 400) return []; // placeholder / too short
+    const kind = `${m.height}${m.interlaced ? 'i' : 'p'}${Math.round(m.fps ?? 0)}-${m.vcodec}`;
+    const n = seen.get(kind) ?? 0;
+    if (n >= perKind) return [];
+    seen.set(kind, n + 1);
+    return [{ name: `real-${f.replace(/\.ts$/, '')}-${kind}`, file, info: m, vod: false, why: m.name ?? 'provider sample', real: true }];
   });
 }
