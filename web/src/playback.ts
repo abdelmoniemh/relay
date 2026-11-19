@@ -1,7 +1,7 @@
 // Playback orchestration: asks the server for the lease, plays when granted, gives the stream up instantly
 // when another device takes over, and reports position so any device can resume.
 import { signal } from '@preact/signals';
-import type { Item, ServerMsg } from '@shared/protocol.ts';
+import type { Item, RankedSource, ServerMsg } from '@shared/protocol.ts';
 import { send, onServer, devices, lease } from './ws.ts';
 import { api, myDeviceId, server, token } from './api.ts';
 import { dispatchKey, type Key } from './keys.ts';
@@ -18,6 +18,12 @@ export const position = signal(0);
 export const duration = signal(0);
 export const errorMsg = signal<string | null>(null);
 export const toast = signal<string | null>(null);
+/** Equivalent streams for what's playing (same match / copies of the same channel), best first. */
+export const sources = signal<RankedSource[]>([]);
+export const sourceEvent = signal<string | null>(null); // event id when playing a sports event
+/** Sports: chase the live edge (lowest delay) instead of playing the provider's backlog smoothly. */
+export const lowLatencySports = signal<boolean>((() => { try { return localStorage.getItem('relay.lowLatency') !== '0'; } catch { return true; } })());
+export function setLowLatency(v: boolean) { lowLatencySports.value = v; try { localStorage.setItem('relay.lowLatency', v ? '1' : '0'); } catch {} }
 
 let player: Player | null = null;
 let pending: { item: Item; mode: Mode } | null = null;
@@ -26,6 +32,7 @@ let retried = false;
 let lastUrls: string[] = [];
 let lastStart = 0;
 let lastHevc = false;
+let lastTx: 'full' | 'audio' | undefined;
 
 export function showToast(msg: string, ms = 3500) {
   toast.value = msg;
@@ -42,7 +49,15 @@ export function attachPlayer(p: Player) {
       if ((status.value === 'loading' || status.value === 'buffering') && !p.paused()) { status.value = 'playing'; errorMsg.value = null; }
       return;
     }
-    if (e === 'playing') { status.value = 'playing'; errorMsg.value = null; retried = false; }
+    if (e === 'playing') {
+      status.value = 'playing'; errorMsg.value = null; retried = false;
+      // Passive verification: tell the server what this stream really is (resolution/fps/codec), once it has settled.
+      const item = current.value;
+      if (item?.kind === 'live') setTimeout(() => {
+        const i = current.value === item ? p.info?.() : null;
+        if (i && i.height) api.observed({ id: item.id, ...i }).catch(() => {});
+      }, 5000);
+    }
     else if (e === 'paused') { if (status.value !== 'idle') { status.value = 'paused'; beat(); } }
     else if (e === 'waiting') { if (status.value === 'playing') status.value = 'buffering'; }
     else if (e === 'ended') { if (current.value?.kind !== 'live') stop(); }
@@ -54,6 +69,8 @@ export function attachPlayer(p: Player) {
         setTimeout(() => { if (current.value === item) p.load(lastUrls, loadOpts(item, p.position() || lastStart)).catch(() => {}); }, 1200);
         return;
       }
+      // Still failing: fail over to the next working copy of the same channel / match.
+      if (current.value?.kind === 'live' && nextSource(1, true)) return;
       status.value = 'error'; errorMsg.value = detail ?? 'Playback failed';
     }
   });
@@ -61,10 +78,40 @@ export function attachPlayer(p: Player) {
 
 function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
   const q = new URLSearchParams({ token: token.value ?? '', ...(item.ext ? { ext: item.ext } : {}) });
+  const src = sources.value.find((s) => s.item.id === item.id);
   return {
     startAt, live: item.kind === 'live', uhd: /4K|UHD|2160/i.test(item.name), id: item.id,
-    transcodeUrl: `${server.value}/api/transcode/${item.id}.ts?${q}`, hevc,
+    transcodeUrl: `${server.value}/api/transcode/${item.id}.ts?${q}`, hevc: hevc || !!src?.hevc,
+    lowLatency: item.kind === 'live' && !!sourceEvent.value && lowLatencySports.value,
+    duration: item.duration ?? undefined,
+    tx: lastTx,
   };
+}
+
+/** Switch to the next/previous copy of what's playing. `auto` skips sources known to be dead. */
+export function nextSource(dir: 1 | -1, auto = false): boolean {
+  const list = sources.value, cur = current.value;
+  if (!cur || list.length < 2) return false;
+  const i = list.findIndex((s) => s.item.id === cur.id);
+  for (let k = 1; k < list.length; k++) {
+    const j = (i + dir * k + list.length * k) % list.length;
+    const cand = list[j];
+    if (auto && (cand.dead || failed.has(cand.item.id))) continue;
+    if (auto) { failed.add(cur.id); showToast(`Source failed — switched to source ${j + 1}/${list.length}`); }
+    else showToast(`Source ${j + 1}/${list.length} · ${cand.label}`, 2500);
+    play(cand.item, { mode: mode.value === 'off' ? 'full' : mode.value, keepSources: true });
+    return true;
+  }
+  return false;
+}
+const failed = new Set<string>();
+
+/** For a channel played on its own, look up its other copies so ◀ ▶ can switch between them. */
+async function loadFamily(item: Item) {
+  try {
+    const fam = await api.family(item.id);
+    if (current.value?.id === item.id && !sourceEvent.value) sources.value = fam;
+  } catch {}
 }
 
 function beat() {
@@ -74,7 +121,13 @@ function beat() {
 setInterval(() => { if (status.value === 'playing' || status.value === 'buffering') beat(); }, 5000);
 
 /** Start playing `item` on this device. Other devices are stopped by the server before we're granted. */
-export function play(item: Item, opts: { startAt?: number; mode?: Mode } = {}) {
+export function play(item: Item, opts: { startAt?: number; mode?: Mode; sources?: RankedSource[]; eventId?: string | null; keepSources?: boolean } = {}) {
+  if (!opts.keepSources) {
+    sources.value = opts.sources ?? [];
+    sourceEvent.value = opts.eventId ?? null;
+    failed.clear();
+    if (!opts.sources && item.kind === 'live') loadFamily(item);
+  }
   if (current.value && player) {
     // Same device switching items: report final position, then free the connection before the next one opens.
     beat();
@@ -111,6 +164,16 @@ export function stop() {
 
 function reset() {
   current.value = null; mode.value = 'off'; status.value = 'idle'; pending = null; errorMsg.value = null;
+  sources.value = []; sourceEvent.value = null;
+}
+
+/** Play a sports event: best working source, with every other source one key press away. */
+export async function playEvent(eventId: string, opts: { mode?: Mode; sourceId?: string } = {}) {
+  const ev = await api.event(eventId);
+  const list = ev.sources;
+  const pick = (opts.sourceId && list.find((s) => s.item.id === opts.sourceId)) || list.find((s) => !s.dead) || list[0];
+  if (!pick) { showToast('No sources for this event right now'); return; }
+  play(pick.item, { mode: opts.mode ?? 'full', sources: list, eventId });
 }
 
 export const togglePause = () => { if (!player || !current.value) return; player.paused() ? player.play() : player.pause(); };
@@ -144,7 +207,7 @@ onServer((m: ServerMsg) => {
       if (pending) mode.value = pending.mode;
       pending = null;
       status.value = 'loading';
-      lastUrls = m.urls; lastStart = m.startAt; lastHevc = !!m.hevc; retried = false;
+      lastUrls = m.urls; lastStart = m.startAt; lastHevc = !!m.hevc; lastTx = m.tx; retried = false;
       position.value = m.startAt;
       if (m.urls[0]) preconnect(m.urls[0]);
       player.load(m.urls, loadOpts(item, m.startAt, !!m.hevc)).catch(() => {});
@@ -160,7 +223,8 @@ onServer((m: ServerMsg) => {
       return;
     }
     case 'play':
-      play(m.item, { startAt: m.startAt, mode: 'full' });
+      if (m.eventId) playEvent(m.eventId, { sourceId: m.item.id }).catch(() => play(m.item, { mode: 'full' }));
+      else play(m.item, { startAt: m.startAt, mode: 'full' });
       showToast(`Sent from ${deviceName(m.from)}`);
       return;
     case 'remote': {

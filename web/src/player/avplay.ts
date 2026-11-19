@@ -43,6 +43,18 @@ export class AvPlayer implements Player {
     this.cb('playing');
   }
 
+  info() {
+    try {
+      const v = (this.av.getCurrentStreamInfo() as any[]).find((x) => x.type === 'VIDEO');
+      const e = JSON.parse(v?.extra_info ?? '{}');
+      const width = Number(e.Width), height = Number(e.Height);
+      if (!height) return null;
+      const fourcc = String(e.fourCC ?? '').toLowerCase();
+      return { width, height, fps: Number(e.fps) || undefined, kbps: Number(e.Bit_rate) ? Math.round(Number(e.Bit_rate) / 1000) : undefined,
+        vcodec: /hevc|h265|hvc/.test(fourcc) ? 'hevc' : /h264|avc/.test(fourcc) ? 'h264' : fourcc || undefined };
+    } catch { return null; }
+  }
+
   play() { try { this.av.play(); this.isPaused = false; this.cb('playing'); } catch {} }
   pause() { try { this.av.pause(); this.isPaused = true; this.cb('paused'); } catch {} }
   seek(t: number) { try { this.av.seekTo(Math.max(0, t) * 1000, () => this.cb('time'), () => {}); } catch {} }

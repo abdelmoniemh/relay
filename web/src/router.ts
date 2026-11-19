@@ -2,11 +2,11 @@ import { signal } from '@preact/signals';
 import type { Item } from '@shared/protocol.ts';
 
 export type Route =
-  | { name: 'home' } | { name: 'live' } | { name: 'movies' } | { name: 'series' } | { name: 'search' }
+  | { name: 'home' } | { name: 'sports' } | { name: 'live' } | { name: 'movies' } | { name: 'series' } | { name: 'search' }
   | { name: 'remote' } | { name: 'settings' }
   | { name: 'movie'; item: Item } | { name: 'show'; item: Item };
 
-export const TOP: Route['name'][] = ['home', 'live', 'movies', 'series', 'search', 'remote', 'settings'];
+export const TOP: Route['name'][] = ['home', 'sports', 'live', 'movies', 'series', 'search', 'remote', 'settings'];
 
 export const stack = signal<Route[]>([{ name: 'home' }]);
 export const route = () => stack.value[stack.value.length - 1];

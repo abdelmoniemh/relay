@@ -27,6 +27,8 @@ export class Catalog {
   private stmts = new Map<string, StatementSync>();
   showAdult = false;
   version = '0';
+  /** Live TV regions to show (category prefixes like UK, US, CA, AR). Empty = everything. */
+  regions: string[] = [];
 
   constructor(db: DatabaseSync) { this.db = db; }
 
@@ -37,13 +39,19 @@ export class Catalog {
   }
 
   private adult(alias = '') { return this.showAdult ? '' : ` AND ${alias}adult = 0`; }
+  /** SQL fragment restricting live rows to the chosen regions (values are sanitized, so they can be inlined). */
+  regionSql(kind: Kind | null, alias = '') {
+    if (!this.regions.length || (kind && kind !== 'live')) return '';
+    const list = this.regions.map((r) => `'${r.replace(/[^A-Z0-9]/g, '')}'`).join(',');
+    return kind ? ` AND ${alias}region IN (${list})` : ` AND (${alias}kind != 'live' OR ${alias}region IN (${list}))`;
+  }
 
   categories(kind: Kind): Category[] {
-    return this.st(`SELECT id, name, count FROM categories WHERE kind = ? AND count > 0${this.adult()} ORDER BY sort`).all(kind) as unknown as Category[];
+    return this.st(`SELECT id, name, count FROM categories WHERE kind = ? AND count > 0${this.adult()}${this.regionSql(kind)} ORDER BY sort`).all(kind) as unknown as Category[];
   }
 
   items(kind: Kind, cat: string | null, sort: Sort, offset: number, limit: number): { items: Item[]; total: number } {
-    const where = `kind = ? AND sep = 0${cat ? ' AND cat = ?' : ''}${this.adult()}`;
+    const where = `kind = ? AND sep = 0${cat ? ' AND cat = ?' : ''}${this.adult()}${this.regionSql(kind)}`;
     const args: (string | number)[] = cat ? [kind, cat] : [kind];
     const rows = this.st(`SELECT ${COLS} FROM items WHERE ${where} ORDER BY ${ORDER[sort] ?? 'sort'} LIMIT ? OFFSET ?`).all(...args, limit, offset) as unknown as Row[];
     const total = offset === 0 && rows.length < limit ? rows.length
@@ -75,7 +83,7 @@ export class Catalog {
     if (!terms.length || terms.join('').length < 2) return [];
     const match = terms.map((t) => `"${t}"*`).join(' ');
     const sql = `SELECT ${COLS.split(', ').map((c) => 'i.' + c).join(', ')} FROM items_fts f JOIN items i ON i.rid = f.rowid
-      WHERE items_fts MATCH ? AND i.sep = 0${kind ? ' AND i.kind = ?' : ''}${this.adult('i.')} ORDER BY rank LIMIT ?`;
+      WHERE items_fts MATCH ? AND i.sep = 0${kind ? ' AND i.kind = ?' : ''}${this.adult('i.')}${this.regionSql(kind, 'i.')} ORDER BY rank LIMIT ?`;
     const rows = (kind ? this.st(sql).all(match, kind, limit) : this.st(sql).all(match, limit)) as unknown as Row[];
     return rows.map(toItem);
   }
@@ -96,6 +104,19 @@ export class Catalog {
   }
 
   private countsCache: { v: string; c: Record<string, number> } | null = null;
+  regionList(): { code: string; channels: number }[] {
+    return this.st(`SELECT region AS code, count(*) AS channels FROM items WHERE kind = 'live' AND sep = 0 AND region IS NOT NULL GROUP BY region ORDER BY channels DESC`).all() as any;
+  }
+
+  /** All copies of a live channel (same family), for switching sources. */
+  family(id: string): { item: Item; fam: number }[] {
+    const { sid } = parseId(id);
+    const r = this.st(`SELECT fam FROM items WHERE kind = 'live' AND sid = ?`).get(sid) as { fam: number | null } | undefined;
+    if (!r?.fam) { const it = this.get(id); return it ? [{ item: it, fam: -sid }] : []; }
+    const rows = this.st(`SELECT ${COLS}, fam FROM items WHERE kind = 'live' AND fam = ? AND sep = 0${this.adult()}${this.regionSql('live')} LIMIT 100`).all(r.fam) as unknown as (Row & { fam: number })[];
+    return rows.map((x) => ({ item: toItem(x), fam: x.fam }));
+  }
+
   counts() {
     if (this.countsCache?.v === this.version) return this.countsCache.c;
     const c = Object.fromEntries((this.st(`SELECT kind, count(*) AS n FROM items WHERE sep = 0 GROUP BY kind`).all() as { kind: string; n: number }[]).map((r) => [r.kind, r.n]));

@@ -8,7 +8,7 @@ export interface HubDeps {
   saveProgress(item: Item, position: number, duration: number): void;
   resumePosition(item: Item): number; // 0 if none
   urls(item: Item): string[];
-  isHevc?(item: Item): boolean;
+  txMode?(item: Item): 'full' | 'audio' | undefined;
   /** The lease now belongs to `deviceId` (or nobody): free server-side streams held for anyone else. */
   leaseMoved?(deviceId: string | null): void | Promise<void>;
   now?: () => number;
@@ -31,6 +31,8 @@ export class Hub {
   private online(id: string) { return (this.clients.get(id)?.size ?? 0) > 0; }
 
   getLease() { return this.lease; }
+  /** Is any device actually holding a stream open right now? */
+  streamActive() { return !!this.lease && this.online(this.lease.deviceId); }
 
   connect(deviceId: string, send: Send) {
     let set = this.clients.get(deviceId);
@@ -102,7 +104,7 @@ export class Hub {
       this.lease = { deviceId, item, position: start, duration: handedOver?.item.id === item.id ? handedOver.duration : 0, paused: false, since: this.now() };
       if (item.kind === 'live') this.deps.saveProgress(item, 0, 0);
       this.deps.log?.(`lease -> ${deviceId}: ${item.name} @${Math.round(start)}s`);
-      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item), ...(this.deps.isHevc?.(item) ? { hevc: true } : {}) });
+      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item), ...(this.deps.txMode?.(item) ? { hevc: true, tx: this.deps.txMode!(item) } : {}) });
       this.broadcastState();
     });
   }
@@ -146,7 +148,7 @@ export class Hub {
           this.sendTo(deviceId, { t: 'error', message: 'That device is offline' });
           return;
         }
-        this.sendTo(msg.target, { t: 'play', item, startAt: msg.startAt, from: deviceId });
+        this.sendTo(msg.target, { t: 'play', item, startAt: msg.startAt, from: deviceId, ...(msg.eventId ? { eventId: msg.eventId } : {}) });
         return;
       }
       case 'remote':

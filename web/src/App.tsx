@@ -12,12 +12,14 @@ import { MovieDetail, SeriesDetail } from './screens/Detail.tsx';
 import { Search } from './screens/Search.tsx';
 import { Settings } from './screens/Settings.tsx';
 import { Remote } from './screens/Remote.tsx';
+import { Sports } from './screens/Sports.tsx';
 import { Pair } from './screens/Pair.tsx';
 import { clean } from './ui/common.tsx';
 import { isMobile, isTizen } from './env.ts';
 
 const ICONS: Record<string, string> = {
   home: 'M3 11l9-8 9 8v10h-6v-6H9v6H3z',
+  sports: 'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zm0-13l3.5 2.5-1.3 4h-4.4l-1.3-4zM12 3v5m8.5 3.5l-5 -1M3.5 11.5l5-1M7 19l2.8-4.5M17 19l-2.8-4.5',
   live: 'M3 6h18v12H3zM8 21h8M12 3l-3 3m3-3l3 3',
   movies: 'M4 4h16v16H4zM4 9h16M9 4v5m6-5v5',
   series: 'M3 5h18v11H3zM7 20h10',
@@ -25,11 +27,12 @@ const ICONS: Record<string, string> = {
   remote: 'M8 2h8v20H8zM12 7v.01M10 12h4M12 10v4',
   settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8-3l2-1-2-4-2 1-2-1V5h-4v2l-2 1-2-1-2 4 2 1v2l-2 1 2 4 2-1 2 1v2h4v-2l2-1 2 1 2-4-2-1z',
 };
-const LABEL: Record<string, string> = { home: 'Home', live: 'Live TV', movies: 'Movies', series: 'Series', search: 'Search', remote: 'Remote', settings: 'Settings' };
+const LABEL: Record<string, string> = { home: 'Home', sports: 'Sports', live: 'Live TV', movies: 'Movies', series: 'Series', search: 'Search', remote: 'Remote', settings: 'Settings' };
 
 function Screen({ r }: { r: Route }) {
   switch (r.name) {
     case 'home': return <Home />;
+    case 'sports': return <Sports />;
     case 'live': return <Live />;
     case 'movies': return <Vod key="movie" kind="movie" />;
     case 'series': return <Vod key="series" kind="series" />;

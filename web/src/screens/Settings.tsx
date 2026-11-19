@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { lowLatencySports, setLowLatency } from '../playback.ts';
 import { api, server, setServer, myDeviceId, setCredentials, clearCache } from '../api.ts';
 import { devices, connected } from '../ws.ts';
 import { railFocused } from '../router.ts';
@@ -10,6 +11,8 @@ const ago = (ms: number) => { if (!ms) return 'never'; const m = Math.round((Dat
 export function Settings() {
   const [tick, setTick] = useState(0);
   const st = useAsync(() => api.status(), [tick]);
+  const regions = useAsync(() => api.regions(), [tick]);
+  const [allRegions, setAllRegions] = useState(false);
   const s = st.data;
   const me = devices.value.find((d) => d.id === myDeviceId.value);
   const rows: { label: string; value?: any; act?: () => void }[] = [
@@ -19,11 +22,29 @@ export function Settings() {
     { label: 'Library', value: s ? `${(s.counts.live ?? 0).toLocaleString()} channels · ${(s.counts.movie ?? 0).toLocaleString()} movies · ${(s.counts.series ?? 0).toLocaleString()} series` : '…' },
     { label: s?.syncing ? 'Syncing…' : 'Refresh catalog & guide now', value: s ? `catalog ${ago(s.catalogSynced)}, guide ${ago(s.epgSynced)}` : '', act: () => { api.sync().then(() => { clearCache(); setTimeout(() => setTick((t) => t + 1), 500); }); } },
     { label: 'Show adult content', value: s?.showAdult ? 'On' : 'Off', act: () => api.settings({ showAdult: !s?.showAdult }).then(() => setTick((t) => t + 1)) },
+    { label: 'Live sports delay', value: lowLatencySports.value ? 'Lowest (jump to live edge)' : 'Smooth (play provider backlog)', act: () => setLowLatency(!lowLatencySports.value) },
+    ...regionRows(),
     ...devices.value.filter((d) => d.id !== myDeviceId.value).map((d) => ({
       label: `${d.online ? '● ' : '○ '}${d.name}`, value: `${d.kind} · remove`, act: () => { if (confirm(`Unpair ${d.name}?`)) api.removeDevice(d.id); },
     })),
     { label: 'Unpair this device', act: () => { setCredentials(null, null); location.reload(); } },
   ];
+  function regionRows() {
+    const r = regions.data;
+    if (!r) return [];
+    const on = new Set(r.enabled);
+    const NAMES: Record<string, string> = { UK: 'United Kingdom', US: 'United States', CA: 'Canada', AR: 'Arabic', '4K': '4K (mixed, mostly UK sport)', IE: 'Ireland', AU: 'Australia', ES: 'Spain', FR: 'France', DE: 'Germany', NL: 'Netherlands', IT: 'Italy', TR: 'Turkey', IN: 'India', PT: 'Portugal' };
+    const list = [...r.all].sort((a, b) => Number(on.has(b.code)) - Number(on.has(a.code)) || b.channels - a.channels);
+    const shown = allRegions ? list : list.slice(0, Math.max(on.size + 3, 8));
+    const toggle = (code: string) => {
+      const next = on.has(code) ? r.enabled.filter((x) => x !== code) : [...r.enabled, code];
+      api.settings({ regions: next }).then(() => { clearCache(); setTick((t) => t + 1); });
+    };
+    return [
+      ...shown.map((x) => ({ label: `${on.has(x.code) ? '☑' : '☐'} Live TV: ${NAMES[x.code] ?? x.code}`, value: `${x.channels.toLocaleString()} channels`, act: () => toggle(x.code) })),
+      ...(!allRegions && list.length > shown.length ? [{ label: `Show all ${list.length} regions…`, act: () => setAllRegions(true) }] : []),
+    ];
+  }
   const [fi, setFi] = useState(0);
   useKeys((k) => {
     if (railFocused.value) return false;

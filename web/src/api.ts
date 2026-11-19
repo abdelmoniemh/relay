@@ -1,4 +1,4 @@
-import type { Category, Item, Kind, Programme, Progress } from '@shared/protocol.ts';
+import type { Category, Item, Kind, Programme, Progress, RankedSource, SportEvent } from '@shared/protocol.ts';
 import { signal } from '@preact/signals';
 
 const LS = { server: 'relay.server', token: 'relay.token', device: 'relay.device' };
@@ -43,20 +43,28 @@ function cachedGet<T>(path: string): Promise<T> {
 }
 export const clearCache = () => memo.clear();
 
+/** Can this device play HEVC without help? (TV hardware and Apple devices can; most desktop browsers can't.) */
+function hevcParam() {
+  try {
+    if (__TIZEN__ || typeof (window as any).tizen !== 'undefined') return '1';
+    return MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90"') ? '1' : '0';
+  } catch { return '0'; }
+}
+
 export type Sort = 'default' | 'added' | 'name' | 'rating';
 export interface SeriesInfo {
   id: string; name: string; cover: string | null; backdrop: string | null; plot: string | null; genre: string | null; year: string | null; rating: number | null;
   seasons: { season: number; episodes: (Item & { plot?: string; duration?: number })[] }[];
 }
 export interface MovieInfo { plot: string | null; genre: string | null; year: string | null; duration: number | null; backdrop: string | null; cast: string | null; director: string | null; rating: number | null }
-export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; showAdult: boolean; pairingCode: string }
+export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; liveSynced: number; showAdult: boolean; pairingCode: string; regions: string[]; probing: number | null; probeQueue: number }
 
 export const api = {
   ping: () => req<{ ok: boolean }>('GET', '/api/ping'),
   pair: (code: string, name: string, kind: string) => req<{ token: string; deviceId: string }>('POST', '/api/pair', { code, name, kind }),
   status: () => req<Status>('GET', '/api/status'),
   sync: () => req('POST', '/api/sync'),
-  settings: (s: { showAdult?: boolean }) => req('PUT', '/api/settings', s).then(() => clearCache()),
+  settings: (s: { showAdult?: boolean; regions?: string[] }) => req('PUT', '/api/settings', s).then(() => clearCache()),
   categories: (kind: Kind) => cachedGet<Category[]>(`/api/categories/${kind}`),
   items: (kind: Kind, cat: string | null, sort: Sort, offset: number, limit: number) =>
     cachedGet<{ items: Item[]; total: number }>(`/api/items/${kind}?${new URLSearchParams({ ...(cat ? { cat } : {}), sort, offset: String(offset), limit: String(limit) })}`),
@@ -73,6 +81,12 @@ export const api = {
   continueWatching: () => req<Progress[]>('GET', '/api/continue'),
   recent: () => req<Item[]>('GET', '/api/recent'),
   progress: (ids: string[]) => req<Record<string, [number, number]>>('GET', `/api/progress?ids=${ids.join(',')}`),
+  events: (opts: { sport?: string; q?: string } = {}) => req<SportEvent[]>('GET', `/api/events?${new URLSearchParams({ ...opts, hevc: hevcParam() } as any)}`),
+  event: (id: string) => req<SportEvent>('GET', `/api/events/${id}?hevc=${hevcParam()}`),
+  family: (id: string) => req<RankedSource[]>('GET', `/api/family/${id}?hevc=${hevcParam()}`),
+  probe: (ids: string[]) => req<{ queued: number; active: number | null; blocked: boolean }>('POST', '/api/probe', { ids }),
+  observed: (o: { id: string; width: number; height: number; fps?: number; vcodec?: string; kbps?: number }) => req('POST', '/api/observed', o),
+  regions: () => req<{ enabled: string[]; all: { code: string; channels: number }[] }>('GET', '/api/regions'),
   devices: () => req<{ id: string; name: string; kind: string }[]>('GET', '/api/devices'),
   renameDevice: (id: string, name: string) => req('PUT', `/api/devices/${id}`, { name }),
   removeDevice: (id: string) => req('DELETE', `/api/devices/${id}`),

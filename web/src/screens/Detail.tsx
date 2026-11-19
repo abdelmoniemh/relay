@@ -20,9 +20,10 @@ export function MovieDetail({ item }: { item: Item }) {
   const prog = useAsync(() => api.progress([item.id]), [item.id]);
   const [p, d] = prog.data?.[item.id] ?? [0, 0];
   const resumable = p > 30 && d > 0 && p < d * 0.95;
+  const withDur = { ...item, duration: info.data?.duration ?? item.duration ?? (d || null) };
   const buttons = [
-    ...(resumable ? [{ label: `▶ Resume ${fmtTime(p)}`, act: () => play(item, { startAt: p }) }] : []),
-    { label: resumable ? '⟲ From start' : '▶ Play', act: () => play(item, { startAt: 0 }) },
+    ...(resumable ? [{ label: `▶ Resume ${fmtTime(p)}`, act: () => play(withDur, { startAt: p }) }] : []),
+    { label: resumable ? '⟲ From start' : '▶ Play', act: () => play(withDur, { startAt: 0 }) },
     { label: favorites.value.has(item.id) ? '★ Favorited' : '☆ Favorite', act: () => toggleFavorite(item) },
   ];
   const [bi, setBi] = useState(0);
@@ -76,7 +77,7 @@ export function SeriesDetail({ item }: { item: Item }) {
     if (best) { setSi((best as any).s); setEi((best as any).e); }
   }, [prog.data, seasons.length]);
 
-  const playEp = (e: Item) => { const pr = prog.data?.[e.id]; play(e, pr && pr[0] < pr[1] * 0.95 ? { startAt: pr[0] } : {}); };
+  const playEp = (e: Item & { duration?: number }) => { const pr = prog.data?.[e.id]; play({ ...e, duration: e.duration ?? (pr?.[1] || null) }, pr && pr[0] < pr[1] * 0.95 ? { startAt: pr[0] } : {}); };
 
   useBackKey((k) => {
     if (railFocused.value) return false;

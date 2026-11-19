@@ -6,6 +6,7 @@ import { AvPlayer } from './avplay.ts';
 import type { Player } from './types.ts';
 import {
   attachPlayer, current, mode, status, position, duration, errorMsg, play, stop, togglePause, seekBy, seekTo, zap, setMode, volume,
+  sources, nextSource, sourceEvent,
 } from '../playback.ts';
 import { useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
 import { Logo, clean } from '../ui/common.tsx';
@@ -119,8 +120,8 @@ function Overlay() {
       case 'stop': stop(); return true;
       case 'ok': if (!live && visible) togglePause(); return true;
       case 'playpause': case 'play': case 'pause': if (!live) togglePause(); return true;
-      case 'left': case 'rw': seekBy(k === 'rw' ? -60 : -10); return true;
-      case 'right': case 'ff': seekBy(k === 'ff' ? 60 : 10); return true;
+      case 'left': case 'rw': if (live) nextSource(-1); else seekBy(k === 'rw' ? -60 : -10); return true;
+      case 'right': case 'ff': if (live) nextSource(1); else seekBy(k === 'ff' ? 60 : 10); return true;
       case 'up': case 'chup': if (live) zap('prev'); return true;
       case 'down': case 'chdown': if (live) zap('next'); return true;
       case 'red': toggleFavorite(it); return true;
@@ -181,6 +182,18 @@ function Overlay() {
             <span>{fmtTime(duration.value)}</span>
           </div>
         )}
+        {live && sources.value.length > 1 && (() => {
+          const i = sources.value.findIndex((x) => x.item.id === it.id);
+          const src = sources.value[i];
+          return (
+            <div class="srcline">
+              <button onClick={() => nextSource(-1)}>◀</button>
+              <span>Source <b>{i + 1}</b>/{sources.value.length}{src ? <> · <span class={src.verified ? 'ok' : 'muted'}>{src.label}{src.verified && !src.dead ? ' ✓' : ''}</span></> : null}</span>
+              <button onClick={() => nextSource(1)}>▶</button>
+              <span class="muted small">{sourceEvent.value ? 'same match on other channels' : 'other copies of this channel'}</span>
+            </div>
+          );
+        })()}
         <div class="ctl">
           {live ? <>
             <button onClick={() => zap('prev')}>▲ CH</button><button onClick={() => zap('next')}>▼ CH</button>

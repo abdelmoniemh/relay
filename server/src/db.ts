@@ -50,10 +50,23 @@ export function openDb(path: string): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS progress_updated ON progress (updated DESC);
     CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+
+    -- Measured stream quality (one row per live stream, latest probe wins).
+    CREATE TABLE IF NOT EXISTS probes (
+      sid INTEGER PRIMARY KEY, at INTEGER NOT NULL, ok INTEGER NOT NULL,
+      width INTEGER, height INTEGER, fps REAL, vcodec TEXT, acodec TEXT, kbps INTEGER,
+      ttfb_ms INTEGER, backlog_s REAL, err TEXT
+    );
   `);
   // migrations for databases created by earlier versions
   const cols = (db.prepare(`PRAGMA table_info(categories)`).all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes('adult')) db.exec('ALTER TABLE categories ADD COLUMN adult INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('region')) db.exec('ALTER TABLE categories ADD COLUMN region TEXT');
+  const icols = (db.prepare(`PRAGMA table_info(items)`).all() as { name: string }[]).map((c) => c.name);
+  if (!icols.includes('region')) db.exec('ALTER TABLE items ADD COLUMN region TEXT');
+  if (!icols.includes('fam')) db.exec('ALTER TABLE items ADD COLUMN fam INTEGER');
+  db.exec('CREATE INDEX IF NOT EXISTS items_fam ON items (fam) WHERE fam IS NOT NULL');
+  db.exec('CREATE INDEX IF NOT EXISTS items_epg ON items (epg) WHERE epg IS NOT NULL');
   return db;
 }
 

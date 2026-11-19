@@ -8,6 +8,12 @@ export interface LoadOpts {
   transcodeUrl?: string;
   /** Server says this item is HEVC. */
   hevc?: boolean;
+  /** Live sports: jump to the live edge instead of playing the provider's backlog. */
+  lowLatency?: boolean;
+  /** Known runtime (movies), used when the browser only sees a transcoded stream. */
+  duration?: number;
+  /** Server says this movie needs converting for browsers ('audio' = AC3/DTS audio only, 'full' = HEVC video). */
+  tx?: 'full' | 'audio';
 }
 
 export interface Player {
@@ -24,4 +30,6 @@ export interface Player {
   /** For hardware video planes (Tizen) — screen rect the video should occupy. */
   setRect?(r: { x: number; y: number; w: number; h: number }): void;
   on(cb: (e: PlayerEvent, detail?: string) => void): void;
+  /** What is actually being decoded right now (for passive quality verification). */
+  info?(): { width: number; height: number; fps?: number; vcodec?: string; kbps?: number } | null;
 }

@@ -17,6 +17,8 @@ import { scheduleSync } from './sync.ts';
 import { streamUrls } from './xtream.ts';
 import { Transcoder, HevcRegistry } from './transcode.ts';
 import { kvGet, kvSet } from './db.ts';
+import { EventsIndex } from './events.ts';
+import { Prober } from './prober.ts';
 import type { Item } from '../../shared/protocol.ts';
 
 const provider = parseProvider();
@@ -24,13 +26,28 @@ const db = openDb(config.dbPath);
 const catalog = new Catalog(db);
 const auth = new Auth(db);
 const transcoder = new Transcoder();
-const hevc = new HevcRegistry(JSON.parse(kvGet(db, 'hevc_ids') ?? '[]'), (ids) => kvSet(db, 'hevc_ids', JSON.stringify(ids)));
+const hevc = new HevcRegistry(JSON.parse(kvGet(db, 'hevc_ids') ?? '[]'), (entries) => kvSet(db, 'hevc_ids', JSON.stringify(entries)));
 process.on('exit', () => { transcoder.stop(); });
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { transcoder.stop().finally(() => process.exit(0)); });
 
 const upsertProgress = db.prepare(`INSERT INTO progress (item, json, position, duration, updated, series) VALUES (?, ?, ?, ?, ?, ?)
   ON CONFLICT(item) DO UPDATE SET json = excluded.json, position = excluded.position, duration = excluded.duration, updated = excluded.updated`);
 const getProgress = db.prepare('SELECT position, duration FROM progress WHERE item = ?');
+
+const events = new EventsIndex(db);
+// Background quality checks: only while no device holds a stream. Sources of live/soon events first, football first.
+let hubRef: Hub | null = null;
+const prober = new Prober(db, provider, {
+  canRun: () => !!hubRef && !hubRef.streamActive() && !transcoder.owner,
+  background: () => {
+    const now = Date.now() / 1000;
+    const list = events.list(catalog.regions, catalog.version, () => new Map(), { hevcOk: true })
+      .filter((e) => e.status === 'live' || (e.start != null && e.start - now < 3 * 3600))
+      .sort((a, b) => (a.sport === 'football' ? 0 : 1) - (b.sport === 'football' ? 0 : 1));
+    return list.flatMap((e) => e.sources.slice(0, 25).map((s) => Number(s.item.id.slice(1))));
+  },
+  log: (m) => app.log.info(m),
+});
 
 const hub = new Hub({
   listDevices: () => auth.devices(),
@@ -40,8 +57,13 @@ const hub = new Hub({
     return r && r.duration > 0 && r.position < r.duration * 0.95 ? r.position : 0;
   },
   urls: (item) => streamUrls(provider, item),
-  leaseMoved: (deviceId) => transcoder.releaseExcept(deviceId),
-  isHevc: (item) => hevc.has(item.id),
+  leaseMoved: async (deviceId) => {
+    // Free every server-side use of the provider connection before the new device starts.
+    const probing = await prober.abort();
+    await transcoder.releaseExcept(deviceId);
+    if (probing) await new Promise((r) => setTimeout(r, 400)); // give the provider a moment to release the slot
+  },
+  txMode: (item) => hevc.mode(item.id),
   log: (m) => app.log.info(m),
 });
 
@@ -49,7 +71,8 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transpor
 await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
-registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc });
+hubRef = hub;
+registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober });
 app.log.warn(`transcoding: ${transcoder.available ? (transcoder.gpu ? 'NVENC (GPU)' : 'x264 (CPU)') : 'unavailable (install ffmpeg)'}`);
 
 if (existsSync(config.webDir)) {
@@ -61,7 +84,8 @@ if (existsSync(config.webDir)) {
 }
 
 scheduleSync(db, provider, () => {
-  catalog.version = `${Date.now()}.${catalog.showAdult ? 1 : 0}`;
+  catalog.version = `${Date.now()}.${catalog.showAdult ? 1 : 0}.${catalog.regions.join('')}`;
+  events.invalidate();
 });
 
 await app.listen({ host: '0.0.0.0', port: config.port });

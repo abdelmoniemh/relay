@@ -89,6 +89,29 @@ html.playing .preview { background: transparent; }
 .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .keys { font-size: .8rem; }
 
+/* ---------- sports ---------- */
+.sports { display: grid; grid-template-columns: 15rem minmax(0, 1fr) minmax(22rem, 34vw); height: 100%; }
+.sports .cats { background: var(--bg2); border-right: 1px solid var(--line); overflow: auto; }
+.sports .cats .row { height: 3.1rem; margin: 2px 6px; }
+.ev-head { padding: .8rem .8rem .4rem; display: flex; gap: .5rem; }
+.event { gap: 1rem; }
+.event .when { width: 5.2rem; flex: none; font-variant-numeric: tabular-nums; color: var(--muted); font-size: .9rem; text-align: center; }
+.event .name { font-weight: 600; font-size: 1.05rem; }
+.event .q { text-align: right; flex: none; max-width: 13rem; }
+.event.offline, .source.offline { opacity: .5; }
+.live-pill { background: var(--red); color: #fff; font-weight: 800; font-size: .72rem; letter-spacing: .06em; padding: .2em .55em; border-radius: 4px; }
+.ok { color: var(--green); } .bad { color: var(--red); }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detail-col { border-left: 1px solid var(--line); background: var(--bg2); padding-bottom: .5rem; }
+.ev-title { display: flex; align-items: flex-start; gap: .4rem; padding: 1rem 1rem .2rem; }
+.ev-title h2 { padding: 0; white-space: normal; }
+.ev-actions { display: flex; gap: .5rem; padding: .7rem 1rem; flex-wrap: wrap; }
+.ev-actions .primary { background: var(--accent); color: #fff; }
+.ev-actions button:disabled { opacity: .5; }
+.source .num { width: 1.6rem; color: var(--muted); text-align: right; flex: none; }
+.source .meta .name { font-size: .92rem; }
+.detail-col .help { padding: 0 1rem; }
+
 /* ---------- vod ---------- */
 .vod { display: grid; grid-template-columns: 19rem minmax(0, 1fr); height: 100%; }
 .card { height: 100%; border-radius: var(--r); padding: 5px; border: 2px solid transparent; cursor: pointer; position: relative; display: flex; flex-direction: column; }
@@ -179,6 +202,11 @@ button.wide { width: 100%; }
 .grid3 button { padding: .9em .3em; }
 .grid3.digits { margin-top: .6rem; }
 .dpad button:active, .grid3 button:active { background: var(--accent-bg); transform: scale(.96); }
+.rlist { display: flex; flex-direction: column; gap: .4rem; }
+.revent { display: flex; gap: .8rem; align-items: center; text-align: left; }
+.revent .when { width: 3.6rem; flex: none; font-size: .8rem; color: var(--muted); }
+.revent .meta { display: flex; flex-direction: column; min-width: 0; }
+.revent:disabled { opacity: .5; }
 .remote .search { padding: 0; height: auto; min-height: 60vh; }
 
 /* ---------- player ---------- */
@@ -197,6 +225,9 @@ button.wide { width: 100%; }
 .overlay .ico { font-size: 2rem; background: none; padding: 0 .4rem; line-height: 1; }
 .overlay .bottom { padding: 4rem 2rem 1.5rem; background: linear-gradient(transparent, #000d); display: flex; flex-direction: column; gap: 1rem; }
 .overlay .epg { max-width: 50rem; display: flex; flex-direction: column; gap: .3rem; font-size: 1.1rem; }
+.srcline { display: flex; align-items: center; gap: .7rem; font-size: 1rem; }
+.srcline button { background: #ffffff1f; padding: .3em .8em; }
+.srcline .ok { color: var(--green); }
 .overlay .ctl { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .overlay .ctl button { background: #ffffff1f; }
 .overlay .ctl .big { font-size: 1.3rem; padding: .5em 1.2em; }
@@ -239,6 +270,9 @@ html.playing .tv { background: transparent; }
   .live, .vod { grid-template-columns: 1fr; }
   .live .side { display: none; }
   .live.z-chans .cats, .vod.z-grid .cats { display: none; }
+  .sports { grid-template-columns: 1fr; }
+  .sports.z-events .cats, .sports.z-events .detail-col, .sports.z-sports .events, .sports.z-sports .detail-col, .sports.z-detail .cats, .sports.z-detail .events { display: none; }
+  .event .q { max-width: 8rem; }
   .live.z-cats .chans, .vod.z-cats .grid { display: none; }
   .phone-back { display: inline-block !important; }
   .detail { padding: 1rem; }

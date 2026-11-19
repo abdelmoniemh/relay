@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { kvGet } from './db.ts';
 import { config, type Provider } from './config.ts';
 
-type What = 'catalog' | 'epg';
+type What = 'catalog' | 'live' | 'epg';
 let running: Promise<void> | null = null;
 
 export function runSync(provider: Provider, what: What[], onLog = console.log): Promise<void> {
@@ -31,10 +31,11 @@ export function scheduleSync(db: DatabaseSync, provider: Provider, onDone: () =>
   const tick = async () => {
     const what: What[] = [];
     if (due('catalog_synced', config.catalogRefreshHours)) what.push('catalog');
+    else if (due('live_synced', 0.5)) what.push('live'); // event channels are renamed through the day
     if (due('epg_synced', config.epgRefreshHours)) what.push('epg');
     if (!what.length) return;
     try { await runSync(provider, what); onDone(); } catch (e) { console.error('[sync] failed:', (e as Error).message); }
   };
   tick();
-  setInterval(tick, 15 * 60_000).unref();
+  setInterval(tick, 5 * 60_000).unref();
 }

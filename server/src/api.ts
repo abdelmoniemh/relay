@@ -9,6 +9,9 @@ import { apiUrl, getJson, streamUrls } from './xtream.ts';
 import { kvGet, kvSet } from './db.ts';
 import { isSyncing, runSync } from './sync.ts';
 import type { Transcoder, HevcRegistry } from './transcode.ts';
+import type { EventsIndex } from './events.ts';
+import type { Prober } from './prober.ts';
+import { rankSources } from './quality.ts';
 
 declare module 'fastify' { interface FastifyRequest { deviceId: string } }
 
@@ -16,10 +19,11 @@ const KINDS = new Set<Kind>(['live', 'movie', 'series']);
 const isLocal = (ip: string) => ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : d; };
 
-export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry }) {
-  const { db, catalog, auth, hub, provider, transcoder, hevc } = ctx;
-  const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.showAdult ? 1 : 0}`; };
+export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober }) {
+  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober } = ctx;
+  const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.showAdult ? 1 : 0}.${catalog.regions.join('')}`; events.invalidate(); };
   catalog.showAdult = kvGet(db, 'show_adult') === '1';
+  catalog.regions = JSON.parse(kvGet(db, 'regions') ?? '["UK","US","CA","AR","4K"]');
   refreshVersion();
 
   // ---- auth ----
@@ -54,7 +58,8 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   app.get('/api/status', async () => ({
     syncing: isSyncing(), counts: catalog.counts(),
     catalogSynced: Number(kvGet(db, 'catalog_synced') ?? 0), epgSynced: Number(kvGet(db, 'epg_synced') ?? 0),
-    showAdult: catalog.showAdult, pairingCode: auth.pairingCode(),
+    showAdult: catalog.showAdult, pairingCode: auth.pairingCode(), regions: catalog.regions,
+    probing: prober.active, probeQueue: prober.pending(), liveSynced: Number(kvGet(db, 'live_synced') ?? 0),
   }));
 
   app.post('/api/sync', async () => {
@@ -63,8 +68,10 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   });
 
   app.put('/api/settings', async (req) => {
-    const b = req.body as { showAdult?: boolean };
-    if (typeof b.showAdult === 'boolean') { catalog.showAdult = b.showAdult; kvSet(db, 'show_adult', b.showAdult ? '1' : '0'); refreshVersion(); }
+    const b = req.body as { showAdult?: boolean; regions?: string[] };
+    if (typeof b.showAdult === 'boolean') { catalog.showAdult = b.showAdult; kvSet(db, 'show_adult', b.showAdult ? '1' : '0'); }
+    if (Array.isArray(b.regions)) { catalog.regions = b.regions.map((r) => String(r).toUpperCase().replace(/[^A-Z0-9]/g, '')).filter(Boolean).slice(0, 50); kvSet(db, 'regions', JSON.stringify(catalog.regions)); }
+    refreshVersion();
     return { ok: true };
   });
 
@@ -174,11 +181,12 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const { kind } = parseId(id);
     if (!kind || kind === 'series') return reply.code(400).send({ error: 'bad id' });
     if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
-    hevc.add(id);
+    const mode = q.mode === 'audio' ? 'audio' : 'full';
+    hevc.add(id, mode);
     const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
     const src = kind === 'live' ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
     let started;
-    try { started = await transcoder.start(src, Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId); }
+    try { started = await transcoder.start(src, Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live', mode }); }
     catch (e) { return reply.code(502).send({ error: `Transcode failed: ${(e as Error).message}` }); }
     const { proc, first } = started;
     reply.hijack();
@@ -190,6 +198,40 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     res.on('close', end);
     req.raw.socket?.once('close', end);
     proc.on('exit', () => res.end());
+  });
+
+  // ---- sports events & sources ----
+  const hevcOk = (q: Record<string, string>) => q.hevc === '1';
+  app.get('/api/regions', async () => ({ enabled: catalog.regions, all: catalog.regionList() }));
+  app.get('/api/events', async (req) => {
+    const q = req.query as Record<string, string>;
+    let list = events.list(catalog.regions, catalog.version, (sids) => prober.results(sids), { hevcOk: hevcOk(q) });
+    if (q.sport) list = list.filter((e) => e.sport === q.sport);
+    if (q.q) { const t = q.q.toLowerCase(); list = list.filter((e) => `${e.title} ${e.competition ?? ''}`.toLowerCase().includes(t)); }
+    return list.map((e) => ({ ...e, sourceCount: e.sources.length, sources: q.full ? e.sources : e.sources.slice(0, 3) }));
+  });
+  app.get('/api/events/:id', async (req, reply) => {
+    const q = req.query as Record<string, string>;
+    const e = events.list(catalog.regions, catalog.version, (sids) => prober.results(sids), { hevcOk: hevcOk(q) }).find((x) => x.id === (req.params as any).id);
+    if (!e) return reply.code(404).send({ error: 'Event not found (finished?)' });
+    return { ...e, sourceCount: e.sources.length };
+  });
+  app.get('/api/family/:id', async (req) => {
+    const fam = catalog.family((req.params as any).id);
+    return rankSources(fam, prober.results(fam.map((f) => Number(f.item.id.slice(1)))), { hevcOk: hevcOk(req.query as any) });
+  });
+  /** Check these streams' real quality as soon as the connection is free. */
+  app.post('/api/probe', async (req) => {
+    const ids = ((req.body as any)?.ids ?? []) as string[];
+    prober.request(ids.filter((i) => i.startsWith('l')).map((i) => Number(i.slice(1))).filter(Number.isFinite).slice(0, 60));
+    return { queued: prober.pending(), active: prober.active, blocked: hub.streamActive() };
+  });
+
+  app.post('/api/observed', async (req) => {
+    const b = req.body as { id?: string; width?: number; height?: number; fps?: number; vcodec?: string; kbps?: number };
+    if (!b?.id?.startsWith('l') || !(Number(b.height) > 0)) return { ok: false };
+    prober.observed(Number(b.id.slice(1)), { width: Number(b.width), height: Number(b.height), fps: b.fps ? Number(b.fps) : null, vcodec: b.vcodec ?? null, kbps: b.kbps ? Number(b.kbps) : null });
+    return { ok: true };
   });
 
   app.get('/api/capabilities', async () => ({ transcode: transcoder.available, gpu: transcoder.gpu }));

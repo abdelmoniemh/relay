@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Item, RemoteCmd } from '@shared/protocol.ts';
+import type { Item, RemoteCmd, SportEvent } from '@shared/protocol.ts';
+import { api } from '../api.ts';
+import { useAsync } from '../ui/hooks.ts';
 import { myDeviceId } from '../api.ts';
 import { devices, lease, send } from '../ws.ts';
 import { current, takeover } from '../playback.ts';
@@ -14,7 +16,8 @@ export function Remote() {
   const others = devices.value.filter((d) => d.id !== myDeviceId.value);
   const l = lease.value;
   const [target, setTarget] = useState<string | null>(lastTarget);
-  const [tab, setTab] = useState<'pad' | 'browse'>('pad');
+  const [tab, setTab] = useState<'pad' | 'sports' | 'browse'>('pad');
+  const events = useAsync(() => (tab === 'sports' ? api.events({ sport: 'football' }) : Promise.resolve([] as SportEvent[])), [tab]);
   const [pad, setPad] = useState(false);
   useEffect(() => {
     // default: the device that's playing, else the TV, else first online
@@ -57,6 +60,7 @@ export function Remote() {
 
       <div class="seg">
         <button class={tab === 'pad' ? 'sel' : ''} onClick={() => setTab('pad')}>Remote</button>
+        <button class={tab === 'sports' ? 'sel' : ''} onClick={() => setTab('sports')}>⚽ Football</button>
         <button class={tab === 'browse' ? 'sel' : ''} onClick={() => setTab('browse')}>Find & play</button>
       </div>
 
@@ -84,6 +88,19 @@ export function Remote() {
             <button onClick={() => cmd('voldown')}>VOL －</button>
           </div>
           {pad && <div class="grid3 digits">{[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => <button key={n} onClick={() => cmd('digit', n)}>{n}</button>)}</div>}
+        </div>
+      ) : tab === 'sports' ? (
+        <div class="rlist">
+          {events.loading && <div class="spinner inline" />}
+          {(events.data ?? []).filter((e) => !e.offline).slice(0, 40).map((e) => {
+            const best = e.sources.find((x) => !x.dead);
+            return (
+              <button key={e.id} class="revent" disabled={!t?.online || !best} onClick={() => best && target && send({ t: 'sendTo', target, item: best.item, eventId: e.id })}>
+                <span class="when">{e.status === 'live' ? <span class="live-pill">LIVE</span> : e.start ? new Date(e.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                <span class="meta"><b>{e.home} v {e.away}</b><span class="muted small">{e.competition} · {e.sourceCount} sources{best?.verified ? ` · ${best.label}` : ''}</span></span>
+              </button>
+            );
+          })}
         </div>
       ) : (
         <Search onPick={(it) => { if (it.kind === 'series') return; sendItem(it); }} autoFocus={false} />
