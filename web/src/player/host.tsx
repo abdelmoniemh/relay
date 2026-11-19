@@ -6,7 +6,7 @@ import { AvPlayer } from './avplay.ts';
 import type { Player } from './types.ts';
 import {
   attachPlayer, current, mode, status, position, duration, errorMsg, play, stop, togglePause, seekBy, seekTo, zap, setMode, volume,
-  sources, nextSource, sourceEvent, nextUp, nextEpisode, playNextEpisode, cancelNextUp,
+  sources, nextSource, sourceEvent, nextUp, nextEpisode, playNextEpisode, cancelNextUp, toast,
 } from '../playback.ts';
 import { useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
 import { Logo, clean } from '../ui/common.tsx';
@@ -20,6 +20,78 @@ export const previewBox = signal<HTMLElement | null>(null);
 /** Hardware player only when Samsung's webapis actually loaded. */
 const hw = isTizen && !!window.webapis?.avplay;
 
+// ---- full screen / picture-in-picture / AirPlay ----
+// iPhone Safari can't put the page in full screen, only the <video> itself (Apple's player, native controls).
+// Everywhere else (desktop, iPad, Android) the whole page goes full screen so our own controls stay.
+type WkVideo = HTMLVideoElement & {
+  webkitEnterFullscreen?: () => void; webkitExitFullscreen?: () => void; webkitDisplayingFullscreen?: boolean;
+  webkitSupportsPresentationMode?: (m: string) => boolean; webkitSetPresentationMode?: (m: string) => void; webkitPresentationMode?: string;
+  webkitShowPlaybackTargetPicker?: () => void;
+};
+const doc = document as Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => void; webkitFullscreenEnabled?: boolean };
+let videoEl: WkVideo | null = null;
+const pageFs = !isTizen && !!(document.fullscreenEnabled || doc.webkitFullscreenEnabled);
+export const canFullscreen = !hw && (pageFs || (typeof HTMLVideoElement !== 'undefined' && 'webkitEnterFullscreen' in HTMLVideoElement.prototype));
+export const canPip = !hw && !!(document.pictureInPictureEnabled
+  || (typeof HTMLVideoElement !== 'undefined' && 'webkitSupportsPresentationMode' in HTMLVideoElement.prototype));
+export const isFull = signal(false);
+export const airplay = signal(false); // an AirPlay receiver is around
+
+export function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+    if (doc.webkitFullscreenElement) { doc.webkitExitFullscreen?.(); return; }
+    if (pageFs) {
+      const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+      const r = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : (el.webkitRequestFullscreen?.(), undefined);
+      // Phones: go landscape with it (Android Chrome; ignored where unsupported).
+      if (isMobile) Promise.resolve(r).then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
+      r?.catch?.(() => {});
+      return;
+    }
+    const v = videoEl;
+    if (!v?.webkitEnterFullscreen) return;
+    if (v.readyState < 1) { toast.value = 'Wait for the video to start'; setTimeout(() => { toast.value = null; }, 2000); return; }
+    v.webkitEnterFullscreen();
+  } catch {}
+}
+
+export function togglePip() {
+  const v = videoEl;
+  if (!v) return;
+  try {
+    if (document.pictureInPictureElement) { document.exitPictureInPicture().catch(() => {}); return; }
+    if (v.requestPictureInPicture && document.pictureInPictureEnabled) { v.requestPictureInPicture().catch(() => {}); return; }
+    if (v.webkitSupportsPresentationMode?.('picture-in-picture')) {
+      v.webkitSetPresentationMode!(v.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+    }
+  } catch {}
+}
+
+export const showAirplay = () => { try { videoEl?.webkitShowPlaybackTargetPicker?.(); } catch {} };
+
+const syncFull = () => { isFull.value = !!(document.fullscreenElement || doc.webkitFullscreenElement || videoEl?.webkitDisplayingFullscreen); };
+if (!isTizen) {
+  document.addEventListener('fullscreenchange', syncFull);
+  document.addEventListener('webkitfullscreenchange', syncFull);
+}
+
+/** iPhone: native full screen, PiP and AirPlay hooks on our <video>. */
+function wireVideo(v: WkVideo) {
+  videoEl = v;
+  v.setAttribute('x-webkit-airplay', 'allow');
+  v.setAttribute('autopictureinpicture', ''); // Safari: keep watching in PiP when leaving the Home Screen app
+  v.addEventListener('webkitbeginfullscreen', syncFull);
+  v.addEventListener('webkitendfullscreen', () => {
+    syncFull();
+    // Leaving Apple's player can pause the stream; a live channel should just keep going.
+    setTimeout(() => { if (v.paused && current.value?.kind === 'live') v.play().catch(() => {}); }, 300);
+  });
+  if ('WebKitPlaybackTargetAvailabilityEvent' in window) {
+    v.addEventListener('webkitplaybacktargetavailabilitychanged', (e: any) => { airplay.value = e.availability === 'available'; });
+  }
+}
+
 export function PlayerHost() {
   const vid = useRef<HTMLVideoElement>(null);
   const obj = useRef<HTMLObjectElement>(null);
@@ -30,6 +102,7 @@ export function PlayerHost() {
 
   useEffect(() => {
     const p = hw ? new AvPlayer() : new Html5Player(vid.current!);
+    if (!hw) wireVideo(vid.current!);
     player.current = p;
     attachPlayer(p);
   }, []);
@@ -39,9 +112,17 @@ export function PlayerHost() {
     const place = () => {
       if (m === 'full' || m === 'off') { setRect(null); return; }
       const box = onLive ? previewBox.value : null;
-      if (box) { const r = box.getBoundingClientRect(); setRect({ x: r.left, y: r.top, w: r.width, h: r.height }); return; }
-      const w = Math.min(480, window.innerWidth * 0.45);
-      setRect({ x: window.innerWidth - w - 24, y: window.innerHeight - (w * 9) / 16 - 24, w, h: (w * 9) / 16 });
+      const b = box?.getBoundingClientRect();
+      // (on phones the Live preview box is hidden: fall back to the corner player instead of a 0×0 video)
+      if (b && b.width > 0 && b.height > 0) { setRect({ x: b.left, y: b.top, w: b.width, h: b.height }); return; }
+      const W = window.innerWidth, H = window.innerHeight;
+      const small = W < 760 || H < 500;
+      const w = Math.min(480, W * (small ? 0.55 : 0.45)), h = (w * 9) / 16;
+      const gap = small ? 12 : 24;
+      // Keep clear of the bottom tab bar on phones.
+      const rail = document.querySelector('.rail')?.getBoundingClientRect();
+      const bottom = rail && rail.top > H / 2 ? H - rail.top + gap : gap;
+      setRect({ x: W - w - gap, y: H - h - bottom, w, h });
     };
     place();
     window.addEventListener('resize', place);
@@ -70,7 +151,7 @@ export function PlayerHost() {
         ? <object ref={obj} id="av-player" type="application/avplayer" class={`video ${m}`} style={style} />
         : <video ref={vid} class={`video ${m}`} style={style} playsInline autoplay
             onClick={() => (m === 'mini' ? setMode('full') : current.value?.kind !== 'live' && togglePause())}
-            onDblClick={() => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.()} />}
+            onDblClick={() => m === 'full' && toggleFullscreen()} />}
       {m === 'mini' && rect && !hw && !onLive && (
         <div class="mini-ctl" style={{ left: rect.x, top: rect.y - 40, width: rect.w }}>
           <span class="name">{current.value && clean(current.value.name)}</span>
@@ -89,6 +170,7 @@ function Overlay() {
   const [sendMenu, setSendMenu] = useState(false);
   const hideT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const digitT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastTap = useRef(0);
   const it = current.value!;
   const live = it?.kind === 'live';
   epgVersion.value;
@@ -156,9 +238,22 @@ function Overlay() {
   const p = epg?.[0];
   const now = Date.now() / 1000;
   const st = status.value;
+  const shown = visible || st !== 'playing';
+
+  // Mouse: click toggles pause, double-click goes full screen. Touch: tap shows/hides the controls
+  // (never pauses by accident), double-tap goes full screen. Hidden controls aren't tappable (CSS).
+  const onTap = (e: MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, input, .dialog, .nextup')) return;
+    if (!isMobile) { poke(); if (!live && e.target === e.currentTarget) togglePause(); return; }
+    const t = Date.now();
+    if (t - lastTap.current < 320) { lastTap.current = 0; toggleFullscreen(); return; }
+    lastTap.current = t;
+    if (shown && st === 'playing') { clearTimeout(hideT.current); setVisible(false); } else poke();
+  };
 
   return (
-    <div class={`overlay ${visible || st !== 'playing' ? 'show' : ''}`} onMouseMove={poke} onClick={(e) => { if (e.target === e.currentTarget) { poke(); if (!live) togglePause(); } }}>
+    <div class={`overlay ${shown ? 'show' : ''}`} onMouseMove={isMobile ? undefined : poke} onClick={onTap}
+      onDblClick={isMobile ? undefined : (e) => { if (!(e.target as HTMLElement).closest('button, input, .dialog, .nextup')) toggleFullscreen(); }}>
       {(st === 'requesting' || st === 'loading' || st === 'buffering') && <div class="spinner" />}
       {st === 'error' && <div class="err">{errorMsg.value}<br /><button onClick={() => play(it, { mode: 'full' })}>Retry</button></div>}
       {digits && <div class="digits">{digits}</div>}
@@ -170,6 +265,12 @@ function Overlay() {
           {it.kind === 'episode' && <div class="muted">S{it.season} · E{it.episode}</div>}
         </div>
         <div class="clock">{clock(now)}</div>
+        {airplay.value && <button class="ico tool" title="AirPlay" aria-label="AirPlay" onClick={() => { poke(); showAirplay(); }}>
+          <svg viewBox="0 0 24 24"><path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1M12 15l5 6H7z" /></svg></button>}
+        {canPip && <button class="ico tool" title="Picture in picture" aria-label="Picture in picture" onClick={() => { poke(); togglePip(); }}>
+          <svg viewBox="0 0 24 24"><path d="M3 5h18v14H3zM12 12h7v5h-7z" /></svg></button>}
+        {canFullscreen && <button class="ico tool" title="Full screen" aria-label="Full screen" onClick={() => { poke(); toggleFullscreen(); }}>
+          <svg viewBox="0 0 24 24"><path d={isFull.value ? 'M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6' : 'M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6'} /></svg></button>}
       </div>
       <div class="bottom">
         {live ? (
@@ -210,7 +311,6 @@ function Overlay() {
           {it.kind === 'episode' && nextEpisode() && <button onClick={playNextEpisode}>Next episode ⏭</button>}
           {live && <button onClick={() => toggleFavorite(it)}>{favorites.value.has(it.id) ? '★' : '☆'}</button>}
           {others.length > 0 && <button onClick={() => setSendMenu(true)}>Send to… <span class="key blue" /></button>}
-          {!isMobile && !isTizen && <button onClick={() => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()}>⤢ Full screen</button>}
         </div>
       </div>
       {nextUp.value && <NextUp />}

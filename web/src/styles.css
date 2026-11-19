@@ -8,9 +8,9 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 16px; background: var(--bg); }
 html, body, #app { height: 100%; overflow: hidden; }
-body { font: 1rem/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: var(--bg); -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; user-select: none; }
+body { font: 1rem/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: var(--bg); -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; -webkit-text-size-adjust: 100%; }
 button { font: inherit; color: inherit; background: var(--bg3); border: 2px solid transparent; border-radius: var(--r); padding: .55em 1em; cursor: pointer; }
-button:hover { background: #222838; }
+@media (hover: hover) { button:hover { background: #222838; } }
 input { font: inherit; color: var(--fg); background: var(--bg3); border: 2px solid var(--line); border-radius: var(--r); padding: .6em .9em; width: 100%; outline: none; user-select: text; }
 input:focus, input.focus { border-color: var(--accent); }
 a { color: var(--accent); cursor: pointer; }
@@ -45,7 +45,7 @@ h3 { font-size: 1.05rem; font-weight: 600; margin: 0 0 .6rem; }
 .vlist { overflow-y: auto; overflow-x: hidden; height: 100%; position: relative; contain: strict; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .vrow { position: absolute; top: 0; contain: layout paint style; padding: 3px 6px; }
 .row { height: 100%; display: flex; align-items: center; gap: .8rem; padding: 0 .8rem; border-radius: var(--r); border: 2px solid transparent; cursor: pointer; min-width: 0; }
-.row:hover { background: var(--bg3); }
+@media (hover: hover) { .row:hover { background: var(--bg3); } }
 .row.focus { background: var(--accent-bg); border-color: var(--accent); }
 .row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .meta { min-width: 0; flex: 1; }
@@ -123,7 +123,7 @@ html.playing .preview { background: transparent; }
 .hscroll.placeholder { height: 15.5rem; }
 .tcard { flex: none; width: 9.5rem; cursor: pointer; border-radius: var(--r); padding: 4px; border: 2px solid transparent; position: relative; }
 .tcard.lg { width: 12rem; }
-.tcard:hover { background: var(--bg3); }
+@media (hover: hover) { .tcard:hover { background: var(--bg3); } }
 .tcard.focus { border-color: var(--accent); background: var(--accent-bg); }
 .tcard .pwrap { position: relative; }
 .tcard .cap { font-size: .85rem; margin-top: .35rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -166,7 +166,7 @@ html.playing .preview { background: transparent; }
 /* ---------- vod ---------- */
 .vod { display: grid; grid-template-columns: 19rem minmax(0, 1fr); height: 100%; }
 .card { height: 100%; border-radius: var(--r); padding: 5px; border: 2px solid transparent; cursor: pointer; position: relative; display: flex; flex-direction: column; }
-.card:hover { background: var(--bg3); }
+@media (hover: hover) { .card:hover { background: var(--bg3); } }
 .card.focus { border-color: var(--accent); background: var(--accent-bg); }
 .poster { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 7px; background: var(--bg3); display: block; }
 .poster.ph { display: grid; place-items: center; font-size: 2rem; color: var(--muted); }
@@ -269,6 +269,11 @@ button.wide { width: 100%; }
 .mini-ctl button { padding: .2em .6em; }
 .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; flex-direction: column; justify-content: space-between; opacity: 0; transition: opacity .2s; cursor: none; }
 .overlay.show { opacity: 1; cursor: default; }
+.overlay:not(.show) > * { pointer-events: none; }
+.overlay .top, .overlay .bottom { padding-left: max(2rem, env(safe-area-inset-left)); padding-right: max(2rem, env(safe-area-inset-right)); }
+.overlay .tool { width: 2.75rem; height: 2.75rem; display: grid; place-items: center; padding: 0; border-radius: 50%; flex: none; }
+.overlay .tool svg { width: 1.5rem; height: 1.5rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (hover: hover) { .overlay .tool:hover { background: #ffffff1f; } }
 .overlay .top { display: flex; align-items: center; gap: 1rem; padding: 1.5rem 2rem 4rem; background: linear-gradient(#000c, transparent); }
 .overlay .top .t { flex: 1; min-width: 0; }
 .overlay .top .name { font-size: 1.5rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -290,7 +295,7 @@ button.wide { width: 100%; }
 .overlay .err { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--bg2); padding: 1.5rem 2rem; border-radius: var(--r); color: var(--fg); }
 .overlay .err button { margin-top: 1rem; }
 .digits { position: absolute; top: 2rem; right: 2rem; font-size: 3.5rem; font-weight: 700; background: #000a; padding: .2em .6em; border-radius: var(--r); font-variant-numeric: tabular-nums; }
-.dialog { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--bg2); border: 1px solid var(--line); border-radius: var(--r); padding: 1.5rem; display: flex; flex-direction: column; gap: .5rem; min-width: 20rem; }
+.dialog { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: calc(100vw - 2rem); max-height: calc(100% - 2rem); overflow: auto; background: var(--bg2); border: 1px solid var(--line); border-radius: var(--r); padding: 1.5rem; display: flex; flex-direction: column; gap: .5rem; min-width: 20rem; }
 html.playing-full .app > .screen, html.playing-full .rail { visibility: hidden; }
 
 .handoff-banner { position: fixed; top: .8rem; left: 50%; transform: translateX(-50%); z-index: 15; background: #133322; border: 1px solid var(--green); color: var(--fg); padding: .6rem 1.2rem; border-radius: 999px; max-width: calc(100vw - 2rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -310,28 +315,37 @@ html.playing .tv { background: transparent; }
 .tv .chans, .tv .cats { background: var(--bg); }
 .tv .home, .tv .vod, .tv .detail, .tv .search, .tv .settings { background: var(--bg); }
 
-/* ---------- phone ---------- */
-@media (max-width: 760px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-  .rail { flex-direction: row; width: auto !important; order: 2; padding: .3rem .3rem calc(.3rem + env(safe-area-inset-bottom)); border: 0; border-top: 1px solid var(--line); justify-content: space-around; gap: 0; }
-  .rail button { flex-direction: column; gap: .15rem; padding: .35rem .2rem; font-size: .62rem; flex: 1; }
-  .rail button span { opacity: 1; }
+.phone-back { display: none; background: none; padding: 0 .5rem 0 0; color: var(--accent); }
+
+/* ---------- phone: portrait, plus landscape phones (wider than 760px but short) ---------- */
+@media (max-width: 760px), (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+  .app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
+  .rail { flex-direction: row; width: auto !important; order: 2; padding: .3rem max(.3rem, env(safe-area-inset-right)) calc(.3rem + env(safe-area-inset-bottom)) max(.3rem, env(safe-area-inset-left)); border: 0; border-top: 1px solid var(--line); justify-content: space-around; gap: 0; }
+  .rail button { flex-direction: column; gap: .15rem; padding: .35rem .2rem; font-size: .62rem; flex: 1; min-width: 0; }
+  .rail button span { opacity: 1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .rail button svg { width: 1.35rem; height: 1.35rem; }
+  .rail button:active { color: var(--fg); }
   .conn { display: none; }
-  .live, .vod { grid-template-columns: 1fr; }
+  .screen { padding-top: env(safe-area-inset-top); }
+  .live, .vod { grid-template-columns: minmax(0, 1fr); }
   .live .side { display: none; }
   .live.z-chans .cats, .vod.z-grid .cats { display: none; }
-  .sports { grid-template-columns: 1fr; }
+  .sports { grid-template-columns: minmax(0, 1fr); }
   .browse { padding: 1rem 0 2rem .8rem; }
+  .browse-head { gap: .8rem; padding-right: .8rem; }
   .tcard { width: 7.2rem; }
-  .hero { flex-direction: column; }
+  .hero { flex-direction: column; gap: 1rem; }
   .hero .hero-poster { width: 9rem; }
   .title-screen { padding: 1rem; }
   .hero-txt h1 { font-size: 1.5rem; }
+  .hero-bg { height: 22rem; }
   .sports.z-events .cats, .sports.z-events .detail-col, .sports.z-sports .events, .sports.z-sports .detail-col, .sports.z-detail .cats, .sports.z-detail .events { display: none; }
+  .detail-col { border-left: 0; }
+  .event { gap: .6rem; }
+  .event .when { width: 3.8rem; font-size: .8rem; }
   .event .q { max-width: 8rem; }
   .live.z-cats .chans, .vod.z-cats .grid { display: none; }
-  .phone-back { display: inline-block !important; }
+  .phone-back { display: inline-block !important; padding: .2rem .8rem .2rem 0; font-size: 1.3rem; line-height: 1; vertical-align: -.1em; }
   .detail { padding: 1rem; }
   .detail-body { flex-direction: column; }
   .poster.big { width: 10rem; }
@@ -340,12 +354,52 @@ html.playing .tv { background: transparent; }
   .home { padding: 1rem 0 2rem 1rem; }
   .hcell { width: 7.5rem; } .hrow.wide .hcell { width: 85vw; }
   .settings { padding: 1rem; }
-  .overlay .top { padding: calc(1rem + env(safe-area-inset-top)) 1rem 3rem; }
-  .overlay .bottom { padding: 3rem 1rem calc(1rem + env(safe-area-inset-bottom)); }
+  .search { padding: 1rem; }
+  .grid-head { padding: .6rem .8rem .3rem; }
+  .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar, .hscroll::-webkit-scrollbar { display: none; }
+  .chip { flex: none; }
+  .btns button { flex: 1 1 auto; }
+  .row.cat { min-height: 2.75rem; }
+  /* player */
+  .overlay .top { gap: .6rem; padding: max(1rem, env(safe-area-inset-top)) max(.8rem, env(safe-area-inset-right)) 3rem max(.8rem, env(safe-area-inset-left)); }
+  .overlay .top .name { font-size: 1.1rem; }
+  .overlay .top .logo { width: 40px; height: 40px; }
+  .overlay .clock { font-size: 1rem; }
+  .overlay .tool { width: 2.5rem; height: 2.5rem; }
+  .overlay .bottom { gap: .7rem; padding: 3rem max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+  .overlay .epg { font-size: .95rem; }
+  .overlay .ctl button { padding: .65em 1em; }
+  .srcline { flex-wrap: wrap; font-size: .9rem; gap: .5rem; }
+  .seek { gap: .6rem; font-size: .85rem; }
+  .seek input { height: 2.2rem; }
+  .nextup { left: 1rem; right: 1rem; bottom: calc(9rem + env(safe-area-inset-bottom)); max-width: none; }
+  .mini-ctl button { padding: .45em .8em; }
+  .dialog { min-width: min(20rem, calc(100vw - 2rem)); }
+  .digits { top: calc(4rem + env(safe-area-inset-top)); right: 1rem; font-size: 2.5rem; }
   .handoff-banner { top: calc(.5rem + env(safe-area-inset-top)); font-size: .85rem; }
+  .toast { bottom: calc(5rem + env(safe-area-inset-bottom)); max-width: calc(100vw - 2rem); text-align: center; }
+  .toast.over { bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
   h1 { font-size: 1.5rem; }
 }
-.phone-back { display: none; background: none; padding: 0 .5rem 0 0; color: var(--accent); }
+
+/* Landscape phone: there's width to spare but little height — rail on the left, lists side by side. */
+@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+  .app { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .rail { order: 0; flex-direction: column; justify-content: flex-start; gap: .1rem; width: calc(3.8rem + env(safe-area-inset-left)) !important;
+    padding: .4rem .25rem max(.4rem, env(safe-area-inset-bottom)) max(.25rem, env(safe-area-inset-left)); border-top: 0; border-right: 1px solid var(--line); overflow-y: auto; scrollbar-width: none; }
+  .rail button { flex: none; padding: .3rem .1rem; font-size: .55rem; }
+  .rail button svg { width: 1.2rem; height: 1.2rem; }
+  .screen { padding-top: 0; padding-right: env(safe-area-inset-right); }
+  .live, .vod { grid-template-columns: minmax(10rem, 32%) minmax(0, 1fr); }
+  .live.z-cats .chans, .vod.z-cats .grid, .live.z-chans .cats, .vod.z-grid .cats { display: flex; }
+  .live .phone-back, .vod .phone-back { display: none !important; }
+  .hrow.wide .hcell { width: 24rem; }
+  .overlay .top { padding-bottom: 2rem; }
+  .overlay .bottom { padding-top: 2rem; gap: .5rem; }
+  .toast { bottom: max(1rem, env(safe-area-inset-bottom)); }
+  .nextup { left: auto; right: max(1rem, env(safe-area-inset-right)); bottom: 6rem; max-width: 22rem; }
+}
 
 /* ---------- older TVs (no aspect-ratio / flex gap) ---------- */
 .legacy .preview { height: 0; padding-top: 56.25%; position: relative; }
