@@ -57,14 +57,14 @@ export interface SeriesInfo {
   seasons: { season: number; episodes: (Item & { plot?: string; duration?: number })[] }[];
 }
 export interface MovieInfo { plot: string | null; genre: string | null; year: string | null; duration: number | null; backdrop: string | null; cast: string | null; director: string | null; rating: number | null }
-export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; liveSynced: number; showAdult: boolean; pairingCode: string; regions: string[]; probing: number | null; probeQueue: number }
+export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; liveSynced: number; pairingCode: string; regions: string[]; probing: number | null; probeQueue: number }
 
 export const api = {
   ping: () => req<{ ok: boolean }>('GET', '/api/ping'),
   pair: (code: string, name: string, kind: string) => req<{ token: string; deviceId: string }>('POST', '/api/pair', { code, name, kind }),
   status: () => req<Status>('GET', '/api/status'),
   sync: () => req('POST', '/api/sync'),
-  settings: (s: { showAdult?: boolean; regions?: string[] }) => req('PUT', '/api/settings', s).then(() => clearCache()),
+  settings: (s: { regions?: string[] }) => req('PUT', '/api/settings', s).then(() => clearCache()),
   categories: (kind: Kind) => cachedGet<Category[]>(`/api/categories/${kind}`),
   items: (kind: Kind, cat: string | null, sort: Sort, offset: number, limit: number) =>
     cachedGet<{ items: Item[]; total: number }>(`/api/items/${kind}?${new URLSearchParams({ ...(cat ? { cat } : {}), sort, offset: String(offset), limit: String(limit) })}`),

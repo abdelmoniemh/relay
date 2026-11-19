@@ -4,7 +4,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { openDb, kvSet } from './db.ts';
 import { apiUrl, getJson, getStream, xmltvUrl } from './xtream.ts';
 import { parseXmltv } from './epg.ts';
-import { channelKey, regionOf } from './normalize.ts';
+import { channelKey, isAdultCategory, isAdultChannel, regionOf } from './normalize.ts';
 import type { Provider } from './config.ts';
 
 const { dbPath, provider, epgUrl, what } = workerData as {
@@ -38,22 +38,29 @@ async function syncCatalog(only?: 'live') {
     try {
       db.prepare('DELETE FROM categories WHERE kind = ?').run(k.kind);
       db.prepare('DELETE FROM items WHERE kind = ?').run(k.kind);
-      cats.forEach((c, i) => insCat.run(k.kind, String(c.category_id), String(c.category_name ?? ''), i));
+      // Adult content is never stored: flagged items, adult categories, and known adult live channels.
+      const adultCats = new Set(cats.filter((c) => isAdultCategory(String(c.category_name ?? ''))).map((c) => String(c.category_id)));
+      cats.forEach((c, i) => { if (!adultCats.has(String(c.category_id))) insCat.run(k.kind, String(c.category_id), String(c.category_name ?? ''), i); });
+      let skipped = 0;
       for (let i = 0; i < items.length; i++) {
         const x = items[i];
         const name = String(x.name ?? '').trim();
+        const cat = x.category_id != null ? String(x.category_id) : null;
+        if (x.is_adult || (cat && adultCats.has(cat)) || (k.kind === 'live' && isAdultChannel(name))) { skipped++; continue; }
         const sep = /^[#=*\-_ ]{2,}.*[#=*\-_ ]{2,}$/.test(name) ? 1 : 0; // provider "##### 4K #####" dividers
         ins.run(
           k.kind, Number(x[k.id]), name, x[k.icon] || null, x.category_id != null ? String(x.category_id) : null,
           num(x.num) ?? i, x.epg_channel_id || null, x.container_extension || null,
           num(x.rating_5based ?? x.rating), num(x.added ?? x.last_modified), num(x.tv_archive_duration) ?? 0,
-          x.is_adult ? 1 : 0, sep,
+          0, sep,
         );
       }
       db.prepare(`UPDATE categories SET count = (SELECT count(*) FROM items i WHERE i.kind = categories.kind AND i.cat = categories.id AND i.sep = 0),
         adult = EXISTS (SELECT 1 FROM items i WHERE i.kind = categories.kind AND i.cat = categories.id AND i.adult = 1)
         WHERE kind = ?`).run(k.kind);
       assignRegions(k.kind);
+      purgeLibrary();
+      if (skipped) log(`${k.kind}: excluded ${skipped} adult items`);
       if (k.kind === 'live') assignFamilies();
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
@@ -65,6 +72,14 @@ async function syncCatalog(only?: 'live') {
   log(`search index rebuilt in ${((performance.now() - t) / 1000).toFixed(1)}s`);
   kvSet(db, only ? 'live_synced' : 'catalog_synced', String(Date.now()));
   if (!only) kvSet(db, 'live_synced', String(Date.now()));
+}
+
+/** Favorites / history entries for things no longer in the catalog (e.g. adult content stored before) are removed. */
+function purgeLibrary() {
+  for (const t of ['favorites', 'progress']) {
+    db.exec(`DELETE FROM ${t} WHERE (substr(item, 1, 1) = 'l' AND NOT EXISTS (SELECT 1 FROM items WHERE kind = 'live' AND sid = CAST(substr(${t}.item, 2) AS INTEGER)))
+      OR (substr(item, 1, 1) = 'm' AND NOT EXISTS (SELECT 1 FROM items WHERE kind = 'movie' AND sid = CAST(substr(${t}.item, 2) AS INTEGER)))`);
+  }
 }
 
 function assignRegions(kind: string) {

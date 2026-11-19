@@ -104,3 +104,12 @@ test('server-side streams are released when the lease moves or stops, before the
   await hub.handle('tv', { t: 'stopped', position: 0, duration: 0 });
   assert.deepEqual(moved.at(-1), null);
 });
+
+test('items the catalog refuses are never granted', async () => {
+  const got: ServerMsg[] = [];
+  const hub = new Hub({ listDevices: () => [{ id: 'tv', name: 'TV', kind: 'tv' }], saveProgress: () => {}, resumePosition: () => 0, urls: () => ['u'], allowed: (i) => i.id !== 'm666' });
+  hub.connect('tv', (m) => got.push(m));
+  await hub.handle('tv', { t: 'play', item: { id: 'm666', kind: 'movie', name: 'x' } });
+  assert.equal(got.some((m) => m.t === 'granted'), false);
+  assert.equal(hub.getLease(), null);
+});

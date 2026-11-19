@@ -177,3 +177,19 @@ export function implausibleKickoff(competition: string | null, title: string, st
 export function matchKey(m: { home: string; away: string }): string {
   return [teamKey(m.home), teamKey(m.away)].sort().join(' | ');
 }
+
+// ---------------- adult content (never stored) ----------------
+const ADULT_CATEGORY = /\b(FOR ADULTS?|ADULTS? ONLY|XXX|PORN\w*|EROTIC\w*|NSFW|18\s*\+|\+\s*18)\b/i;
+const ADULT_CHANNEL = /\b(BRAZZERS|HUSTLER|PRIVATE ?TV|PLAYBOY ?TV|PLAYBOY|REDLIGHT|RED ?LIGHT ?HD|VIVID|DORCEL|PENTHOUSE|EROX|EROXXX|EXXXOTICA|SPICE ?TV|XXX|PORN\w*|VENUS ?TV|PASSION ?XXX|BLUE ?HUSTLER|BABES ?TV|BANG ?U|PINK ?O|O-LA-LA|OLALA|FRENCH ?LOVER|MEIDEN ?VAN|DUSK|SEXTREME|SEXY ?HOT|BEATE ?UHSE|DARING|PURE ?BABES|XY ?MIX|SUPERONE|EROTIC\w*)\b/i;
+
+/** "Adult Swim" is cartoons, not adult content. */
+const notAdult = (s: string) => s.replace(/ADULT[\s-]*SWIM/gi, '');
+
+export function isAdultCategory(name: string): boolean {
+  return ADULT_CATEGORY.test(notAdult(name.normalize('NFKC')));
+}
+
+/** Live channels only: movie titles like "xXx" or "Hustlers" are fine; movies rely on the provider flag + category. */
+export function isAdultChannel(name: string): boolean {
+  return ADULT_CHANNEL.test(notAdult(name.normalize('NFKC')));
+}

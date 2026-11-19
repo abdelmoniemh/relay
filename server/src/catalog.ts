@@ -25,7 +25,6 @@ const ORDER: Record<Sort, string> = { default: 'sort', added: 'added DESC', name
 export class Catalog {
   private db: DatabaseSync;
   private stmts = new Map<string, StatementSync>();
-  showAdult = false;
   version = '0';
   /** Live TV regions to show (category prefixes like UK, US, CA, AR). Empty = everything. */
   regions: string[] = [];
@@ -38,7 +37,8 @@ export class Catalog {
     return s;
   }
 
-  private adult(alias = '') { return this.showAdult ? '' : ` AND ${alias}adult = 0`; }
+  /** Adult content isn't stored at all; this stays as a second line of defence for old rows. */
+  private adult(alias = '') { return ` AND ${alias}adult = 0`; }
   /** SQL fragment restricting live rows to the chosen regions (values are sanitized, so they can be inlined). */
   regionSql(kind: Kind | null, alias = '') {
     if (!this.regions.length || (kind && kind !== 'live')) return '';
@@ -115,6 +115,13 @@ export class Catalog {
     if (!r?.fam) { const it = this.get(id); return it ? [{ item: it, fam: -sid }] : []; }
     const rows = this.st(`SELECT ${COLS}, fam FROM items WHERE kind = 'live' AND fam = ? AND sep = 0${this.adult()}${this.regionSql('live')} LIMIT 100`).all(r.fam) as unknown as (Row & { fam: number })[];
     return rows.map((x) => ({ item: toItem(x), fam: x.fam }));
+  }
+
+  /** Can this item be played? Live/movies must be in the (adult-free) catalog; episodes must belong to a known series. */
+  playable(item: { id: string; kind: string; seriesId?: string | null }): boolean {
+    if (item.kind === 'live' || item.kind === 'movie') return this.get(item.id) !== null;
+    if (item.kind === 'episode') return !item.seriesId || this.get(item.seriesId) !== null;
+    return false;
   }
 
   counts() {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { channelKey, implausibleKickoff, matchKey, parseMatch, regionOf, sportOf, teamKey, zonedToUnix } from '../src/normalize.ts';
+import { channelKey, implausibleKickoff, isAdultCategory, isAdultChannel, matchKey, parseMatch, regionOf, sportOf, teamKey, zonedToUnix } from '../src/normalize.ts';
 
 test('regions', () => {
   assert.equal(regionOf('UK| SPORT ᴴᴰ'), 'UK');
@@ -84,4 +84,14 @@ test('time zones and replay plausibility', () => {
   assert.equal(implausibleKickoff('UEFA Nations League - MD6', 'Spain vs England', Date.UTC(2026, 10, 19, 0, 0) / 1000), true);
   assert.equal(implausibleKickoff('UEFA Nations League - MD6', 'Spain vs England', Date.UTC(2026, 10, 18, 19, 45) / 1000), false);
   assert.equal(implausibleKickoff('NBA Season', 'Milwaukee vs Miami', Date.UTC(2026, 10, 19, 3, 0) / 1000), false);
+});
+
+test('adult content detection', () => {
+  assert.equal(isAdultCategory('FOR ADULTS'), true);
+  assert.equal(isAdultCategory('NETFLIX ADULT-SWIM'), false);
+  assert.equal(isAdultCategory('HBO MAX (ADULT SWIM)'), false);
+  assert.equal(isAdultChannel('CG: BRAZZERS TV ᴿᴬᵂ'), true);
+  assert.equal(isAdultChannel('CG: HUSTLER TV ᴿᴬᵂ'), true);
+  assert.equal(isAdultChannel('UK: SKY SPORTS MAIN EVENT'), false);
+  assert.equal(isAdultChannel('UK: BBC ONE HD'), false);
 });

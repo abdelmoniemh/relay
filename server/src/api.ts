@@ -21,8 +21,8 @@ const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Num
 
 export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober }) {
   const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober } = ctx;
-  const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.showAdult ? 1 : 0}.${catalog.regions.join('')}`; events.invalidate(); };
-  catalog.showAdult = kvGet(db, 'show_adult') === '1';
+  const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.regions.join('')}`; events.invalidate(); };
+  db.prepare(`DELETE FROM kv WHERE k = 'show_adult'`).run();
   catalog.regions = JSON.parse(kvGet(db, 'regions') ?? '["UK","US","CA","AR","4K"]');
   refreshVersion();
 
@@ -58,7 +58,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   app.get('/api/status', async () => ({
     syncing: isSyncing(), counts: catalog.counts(),
     catalogSynced: Number(kvGet(db, 'catalog_synced') ?? 0), epgSynced: Number(kvGet(db, 'epg_synced') ?? 0),
-    showAdult: catalog.showAdult, pairingCode: auth.pairingCode(), regions: catalog.regions,
+    pairingCode: auth.pairingCode(), regions: catalog.regions,
     probing: prober.active, probeQueue: prober.pending(), liveSynced: Number(kvGet(db, 'live_synced') ?? 0),
   }));
 
@@ -68,8 +68,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   });
 
   app.put('/api/settings', async (req) => {
-    const b = req.body as { showAdult?: boolean; regions?: string[] };
-    if (typeof b.showAdult === 'boolean') { catalog.showAdult = b.showAdult; kvSet(db, 'show_adult', b.showAdult ? '1' : '0'); }
+    const b = req.body as { regions?: string[] };
     if (Array.isArray(b.regions)) { catalog.regions = b.regions.map((r) => String(r).toUpperCase().replace(/[^A-Z0-9]/g, '')).filter(Boolean).slice(0, 50); kvSet(db, 'regions', JSON.stringify(catalog.regions)); }
     refreshVersion();
     return { ok: true };
@@ -122,6 +121,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   app.get('/api/movie/:id', async (req, reply) => {
     const { kind, sid } = parseId((req.params as any).id);
     if (kind !== 'movie') return reply.code(400).send({ error: 'bad id' });
+    if (!catalog.get((req.params as any).id)) return reply.code(404).send({ error: 'not found' });
     const hit = vodInfo.get(sid);
     if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.v;
     const r = await getJson<any>(apiUrl(provider, 'get_vod_info', { vod_id: String(sid) }), 15_000);
@@ -168,9 +168,10 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     return reply.type('application/json').send(json);
   });
 
-  app.get('/api/stream/:id', async (req) => {
+  app.get('/api/stream/:id', async (req, reply) => {
     const id = (req.params as any).id as string;
     const { kind } = parseId(id);
+    if (kind !== 'episode' && !catalog.playable({ id, kind })) return reply.code(404).send({ error: 'not found' });
     return { urls: streamUrls(provider, { id, kind, name: '', ext: (req.query as any).ext }) };
   });
 
@@ -180,6 +181,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const q = req.query as Record<string, string>;
     const { kind } = parseId(id);
     if (!kind || kind === 'series') return reply.code(400).send({ error: 'bad id' });
+    if (kind !== 'episode' && !catalog.playable({ id, kind })) return reply.code(404).send({ error: 'not found' });
     if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
     const mode = q.mode === 'audio' ? 'audio' : 'full';
     hevc.add(id, mode);

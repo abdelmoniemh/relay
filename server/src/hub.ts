@@ -8,6 +8,8 @@ export interface HubDeps {
   saveProgress(item: Item, position: number, duration: number): void;
   resumePosition(item: Item): number; // 0 if none
   urls(item: Item): string[];
+  /** Refuse items that aren't in the catalog (adult content is never stored, so never playable). */
+  allowed?(item: Item): boolean;
   txMode?(item: Item): 'full' | 'audio' | undefined;
   /** The lease now belongs to `deviceId` (or nobody): free server-side streams held for anyone else. */
   leaseMoved?(deviceId: string | null): void | Promise<void>;
@@ -89,6 +91,10 @@ export class Hub {
   }
 
   play(deviceId: string, item: Item, startAt?: number) {
+    if (this.deps.allowed && !this.deps.allowed(item)) {
+      this.sendTo(deviceId, { t: 'error', message: 'Not available' });
+      return Promise.resolve();
+    }
     return this.exclusive(async () => {
       const prev = this.lease;
       await this.revoke(deviceId);

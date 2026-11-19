@@ -64,6 +64,7 @@ const hub = new Hub({
     if (probing) await new Promise((r) => setTimeout(r, 400)); // give the provider a moment to release the slot
   },
   txMode: (item) => hevc.mode(item.id),
+  allowed: (item) => catalog.playable(item),
   log: (m) => app.log.info(m),
 });
 
@@ -84,7 +85,7 @@ if (existsSync(config.webDir)) {
 }
 
 scheduleSync(db, provider, () => {
-  catalog.version = `${Date.now()}.${catalog.showAdult ? 1 : 0}.${catalog.regions.join('')}`;
+  catalog.version = `${Date.now()}.${catalog.regions.join('')}`;
   events.invalidate();
 });
 

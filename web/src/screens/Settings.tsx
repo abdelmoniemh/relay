@@ -21,7 +21,6 @@ export function Settings() {
     { label: 'Server', value: `${server.value || location.origin} · ${connected.value ? 'connected' : 'offline'}`, act: isTizen ? () => { const u = prompt('Server URL', server.value); if (u) { setServer(u); location.reload(); } } : undefined },
     { label: 'Library', value: s ? `${(s.counts.live ?? 0).toLocaleString()} channels · ${(s.counts.movie ?? 0).toLocaleString()} movies · ${(s.counts.series ?? 0).toLocaleString()} series` : '…' },
     { label: s?.syncing ? 'Syncing…' : 'Refresh catalog & guide now', value: s ? `catalog ${ago(s.catalogSynced)}, guide ${ago(s.epgSynced)}` : '', act: () => { api.sync().then(() => { clearCache(); setTimeout(() => setTick((t) => t + 1), 500); }); } },
-    { label: 'Show adult content', value: s?.showAdult ? 'On' : 'Off', act: () => api.settings({ showAdult: !s?.showAdult }).then(() => setTick((t) => t + 1)) },
     { label: 'Live sports delay', value: lowLatencySports.value ? 'Lowest (jump to live edge)' : 'Smooth (play provider backlog)', act: () => setLowLatency(!lowLatencySports.value) },
     ...regionRows(),
     ...devices.value.filter((d) => d.id !== myDeviceId.value).map((d) => ({
