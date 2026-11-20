@@ -3,7 +3,7 @@
 import { signal, effect } from '@preact/signals';
 import type { Item, RankedSource, ServerMsg } from '@shared/protocol.ts';
 import { send, onServer, devices, lease } from './ws.ts';
-import { api, myDeviceId, server, token } from './api.ts';
+import { api, myDeviceId, server, token, type Extras } from './api.ts';
 import { dispatchKey, type Key } from './keys.ts';
 import type { Player } from './player/types.ts';
 import { isTizen } from './env.ts';
@@ -25,6 +25,27 @@ export const sourceEvent = signal<string | null>(null); // event id when playing
 export const episodeQueue = signal<Item[]>([]);
 export const nextUp = signal<{ item: Item; at: number } | null>(null); // countdown to the next episode
 let nextTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Markers and thumbnails of what's playing (movies/episodes, once the server has prepared them). */
+export const extras = signal<Extras | null>(null);
+let creditsShown: string | null = null;
+
+/** Skip button to show at this position, if any. */
+export function skipAt(t: number): { kind: 'intro' | 'recap'; to: number } | null {
+  const m = extras.value?.markers;
+  if (m?.intro && t >= m.intro[0] && t < m.intro[1] - 1) return { kind: 'intro', to: m.intro[1] };
+  if (m?.recap && t >= m.recap[0] && t < m.recap[1] - 1) return { kind: 'recap', to: m.recap[1] };
+  return null;
+}
+export function skipIntro() { const s = skipAt(position.value); if (s) seekTo(s.to); }
+
+/** The seek-bar preview for time `t`: a tile of the sprite (CSS background), or null. */
+export function thumbAt(t: number): { url: string; x: number; y: number; w: number; h: number } | null {
+  const x = extras.value?.thumbs, it = current.value;
+  if (!x || !it) return null;
+  const i = Math.max(0, Math.min(x.cols * x.rows - 1, Math.floor(t / x.interval)));
+  return { url: `${server.value}/api/thumbs/${it.id}.jpg?token=${encodeURIComponent(token.value ?? '')}`, x: (i % x.cols) * x.w, y: Math.floor(i / x.cols) * x.h, w: x.w, h: x.h };
+}
 
 export function nextEpisode(): Item | null {
   const cur = current.value, q = episodeQueue.value;
@@ -93,6 +114,9 @@ export function attachPlayer(p: Player) {
   p.on((e, detail) => {
     if (e === 'time') {
       position.value = p.position(); duration.value = p.duration();
+      // Credits started (chapter marker): offer the next episode now rather than at the very end.
+      const cr = extras.value?.markers.credits, cur = current.value;
+      if (cr && cur?.kind === 'episode' && creditsShown !== cur.id && position.value >= cr && !nextUp.value) { creditsShown = cur.id; scheduleNextEpisode(); }
       if ((status.value === 'loading' || status.value === 'buffering') && !p.paused()) { status.value = 'playing'; errorMsg.value = null; }
       return;
     }
@@ -321,6 +345,12 @@ onServer((m: ServerMsg) => {
       pending = null;
       status.value = 'loading';
       lastUrls = m.urls; lastStart = m.startAt; lastHevc = !!m.hevc; lastTx = m.tx; lastInterlaced = !!m.interlaced; retried = false;
+      extras.value = null; creditsShown = null;
+      if (item.kind === 'movie' || item.kind === 'episode') {
+        api.extras(item.id).then((x) => { if (current.value?.id === item.id) extras.value = x; }).catch(() => {});
+        const next = item.kind === 'episode' ? nextEpisode() : null;
+        if (next) api.prefetch([{ id: next.id, ext: next.ext }]).catch(() => {}); // its markers/thumbnails while idle
+      }
       position.value = m.startAt;
       if (m.urls[0]) preconnect(m.urls[0]);
       player.load(m.urls, loadOpts(item, m.startAt, !!m.hevc)).catch(() => {});

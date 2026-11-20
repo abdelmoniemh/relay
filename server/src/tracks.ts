@@ -3,7 +3,24 @@ import { execFile } from 'node:child_process';
 
 export interface AudioTrack { n: number; lang: string | null; title: string | null; codec: string; channels: number | null; def: boolean }
 export interface SubTrack { n: number; lang: string | null; title: string | null; codec: string; forced: boolean; sdh: boolean; text: boolean }
-export interface Tracks { vcodec: string | null; audio: AudioTrack[]; subs: SubTrack[] }
+export interface Chapter { start: number; end: number; title: string }
+export interface Tracks { vcodec: string | null; audio: AudioTrack[]; subs: SubTrack[]; chapters?: Chapter[]; duration?: number | null }
+
+/** Where to offer "skip intro" / "skip recap", and where the credits start (next episode shows from there). */
+export interface Markers { intro?: [number, number]; recap?: [number, number]; credits?: number }
+
+/** From chapter names: "Intro", "Opening", "Title Sequence", "OP"; "Recap", "Previously"; "Credits", "End Credits", "ED". */
+export function markersFrom(chapters: Chapter[] | undefined, duration?: number | null): Markers {
+  const m: Markers = {};
+  for (const c of chapters ?? []) {
+    const t = c.title.toLowerCase().trim();
+    const len = c.end - c.start;
+    if (!m.intro && len > 5 && len < 300 && /\b(intro|opening( credits| titles)?|title sequence|theme song|op)\b/.test(t)) m.intro = [c.start, c.end];
+    else if (!m.recap && len > 5 && len < 300 && /\b(recap|previously)\b/.test(t)) m.recap = [c.start, c.end];
+    else if (m.credits == null && /\b(credits|ending|outro|ed)\b/.test(t) && !/opening/.test(t) && (!duration || c.start > duration * 0.6)) m.credits = c.start;
+  }
+  return m;
+}
 
 /** Subtitle formats that convert to WebVTT. Picture subtitles (PGS, VobSub, DVB) can't be turned into text. */
 const TEXT_SUBS = new Set(['subrip', 'srt', 'ass', 'ssa', 'mov_text', 'webvtt', 'text', 'microdvd', 'subviewer', 'subviewer1', 'sami', 'realtext', 'jacosub', 'mpl2', 'pjs', 'vplayer', 'stl']);
@@ -15,7 +32,11 @@ const lang = (l: unknown) => {
 
 /** Parses `ffprobe -show_streams -of json` output (kept separate for tests). */
 export function parseTracks(json: string): Tracks {
-  const streams = (JSON.parse(json).streams ?? []) as any[];
+  const all = JSON.parse(json);
+  const streams = (all.streams ?? []) as any[];
+  const chapters: Chapter[] = ((all.chapters ?? []) as any[]).map((c) => ({ start: Number(c.start_time), end: Number(c.end_time), title: String(c.tags?.title ?? '') }))
+    .filter((c) => Number.isFinite(c.start) && Number.isFinite(c.end));
+  const duration = Number(all.format?.duration) || null;
   const video = streams.find((s) => s.codec_type === 'video' && !s.disposition?.attached_pic);
   let a = 0, s = 0;
   const audio: AudioTrack[] = [], subs: SubTrack[] = [];
@@ -29,19 +50,40 @@ export function parseTracks(json: string): Tracks {
         sdh: !!st.disposition?.hearing_impaired || /\bsdh\b|\bcc\b|hearing/.test(t), text: TEXT_SUBS.has(st.codec_name) });
     }
   }
-  return { vcodec: video?.codec_name ?? null, audio, subs };
+  return { vcodec: video?.codec_name ?? null, audio, subs, chapters, duration };
 }
 
 /** Reads the track list (only the start of the file is needed: through the VOD proxy this is usually from memory). */
 export function probeTracks(url: string, timeoutMs = 12_000): Promise<Tracks> {
   return new Promise((resolve, reject) => {
     execFile('ffprobe', ['-v', 'error', '-user_agent', 'Relay/1.0 (like VLC/3.0.20)', '-probesize', '2M', '-analyzeduration', '0',
-      '-show_entries', 'stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,attached_pic',
+      '-show_chapters', '-show_entries', 'format=duration:stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,attached_pic',
       '-of', 'json', url], { timeout: timeoutMs, maxBuffer: 4 << 20 }, (err, out) => {
       if (err) return reject(err);
       try { resolve(parseTracks(out)); } catch (e) { reject(e); }
     });
   });
+}
+
+/**
+ * Track lists per title, read once (through the VOD proxy that's usually the cached header) and kept in the db.
+ * Shared by playback (which languages to offer) and the background prefetcher (markers, thumbnails).
+ */
+export class TrackStore {
+  private cache: Map<string, Tracks>;
+  private save: (entries: [string, Tracks][]) => void;
+  constructor(initial: Record<string, Tracks>, save: (entries: [string, Tracks][]) => void) {
+    this.cache = new Map(Object.entries(initial));
+    this.save = save;
+  }
+  /** Known, and read with chapters/duration (older entries were not). */
+  get(id: string): Tracks | undefined { const t = this.cache.get(id); return t && t.chapters ? t : undefined; }
+  async probe(id: string, url: string): Promise<Tracks> {
+    const t = await probeTracks(url);
+    this.cache.set(id, t);
+    this.save([...this.cache].slice(-3000));
+    return t;
+  }
 }
 
 // ---- choosing ----

@@ -12,9 +12,11 @@ import type { Transcoder, HevcRegistry } from './transcode.ts';
 import type { EventsIndex } from './events.ts';
 import type { Prober } from './prober.ts';
 import { readFile } from 'node:fs/promises';
-import { VodProxy } from './vodproxy.ts';
+import type { VodProxy } from './vodproxy.ts';
+import type { Prefetcher } from './prefetch.ts';
+import { existsSync } from 'node:fs';
 import type { Reminders } from './reminders.ts';
-import { probeTracks, pickAudio, pickSub, trackName, keyframeAt, type Tracks } from './tracks.ts';
+import { pickAudio, pickSub, trackName, keyframeAt, type Tracks, type TrackStore } from './tracks.ts';
 import { vodLayout } from './transcode.ts';
 import { subtitlePlaylist, subtitleSegment, masterPlaylist } from './subs.ts';
 import { rankSources } from './quality.ts';
@@ -30,9 +32,8 @@ const KINDS = new Set<Kind>(['live', 'movie', 'series']);
 const isLocal = (ip: string) => ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : d; };
 
-export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void; reminders: Reminders }) {
-  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders } = ctx;
-  const vodProxy = new VodProxy((m) => app.log.warn(m));
+export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void; reminders: Reminders; vodProxy: VodProxy; trackStore: TrackStore; prefetcher: Prefetcher }) {
+  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher } = ctx;
   const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.regions.join('')}`; events.invalidate(); };
   db.prepare(`DELETE FROM kv WHERE k = 'show_adult'`).run();
   catalog.regions = JSON.parse(kvGet(db, 'regions') ?? '["UK","US","CA","AR","4K"]');
@@ -214,18 +215,15 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   /** Seconds of picture kept before a seek point, so going back a little after a seek needs no restart. */
   const SEEK_PREROLL = 20;
   const hlsVideoPlan = (c: string | null) => (c === 'h264' || c === 'hevc' ? 'copy' : 'encode');
-  // Audio/subtitle tracks per title (read once; through the proxy it's the cached file header).
-  const trackCache = new Map<string, Tracks>(Object.entries(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}')));
   const tracksOf = async (id: string, src: string): Promise<Tracks | null> => {
-    if (trackCache.has(id)) return trackCache.get(id)!;
+    const known = trackStore.get(id);
+    if (known) return known;
     await transcoder.stop(); // one provider connection: the previous session must let go before we read the header
-    try {
-      const t = await probeTracks(src);
-      trackCache.set(id, t);
-      kvSet(db, 'vod_tracks', JSON.stringify(Object.fromEntries([...trackCache].slice(-3000))));
-      return t;
-    } catch (e) { app.log.warn(`tracks ${id}: ${(e as Error).message.split('\n')[0]}`); return null; }
+    try { return await trackStore.probe(id, src); }
+    catch (e) { app.log.warn(`tracks ${id}: ${(e as Error).message.split('\n')[0]}`); return null; }
   };
+  /** A movie/episode's file through the proxy, for the background prefetcher. */
+  const vodSrc = (id: string, ext?: string) => () => { const { kind } = parseId(id); return vodProxy.url(streamUrls(provider, { id, kind, name: '', ext })[0]); };
   // Catch-up: a programme from a channel's archive (?cs=<start>&ce=<stop>, unix seconds; ?start= seconds into it).
   const archiveDays = db.prepare("SELECT archive FROM items WHERE kind = 'live' AND sid = ?");
   const catchupOf = (sid: number, q: Record<string, string>) => {
@@ -265,7 +263,8 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const ac = new AbortController();
     req.raw.socket?.once('close', () => ac.abort());
     // Movies: the preferred audio language when the file's track list is known (from an earlier play).
-    const known = kind !== 'live' ? trackCache.get(id) : undefined;
+    const known = kind !== 'live' ? trackStore.get(id) : undefined;
+    if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext)); // markers & thumbnails, once it's idle
     const audio = known && q.alang ? pickAudio(known, q.alang) : undefined;
     try { started = await transcoder.start(src, cu ? 0 : Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live' || !!cu, mode, info: sourceInfo(id, kind), signal: ac.signal, audio, skip: cu?.skip, low: q.q === 'low' }); }
     catch (e) {
@@ -318,6 +317,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     await prober.abort(); // a background probe may hold the provider connection
     // Movies: every audio language (iOS lists them in its menu), subtitles, the preferred ones selected.
     const tracks = kind === 'live' ? null : await tracksOf(id, src);
+    if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext));
     const defAudio = tracks ? pickAudio(tracks, q.alang || null) : -1;
     const layout = tracks?.vcodec ? vodLayout(tracks, defAudio) : null;
     const defSub = tracks ? pickSub(tracks, q.slang || null, tracks.audio.find((a) => a.n === defAudio)?.lang ?? null) : -1;
@@ -411,6 +411,20 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const ids = ((req.body as any)?.ids ?? []) as string[];
     prober.request(ids.filter((i) => i.startsWith('l')).map((i) => Number(i.slice(1))).filter(Number.isFinite).slice(0, 60));
     return { queued: prober.pending(), active: prober.active, blocked: hub.streamActive() };
+  });
+
+  // ---- skip intro / credits markers and seek-bar thumbnails (made in the background) ----
+  app.get('/api/extras/:id', async (req) => prefetcher.extras(String((req.params as any).id)) ?? { markers: {}, duration: null, thumbs: null });
+  app.get('/api/thumbs/:id', async (req, reply) => {
+    const p = prefetcher.sprite(String((req.params as any).id).replace(/\.jpg$/, ''));
+    if (!existsSync(p)) return reply.code(404).send({ error: 'not ready' });
+    return reply.type('image/jpeg').header('cache-control', 'private, max-age=86400').send(await readFile(p));
+  });
+  /** Prepare these titles while idle (the next episode, a title about to be played). */
+  app.post('/api/prefetch', async (req) => {
+    const list = (((req.body ?? {}) as any).items ?? []) as { id: string; ext?: string }[];
+    for (const it of list.slice(0, 5)) if (/^[me]\d+$/.test(String(it.id))) prefetcher.want(String(it.id), vodSrc(String(it.id), it.ext));
+    return { ok: true };
   });
 
   // ---- reminders & notifications ----

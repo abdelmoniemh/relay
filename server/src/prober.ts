@@ -71,6 +71,9 @@ export class Prober {
       prev?.interlaced ?? null, prev?.bitdepth ?? null, prev?.hdr ?? null, prev?.channels ?? null);
   }
 
+  /** Is a probe holding the provider connection right now? */
+  get busy() { return !!this.running; }
+
   /** Stop probing now; resolves when the provider connection is closed. Returns true if a probe was running. */
   async abort(): Promise<boolean> {
     const was = !!this.ctl;

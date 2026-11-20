@@ -20,6 +20,9 @@ import { kvGet, kvSet } from './db.ts';
 import { EventsIndex } from './events.ts';
 import { Prober } from './prober.ts';
 import { Reminders } from './reminders.ts';
+import { VodProxy } from './vodproxy.ts';
+import { TrackStore } from './tracks.ts';
+import { Prefetcher } from './prefetch.ts';
 import { Tmdb } from './tmdb.ts';
 import { Library } from './library.ts';
 import { Letterboxd } from './letterboxd.ts';
@@ -46,6 +49,8 @@ const loadTz = () => getJson(apiUrl(provider), 15_000)
 loadTz(); setInterval(loadTz, 24 * 3600_000).unref();
 
 const reminders = new Reminders(db);
+const vodProxy = new VodProxy((m) => app.log.warn(m));
+const trackStore = new TrackStore(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}'), (entries) => kvSet(db, 'vod_tracks', JSON.stringify(Object.fromEntries(entries))));
 const events = new EventsIndex(db);
 const tmdb = new Tmdb(db, () => process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || kvGet(db, 'tmdb_key'), (m) => app.log.warn(m));
 const library = new Library(db, tmdb);
@@ -56,8 +61,9 @@ library.lb = letterboxd;
 const lbTick = letterboxd.start();
 // Background quality checks: only while no device holds a stream. Sources of live/soon events first, football first.
 let hubRef: Hub | null = null;
+let prefetchRef: Prefetcher | null = null;
 const prober = new Prober(db, provider, {
-  canRun: () => !!hubRef && !hubRef.streamActive() && !transcoder.owner,
+  canRun: () => !!hubRef && !hubRef.streamActive() && !transcoder.owner && !prefetchRef?.busy,
   background: () => {
     const now = Date.now() / 1000;
     const list = events.list(catalog.regions, catalog.version, () => new Map(), { hevcOk: true })
@@ -67,6 +73,9 @@ const prober = new Prober(db, provider, {
   },
   log: (m) => app.log.info(m),
 });
+// Skip-intro markers and seek thumbnails for titles being watched: same idle-only rule, never alongside the prober.
+const prefetcher = new Prefetcher(config.dataDir, trackStore, () => !!hubRef && !hubRef.streamActive() && !transcoder.owner && !prober.busy, (m) => app.log.info(m));
+prefetchRef = prefetcher;
 
 const hub = new Hub({
   listDevices: () => auth.devices(),
@@ -78,6 +87,7 @@ const hub = new Hub({
   urls: (item) => streamUrls(provider, item),
   leaseMoved: async (deviceId) => {
     // Free every server-side use of the provider connection before the new device starts.
+    prefetcher.abort();
     const probing = await prober.abort();
     await transcoder.releaseExcept(deviceId);
     if (probing) await new Promise((r) => setTimeout(r, 400)); // give the provider a moment to release the slot
@@ -93,7 +103,7 @@ await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
 hubRef = hub;
-registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders });
+registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
 // Reminders: every open app shows it; an "auto-start" device starts playing; installed apps get a notification.
 reminders.start((r) => {
   hub.broadcast({ t: 'reminder', reminder: { id: r.id, item: r.item, title: r.title, start: r.start, stop: r.stop, eventId: r.eventId, autoplay: r.autoplay } });

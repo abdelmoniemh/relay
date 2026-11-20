@@ -51,6 +51,13 @@ function hevcParam() {
   } catch { return '0'; }
 }
 
+/** Skip-intro / credits markers and the seek-bar thumbnail sprite of a movie or episode (when prepared). */
+export interface Extras {
+  markers: { intro?: [number, number]; recap?: [number, number]; credits?: number };
+  duration: number | null;
+  thumbs: { interval: number; cols: number; rows: number; w: number; h: number } | null;
+}
+
 export type Sort = 'default' | 'added' | 'name' | 'rating';
 export interface SeriesInfo {
   id: string; name: string; cover: string | null; backdrop: string | null; plot: string | null; genre: string | null; year: string | null; rating: number | null;
@@ -101,6 +108,8 @@ export const api = {
   event: (id: string) => req<SportEvent>('GET', `/api/events/${id}?hevc=${hevcParam()}`),
   family: (id: string) => req<RankedSource[]>('GET', `/api/family/${id}?hevc=${hevcParam()}`),
   probe: (ids: string[]) => req<{ queued: number; active: number | null; blocked: boolean }>('POST', '/api/probe', { ids }),
+  extras: (id: string) => req<Extras>('GET', `/api/extras/${encodeURIComponent(id)}`),
+  prefetch: (items: { id: string; ext?: string | null }[]) => req('POST', '/api/prefetch', { items }),
   reminders: () => req<ReminderInfo[]>('GET', '/api/reminders'),
   addReminder: (r: { itemId: string; title: string; start: number; stop: number | null; eventId: string | null; autoplay: string | null }) => req<ReminderInfo>('POST', '/api/reminders', r),
   removeReminder: (id: string) => req('DELETE', `/api/reminders/${encodeURIComponent(id)}`),
