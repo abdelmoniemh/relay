@@ -92,3 +92,20 @@ export function trackName(t: { lang: string | null; title: string | null }, extr
   else if (t.title && !t.title.toLowerCase().includes(name.toLowerCase())) name += ` (${t.title})`;
   return (name + extra).replace(/"/g, "'");
 }
+
+/**
+ * The keyframe a seek to `at` really lands on. With the video copied, ffmpeg can only start on a keyframe,
+ * up to several seconds before `at`; the player has to know where, or the clock and subtitles are off by that much.
+ * Reads one packet header at the position (no decoding).
+ */
+export function keyframeAt(url: string, at: number, timeoutMs = 8000): Promise<number> {
+  return new Promise((resolve, reject) => {
+    execFile('ffprobe', ['-v', 'error', '-user_agent', 'Relay/1.0 (like VLC/3.0.20)', '-read_intervals', `${at}%+#1`, '-select_streams', 'v:0',
+      '-show_entries', 'packet=pts_time,flags', '-of', 'csv=p=0', url], { timeout: timeoutMs }, (err, out) => {
+      if (err) return reject(err);
+      const line = out.split('\n').find((l) => /K/.test(l.split(',')[1] ?? '')) ?? out.split('\n')[0];
+      const t = Number(line?.split(',')[0]);
+      Number.isFinite(t) && t >= 0 && t <= at + 1 ? resolve(t) : reject(new Error(`no keyframe near ${at}s`));
+    });
+  });
+}

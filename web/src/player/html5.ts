@@ -232,14 +232,27 @@ export class Html5Player implements Player {
       const o = this.opts!;
       const prefs = o.live ? '' : `&alang=${encodeURIComponent(o.alang ?? '')}&slang=${encodeURIComponent(o.slang ?? 'off')}`;
       const r = await fetch(`${base}&start=${start}${prefs}`, { method: 'POST' });
-      const j = await r.json().catch(() => ({})) as { url?: string; error?: string; audio?: MediaTracks['audio']; subs?: MediaTracks['subs']; defSub?: number };
+      const j = await r.json().catch(() => ({})) as { url?: string; error?: string; audio?: MediaTracks['audio']; subs?: MediaTracks['subs']; defSub?: number; offset?: number };
       const url = j.url ? new URL(j.url, base).href : null;
       if (gen !== this.gen) { if (url) this.deleteHls(url); return; } // stopped/seeked meanwhile: don't hold the connection
       if (!r.ok || !url) { this.cb('error', j.error ?? `Conversion failed (HTTP ${r.status})`); return; }
       this.hlsSession = url;
       this.mtracks = j.audio ? { audio: j.audio, subs: j.subs ?? [], defSub: j.defSub ?? -1 } : null;
       this.langsSettled = Date.now() + 4000;
-      this.v.src = url;
+      // The stream starts at a keyframe before what was asked for (the server says where): count from there and
+      // jump to the exact second. What's before it stays in the stream, so going back a little is instant.
+      const v = this.v;
+      if (typeof j.offset === 'number' && this.txOffset !== null && j.offset <= start) {
+        this.txOffset = j.offset;
+        const rel = start - j.offset;
+        if (rel > 0.5) {
+          this.landing = start;
+          const go = () => { if (gen === this.gen) v.currentTime = rel; };
+          v.addEventListener('loadedmetadata', go, { once: true });
+          v.addEventListener('seeked', () => { this.landing = null; }, { once: true });
+        }
+      }
+      v.src = url;
       this.startPlay();
     } catch {
       if (gen === this.gen) this.cb('error', `Could not reach the server for the converted ${this.opts?.live ? 'channel' : 'movie'}`);
@@ -389,6 +402,7 @@ export class Html5Player implements Player {
 
   stop() {
     this.gen++;
+    this.landing = null;
     clearTimeout(this.watchdog);
     this.cancelPendingSeek();
     clearTimeout(this.parkTimer); clearTimeout(this.audioCheck);
@@ -398,8 +412,11 @@ export class Html5Player implements Player {
     this.v.pause();
     if (this.v.getAttribute('src') != null) { this.v.removeAttribute('src'); this.v.load(); } // aborts the HTTP connection
   }
+  /** Position being jumped to while a converted stream opens (so the clock doesn't flick back to the keyframe). */
+  private landing: number | null = null;
   position() {
     if (this.pendingSeek !== null) return this.pendingSeek;
+    if (this.landing !== null) return this.landing;
     if (this.parked !== null) return this.parked;
     return (this.txOffset ?? 0) + (this.v.currentTime || 0);
   }

@@ -116,3 +116,14 @@ test('movie session end to end: all audio languages, subtitles in sync, readable
   const cue = parseVtt(first)[0];
   assert.ok(Math.abs(cue.start - 1) < 0.2, `cue at ${cue.start}s, should be ~1s (in sync with the picture)`);
 });
+
+test('a seek lands on the keyframe before it, and keyframeAt says which', { skip: !ok }, async (t) => {
+  const { keyframeAt } = await import('../src/tracks.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'kf-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const f = join(dir, 'g.mkv');
+  execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25', '-t', '40', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '250', '-keyint_min', '250', '-sc_threshold', '0', f]);
+  assert.equal(await keyframeAt(f, 15), 10);
+  assert.equal(await keyframeAt(f, 25), 20);
+  assert.equal(await keyframeAt(f, 3), 0);
+});

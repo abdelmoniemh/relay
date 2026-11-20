@@ -17,6 +17,8 @@ const UA = 'Relay/1.0 (like VLC/3.0.20)';
 const META_ZONE = 32 * 1024 * 1024;
 /** Bytes kept per metadata read. */
 const CHUNK = 2 * 1024 * 1024;
+/** Reads kept per title from seek positions (ffprobe finding the keyframe, then ffmpeg reading the same spot). */
+const RECENT = 3;
 /** Titles kept (each holds a few chunks). */
 const MAX_TITLES = 8;
 const DEBUG = !!process.env.RELAY_DEBUG_VOD;
@@ -26,7 +28,8 @@ interface Title {
   /** Where the provider redirected us (reusable for range requests). */
   loc: string | null;
   size: number | null;
-  chunks: { start: number; buf: Buffer }[];
+  /** meta: header/index reads (kept); otherwise one of the last few reads at a seek position. */
+  chunks: { start: number; buf: Buffer; meta: boolean }[];
 }
 
 export class VodProxy {
@@ -94,19 +97,21 @@ export class VodProxy {
     for (const h of ['content-length', 'content-range']) { const v = up.headers.get(h); if (v) headers[h] = v; }
     res.writeHead(up.status, headers);
 
-    // Keep the first CHUNK bytes of a metadata read.
+    // Keep the first CHUNK bytes of every read: metadata for good, seek positions briefly.
     const meta = t.size != null && (off < META_ZONE || off >= t.size - META_ZONE);
     const keep: Buffer[] = []; let kept = 0, saved = false;
     const save = () => {
-      if (!meta || !kept || saved) return;
+      if (t.size == null || !kept || saved) return;
       saved = true;
       const buf = Buffer.concat(keep);
       t.chunks = t.chunks.filter((c) => c.start < off || c.start >= off + buf.length); // replace overlapping smaller ones
-      t.chunks.push({ start: off, buf });
+      t.chunks.push({ start: off, buf, meta });
+      const recent = t.chunks.filter((c) => !c.meta);
+      if (recent.length > RECENT) t.chunks = t.chunks.filter((c) => c.meta || recent.indexOf(c) >= recent.length - RECENT);
     };
     try {
       for await (const chunk of up.body as AsyncIterable<Uint8Array>) {
-        if (meta && kept < CHUNK) { const b = Buffer.from(chunk.subarray(0, CHUNK - kept)); keep.push(b); kept += b.length; if (kept >= CHUNK) save(); }
+        if (kept < CHUNK) { const b = Buffer.from(chunk.subarray(0, CHUNK - kept)); keep.push(b); kept += b.length; if (kept >= CHUNK) save(); }
         if (!res.write(chunk)) await new Promise<void>((r) => {
           const done = () => { res.off('drain', done); res.off('close', done); r(); };
           res.on('drain', done); res.on('close', done);

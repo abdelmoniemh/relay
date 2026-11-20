@@ -13,7 +13,7 @@ import type { EventsIndex } from './events.ts';
 import type { Prober } from './prober.ts';
 import { readFile } from 'node:fs/promises';
 import { VodProxy } from './vodproxy.ts';
-import { probeTracks, pickAudio, pickSub, trackName, type Tracks } from './tracks.ts';
+import { probeTracks, pickAudio, pickSub, trackName, keyframeAt, type Tracks } from './tracks.ts';
 import { vodLayout } from './transcode.ts';
 import { subtitlePlaylist, subtitleSegment, masterPlaylist } from './subs.ts';
 import { rankSources } from './quality.ts';
@@ -209,6 +209,9 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     return { vcodec: r.vcodec, width: r.width, height: r.height, hdr, bitDepth: hdr ? 10 : null, interlaced: false, acodec: r.acodec, channels: r.channels };
   };
 
+  /** Seconds of picture kept before a seek point, so going back a little after a seek needs no restart. */
+  const SEEK_PREROLL = 20;
+  const hlsVideoPlan = (c: string | null) => (c === 'h264' || c === 'hevc' ? 'copy' : 'encode');
   // Audio/subtitle tracks per title (read once; through the proxy it's the cached file header).
   const trackCache = new Map<string, Tracks>(Object.entries(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}')));
   const tracksOf = async (id: string, src: string): Promise<Tracks | null> => {
@@ -316,8 +319,16 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const defAudio = tracks ? pickAudio(tracks, q.alang || null) : -1;
     const layout = tracks?.vcodec ? vodLayout(tracks, defAudio) : null;
     const defSub = tracks ? pickSub(tracks, q.slang || null, tracks.audio.find((a) => a.n === defAudio)?.lang ?? null) : -1;
+    // Movies seeking: start at the keyframe ~20s before (exactly on it, so picture and subtitles share one clock),
+    // and tell the player where that is; it jumps to the second asked for, and short rewinds are already there.
+    const want = !live && !cu ? Math.max(0, Number(q.start) || 0) : 0;
+    let from = want;
+    if (want > 0 && hlsVideoPlan(tracks?.vcodec ?? guess) !== 'encode') {
+      await transcoder.stop();
+      try { from = await keyframeAt(src, Math.max(0, want - SEEK_PREROLL)); } catch (e) { app.log.warn(`keyframe ${id} @${want}: ${(e as Error).message.split('\n')[0]}`); }
+    }
     try {
-      const r = await transcoder.startHls(src, cu ? 0 : Number(q.start) || 0, tracks?.vcodec ?? guess, req.deviceId, (m) => app.log.warn(m), live, layout, cu?.skip ?? 0);
+      const r = await transcoder.startHls(src, from > 0 ? from + 0.01 : 0, tracks?.vcodec ?? guess, req.deviceId, (m) => app.log.warn(m), live, layout, cu?.skip ?? 0);
       // Really HEVC: every device now skips the failing direct attempt. (Not on a mere failure: the first try
       // often fails only because the provider still counts the previous connection.)
       if (live && r.vcodec === 'hevc') hevc.add(id, 'full');
@@ -332,6 +343,8 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
         audio: layout ? layout.audio.map((n) => { const a = tracks!.audio.find((x) => x.n === n)!; return { n, lang: a.lang, name: trackName(a) }; }) : [],
         subs: layout ? layout.subs.map((n) => { const t = tracks!.subs.find((x) => x.n === n)!; return { n, lang: t.lang, name: trackName(t, t.forced ? ' (forced)' : t.sdh ? ' (SDH)' : ''), forced: t.forced }; }) : [],
         defSub: layout && layout.subs.includes(defSub) ? defSub : -1,
+        // Movie position at the stream's 0:00 (a keyframe at or before what was asked for).
+        offset: from,
       };
     } catch (e) { return reply.code(502).send({ error: `Conversion failed: ${(e as Error).message}` }); }
   });
