@@ -224,3 +224,11 @@ Special cases:
 - Data saver Tizen-disabled in 2 places; Tailscale regex; untranslated toasts (`playback.ts:201,202,279,371,377`, `host.tsx:59`, sw.js).
 - `Live.tsx:39` setCi(2) magic; `Browse.tsx:65` magic -2/-1.
 - No web tests at all.
+
+## Progress (applied)
+
+1 shared domain + catalogue actions · 2 Provider · 3 ProviderSlot · 4 HLS session layout + stop URL · 5 one ffmpeg
+argument builder · 6 MediaFacts · 7 feature routes + UserData + ProviderDetails · 8 catalog state owner (+8b
+duplicates) · web: four bugs, storage module, stable UI deps, error reasons, Media Session module.
+Still open after this pass: players building their own stream URLs from a shared contract (fix 9, partly),
+web response types still hand-copied in web/src/api.ts, `t<tid>` ids now in shared/domain.ts.
