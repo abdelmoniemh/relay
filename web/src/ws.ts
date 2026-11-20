@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals';
 import type { ClientMsg, DeviceInfo, Lease, ServerMsg } from '@shared/protocol.ts';
-import { server, token, myDeviceId } from './api.ts';
+import { server, token, myDeviceId, setCredentials } from './api.ts';
 
 export const connected = signal(false);
 export const devices = signal<DeviceInfo[]>([]);
@@ -12,12 +12,14 @@ export const onServer = (h: Handler) => { handlers.add(h); return () => handlers
 
 let ws: WebSocket | null = null;
 let retry = 0;
-let queue: string[] = [];
+/** Sent while offline: delivered on reconnect if still recent (a "play" from a minute ago isn't what anyone wants now). */
+let queue: { s: string; at: number }[] = [];
+const STALE_MS = 10_000;
 
 export function send(m: ClientMsg) {
   const s = JSON.stringify(m);
   if (ws?.readyState === WebSocket.OPEN) ws.send(s);
-  else if (m.t !== 'heartbeat') queue.push(s);
+  else if (m.t !== 'heartbeat') queue.push({ s, at: Date.now() });
 }
 
 export function connect() {
@@ -26,18 +28,19 @@ export function connect() {
   const sock = (ws = new WebSocket(url));
   sock.onopen = () => {
     connected.value = true; retry = 0;
-    for (const s of queue) sock.send(s);
+    for (const q of queue) if (Date.now() - q.at < STALE_MS) sock.send(q.s);
     queue = [];
   };
   sock.onmessage = (e) => {
-    const m = JSON.parse(e.data) as ServerMsg;
+    let m: ServerMsg;
+    try { m = JSON.parse(e.data); } catch { return; }
     if (m.t === 'state') { devices.value = m.devices; lease.value = m.lease; }
     else if (m.t === 'hello') myDeviceId.value = m.deviceId;
     handlers.forEach((h) => h(m));
   };
   sock.onclose = (e) => {
     connected.value = false; ws = null;
-    if (e.code === 4001) { token.value = null; return; }
+    if (e.code === 4001) { setCredentials(null, null); return; } // unpaired on the server: forget the token for good
     setTimeout(connect, Math.min(5000, 300 * 2 ** retry++));
   };
 }

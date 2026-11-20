@@ -173,6 +173,8 @@ export class Html5Player implements Player {
       else {
         const { default: Hls } = await import('hls.js');
         if (gen !== this.gen) return;
+        // TV build without its hardware player: the browser engines are compiled out, use the native player.
+        if (typeof Hls !== 'function') { v.src = hls; v.play().catch(() => {}); return; }
         const h = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, maxBufferLength: 30, backBufferLength: 30, liveSyncDurationCount: 2 });
         h.on(Hls.Events.ERROR, (_e, d) => d.fatal && gen === this.gen && this.cb('error', d.details));
         h.loadSource(hls);
@@ -322,7 +324,7 @@ export class Html5Player implements Player {
   private async mpegts(url: string, gen: number, fallback?: LoadOpts): Promise<boolean> {
     const { default: mpegts } = await import('mpegts.js');
     if (gen !== this.gen) return true;
-    if (!mpegts.isSupported()) return false;
+    if (typeof mpegts?.isSupported !== 'function' || !mpegts.isSupported()) return false; // (TV build: compiled out)
     const v = this.v;
     const p = mpegts.createPlayer({ type: 'mpegts', isLive: true, url }, {
       enableWorker: true, enableStashBuffer: false, stashInitialSize: 256 * 1024, lazyLoad: false, autoCleanupSourceBuffer: true,

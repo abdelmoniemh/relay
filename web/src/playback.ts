@@ -112,6 +112,7 @@ const deviceName = (id?: string) => devices.value.find((d) => d.id === id)?.name
 
 export function attachPlayer(p: Player) {
   player = p;
+  if (earlyGrant) { const g = earlyGrant; earlyGrant = null; queueMicrotask(() => onGranted(g, p)); }
   p.onLangs?.((kind, lang) => (kind === 'audio' ? setAudioLang(lang) : setSubLang(lang)));
   p.on((e, detail) => {
     if (e === 'time') {
@@ -341,28 +342,33 @@ export function preconnect(url: string) {
   } catch {}
 }
 
+/** The server says go: this device has the stream. */
+function onGranted(m: Extract<ServerMsg, { t: 'granted' }>, player: Player) {
+  const item = m.item;
+  if (pending && pending.item.id !== item.id) return; // a newer request is in flight
+  current.value = item;
+  if (pending) mode.value = pending.mode;
+  pending = null;
+  status.value = 'loading';
+  lastUrls = m.urls; lastStart = m.startAt; lastHevc = m.tx === 'full'; lastTx = m.tx; lastInterlaced = !!m.interlaced; retried = false;
+  extras.value = null; creditsShown = null;
+  if (item.kind === 'movie' || item.kind === 'episode') {
+    api.extras(item.id).then((x) => { if (current.value?.id === item.id) extras.value = x; }).catch(() => {});
+    const next = item.kind === 'episode' ? nextEpisode() : null;
+    if (next) api.prefetch([{ id: next.id, ext: next.ext }]).catch(() => {}); // its markers/thumbnails while idle
+  }
+  position.value = m.startAt;
+  if (m.urls[0]) preconnect(m.urls[0]);
+  player.load(m.urls, loadOpts(item, m.startAt, m.tx === 'full')).catch(() => {});
+}
+let earlyGrant: Extract<ServerMsg, { t: 'granted' }> | null = null;
+
 onServer((m: ServerMsg) => {
   switch (m.t) {
-    case 'granted': {
-      if (!player) return;
-      const item = m.item;
-      if (pending && pending.item.id !== item.id) return; // a newer request is in flight
-      current.value = item;
-      if (pending) mode.value = pending.mode;
-      pending = null;
-      status.value = 'loading';
-      lastUrls = m.urls; lastStart = m.startAt; lastHevc = m.tx === 'full'; lastTx = m.tx; lastInterlaced = !!m.interlaced; retried = false;
-      extras.value = null; creditsShown = null;
-      if (item.kind === 'movie' || item.kind === 'episode') {
-        api.extras(item.id).then((x) => { if (current.value?.id === item.id) extras.value = x; }).catch(() => {});
-        const next = item.kind === 'episode' ? nextEpisode() : null;
-        if (next) api.prefetch([{ id: next.id, ext: next.ext }]).catch(() => {}); // its markers/thumbnails while idle
-      }
-      position.value = m.startAt;
-      if (m.urls[0]) preconnect(m.urls[0]);
-      player.load(m.urls, loadOpts(item, m.startAt, m.tx === 'full')).catch(() => {});
+    case 'granted':
+      // granted before the player exists (first play right after start-up): play it when it attaches
+      if (!player) earlyGrant = m; else onGranted(m, player);
       return;
-    }
     case 'stop': {
       if (!current.value && !pending) { send({ t: 'stopped', position: 0, duration: 0 }); return; }
       const pos = player?.position() ?? 0, dur = player?.duration() ?? 0;
