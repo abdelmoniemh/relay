@@ -5,7 +5,7 @@ import type { Item, RankedSource, ServerMsg } from '@shared/protocol.ts';
 import { send, onServer, lease, deviceName } from './ws.ts';
 import { api, myDeviceId, server, token, type Extras } from './api.ts';
 import { dispatchKey, type Key } from './keys.ts';
-import type { Player } from './player/types.ts';
+import type { Player, PlayError } from './player/types.ts';
 import { isTizen } from './env.ts';
 import { t } from './i18n.ts';
 import { displayName } from '@shared/domain.ts';
@@ -112,7 +112,7 @@ export function attachPlayer(p: Player) {
   player = p;
   if (earlyGrant) { const g = earlyGrant; earlyGrant = null; queueMicrotask(() => onGranted(g, p)); }
   p.onLangs?.((kind, lang) => (kind === 'audio' ? setAudioLang(lang) : setSubLang(lang)));
-  p.on((e, detail) => {
+  p.on((e, detail, raw) => {
     if (e === 'time') {
       position.value = p.position(); duration.value = p.duration();
       // Credits started (chapter marker): offer the next episode now rather than at the very end.
@@ -146,8 +146,8 @@ export function attachPlayer(p: Player) {
       }
       // Still failing: fail over to the next working copy of the same channel / match.
       if (isLiveNow(current.value) && nextSource(1, true)) return;
-      status.value = 'error'; errorMsg.value = friendlyError(detail);
-      if (detail) api.clientLog(`error shown: ${detail} (${current.value?.id})`);
+      status.value = 'error'; errorMsg.value = friendlyError(detail as PlayError | undefined, raw);
+      api.clientLog(`error shown: ${detail}${raw ? ` (${raw})` : ''} (${current.value?.id})`);
     }
   });
 }
@@ -155,19 +155,19 @@ export function attachPlayer(p: Player) {
 /** Live right now (not a programme from a channel's archive). */
 export const isLiveNow = (item: Item | null | undefined) => item?.kind === 'live' && !item.catchup;
 
-/** What the player says (HTTP codes, engine error names) → a sentence for people. Server messages are already readable. */
-export function friendlyError(raw?: string | null): string {
-  const s = String(raw ?? '');
+/** A failure, in words. 'server': the server already explained it (e.g. outside the archive). */
+export function friendlyError(why?: PlayError, raw?: string): string {
   const live = isLiveNow(current.value);
-  if (!s) return t('Playback failed. Try again.');
-  if (/Could not reach the server|Failed to fetch|NetworkError when|Load failed/i.test(s)) return t("Can't reach the Relay server. Check this device is on the same network (or Tailscale) and try again.");
-  if (/stalled/.test(s)) return live ? t('This channel isn\'t sending anything right now. Try another source or channel.') : t('The stream stopped. Try again.');
-  if (/(Conversion|Transcode) failed.*(HTTP 5|ffmpeg exited|no output)/i.test(s) || /HTTP 50[23]/.test(s)) return live ? t('The provider didn\'t send this channel. It may be offline or busy: try another source.') : t('The provider didn\'t send this title. It may be busy: try again in a moment.');
-  if (/HTTP 401|HTTP 403|unauthor/i.test(s)) return t('This device is no longer paired. Pair it again in Settings.');
-  if (/archive|catch-up|not found|can't decode|isn't|no longer/i.test(s)) return s; // already a sentence
-  if (/NetworkError|IOException|HttpStatusCodeInvalid|manifestLoadError|fragLoadError|levelLoadError|MEDIA_ERR_NETWORK/i.test(s)) return live ? t('Lost the connection to this channel. Try again or pick another source.') : t('Lost the connection to the stream. Try again.');
-  if (/MediaError|MEDIA_ERR_DECODE|MEDIA_ERR_SRC_NOT_SUPPORTED|bufferAppendError|FormatUnsupported|CodecUnsupported/i.test(s)) return t('This device can\'t play this stream\'s format. Try another source.');
-  return t('Playback failed. Try again.');
+  switch (why) {
+    case 'unreachable': return t("Can't reach the Relay server. Check this device is on the same network (or Tailscale) and try again.");
+    case 'stalled': return live ? t('This channel isn\'t sending anything right now. Try another source or channel.') : t('The stream stopped. Try again.');
+    case 'conversion': return live ? t('The provider didn\'t send this channel. It may be offline or busy: try another source.') : t('The provider didn\'t send this title. It may be busy: try again in a moment.');
+    case 'unpaired': return t('This device is no longer paired. Pair it again in Settings.');
+    case 'network': return live ? t('Lost the connection to this channel. Try again or pick another source.') : t('Lost the connection to the stream. Try again.');
+    case 'format': return t('This device can\'t play this stream\'s format. Try another source.');
+    case 'server': return raw || t('Playback failed. Try again.');
+    default: return t('Playback failed. Try again.');
+  }
 }
 
 function loadOpts(item: Item, startAt: number, hevc = lastHevc) {

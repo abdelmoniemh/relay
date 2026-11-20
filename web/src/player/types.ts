@@ -1,4 +1,9 @@
 export type PlayerEvent = 'playing' | 'paused' | 'waiting' | 'ended' | 'error' | 'time';
+/**
+ * Why playback failed, said where it happens (playback.ts puts it in words). 'server': the server explained it
+ * itself (e.g. outside the archive): its message is shown as it is.
+ */
+export type PlayError = 'stalled' | 'unreachable' | 'unpaired' | 'conversion' | 'network' | 'format' | 'server' | 'other';
 export interface LoadOpts {
   startAt: number;
   live: boolean;
@@ -49,7 +54,8 @@ export interface Player {
   setVolume(delta: number | 'mute'): void;
   /** For hardware video planes (Tizen) — screen rect the video should occupy. */
   setRect?(r: { x: number; y: number; w: number; h: number }): void;
-  on(cb: (e: PlayerEvent, detail?: string) => void): void;
+  /** For 'error', `detail` is a PlayError and `raw` the engine's own text (logged). */
+  on(cb: (e: PlayerEvent, detail?: string, raw?: string) => void): void;
   /** What is actually being decoded right now (for passive quality verification). */
   info?(): { width: number; height: number; fps?: number; vcodec?: string; kbps?: number } | null;
   /** Tracks of the current item, and switching between them (also from the native iOS menu). */

@@ -1,4 +1,4 @@
-import type { LoadOpts, MediaTracks, Player, PlayerEvent } from './types.ts';
+import type { LoadOpts, MediaTracks, Player, PlayerEvent, PlayError } from './types.ts';
 import { isIOS } from '../env.ts';
 import { api } from '../api.ts';
 
@@ -16,7 +16,8 @@ type TxMode = 'full' | 'audio';
 export class Html5Player implements Player {
   private v: HTMLVideoElement;
   private engine: { destroy(): void } | null = null;
-  private cb: (e: PlayerEvent, d?: string) => void = () => {};
+  private cb: (e: PlayerEvent, d?: string, raw?: string) => void = () => {};
+  private fail(why: PlayError, raw?: string) { this.cb('error', why, raw); }
   private gen = 0;
   private mse = typeof MediaSource !== 'undefined' || typeof (window as any).ManagedMediaSource !== 'undefined';
   private nativeHls: boolean;
@@ -77,11 +78,12 @@ export class Html5Player implements Player {
       if (this.isDirectVod()) { this.toVodTranscode('full', this.opts!.startAt); return; }
       if (this.isDirectLiveHls()) { this.toLiveHls(); return; }
       if (isIOS) api.clientLog(`media error ${video.error?.code ?? '?'} ${video.error?.message ?? ''} (${this.opts?.id}, ${this.hlsSession ? 'server hls' : 'direct'})`);
-      this.cb('error', video.error?.message || 'Playback error');
+      const c = video.error?.code;
+      this.fail(c === 2 ? 'network' : c === 3 || c === 4 ? 'format' : 'other', video.error?.message);
     });
   }
 
-  on(cb: (e: PlayerEvent, d?: string) => void) { this.cb = cb; }
+  on(cb: (e: PlayerEvent, d?: string, raw?: string) => void) { this.cb = cb; }
 
   /**
    * iPhone/iPad playing a channel straight from the provider's HLS. Safari refuses HEVC in MPEG-TS segments
@@ -130,7 +132,7 @@ export class Html5Player implements Player {
       if (this.isDirectLiveHls()) { api.clientLog(`watchdog: ${noPicture ? 'no picture' : 'nothing played'} (${this.opts.id}), trying the server`); this.toLiveHls(); return; }
       if (noPicture) return; // radio
       api.clientLog(`watchdog: nothing played after ${ms / 1000}s (${this.opts.id})`);
-      this.cb('error', 'stalled');
+      this.fail('stalled');
     }, ms);
   }
 
@@ -176,7 +178,7 @@ export class Html5Player implements Player {
         // TV build without its hardware player: the browser engines are compiled out, use the native player.
         if (typeof Hls !== 'function') { v.src = hls; v.play().catch(() => {}); return; }
         const h = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, maxBufferLength: 30, backBufferLength: 30, liveSyncDurationCount: 2 });
-        h.on(Hls.Events.ERROR, (_e, d) => d.fatal && gen === this.gen && this.cb('error', d.details));
+        h.on(Hls.Events.ERROR, (_e, d) => d.fatal && gen === this.gen && this.fail(d.type === 'networkError' ? 'network' : d.type === 'mediaError' ? 'format' : 'other', d.details));
         h.loadSource(hls);
         h.attachMedia(v);
         this.engine = h;
@@ -240,7 +242,7 @@ export class Html5Player implements Player {
       const url = j.url ? new URL(j.url, base).href : null;
       const stopUrl = j.stop ? new URL(j.stop, base).href : null;
       if (gen !== this.gen) { if (stopUrl) this.deleteHls(stopUrl); return; } // stopped/seeked meanwhile: don't hold the connection
-      if (!r.ok || !url) { this.cb('error', j.error ?? `Conversion failed (HTTP ${r.status})`); return; }
+      if (!r.ok || !url) { this.fail(r.status === 401 ? 'unpaired' : r.status >= 500 || !j.error ? 'conversion' : 'server', j.error ?? `HTTP ${r.status}`); return; }
       this.hlsSession = url;
       this.hlsStop = stopUrl;
       this.mtracks = j.audio ? { audio: j.audio, subs: j.subs ?? [], defSub: j.defSub ?? -1 } : null;
@@ -261,7 +263,7 @@ export class Html5Player implements Player {
       v.src = url;
       this.startPlay();
     } catch {
-      if (gen === this.gen) this.cb('error', `Could not reach the server for the converted ${this.opts?.live ? 'channel' : 'movie'}`);
+      if (gen === this.gen) this.fail('unreachable');
     }
   }
 
@@ -347,14 +349,14 @@ export class Html5Player implements Player {
     p.on(mpegts.Events.ERROR, (type: string, detail: string, info: any) => {
       if (gen !== this.gen || switched) return;
       if (fallback?.transcodeUrl && /hvc|hev|unsupported/i.test(`${detail} ${info?.msg ?? ''}`)) return toTranscode();
-      this.cb('error', `${type}: ${detail}`);
+      this.fail(type === 'NetworkError' ? 'network' : type === 'MediaError' ? 'format' : 'other', `${type}: ${detail}`);
     });
     p.on(mpegts.Events.MEDIA_INFO, (mi: any) => {
       const codec = String(mi?.videoCodec ?? '');
       if (gen === this.gen) this.media = { fps: mi?.fps || undefined, vcodec: codec.startsWith('hvc') || codec.startsWith('hev') ? 'hevc' : codec.startsWith('avc') ? 'h264' : codec || undefined, transcoded: !fallback && url.includes('/api/transcode/') };
       if (gen !== this.gen || !codec || MediaSource.isTypeSupported(`video/mp4; codecs="${codec}"`)) return;
       if (fallback?.transcodeUrl) return toTranscode();
-      this.cb('error', `This browser can't decode ${/^(hvc|hev)/.test(codec) ? 'HEVC/H.265' : codec} video`);
+      this.fail('format', `can't decode ${codec}`);
     });
     p.attachMediaElement(v);
     p.load();

@@ -4,12 +4,12 @@ import type { LoadOpts, Player, PlayerEvent } from './types.ts';
 /** Samsung Tizen hardware player: decodes TS/HLS/MKV natively, 4K capable, renders on a plane behind the web layer. */
 export class AvPlayer implements Player {
   private av = window.webapis.avplay;
-  private cb: (e: PlayerEvent, d?: string) => void = () => {};
+  private cb: (e: PlayerEvent, d?: string, raw?: string) => void = () => {};
   private rect = { x: 0, y: 0, w: 1920, h: 1080 };
   private isPaused = false;
   private gen = 0;
 
-  on(cb: (e: PlayerEvent, d?: string) => void) { this.cb = cb; }
+  on(cb: (e: PlayerEvent, d?: string, raw?: string) => void) { this.cb = cb; }
 
   setRect(r: { x: number; y: number; w: number; h: number }) {
     this.rect = r;
@@ -36,13 +36,13 @@ export class AvPlayer implements Player {
       onbufferingcomplete: () => this.cb('playing'),
       oncurrentplaytime: () => this.cb('time'),
       onstreamcompleted: () => this.cb('ended'),
-      onerror: (e: string) => gen === this.gen && this.cb('error', String(e)),
+      onerror: (e: string) => gen === this.gen && this.cb('error', /NETWORK|CONNECTION/i.test(String(e)) ? 'network' : /UNSUPPORTED|NOT_SUPPORTED/i.test(String(e)) ? 'format' : 'other', String(e)),
     });
     try { av.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', o.live ? 2 : 4); } catch {}
     try { av.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', 'PLAYER_BUFFER_SIZE_IN_SECOND', o.live ? 3 : 6); } catch {}
     if (o.uhd) try { av.setStreamingProperty('SET_MODE_4K', 'TRUE'); } catch {}
     av.setDisplayRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
-    await new Promise<void>((resolve, reject) => av.prepareAsync(resolve, reject)).catch((e) => { if (gen === this.gen) this.cb('error', String(e)); throw e; });
+    await new Promise<void>((resolve, reject) => av.prepareAsync(resolve, reject)).catch((e) => { if (gen === this.gen) this.cb('error', 'other', String(e)); throw e; });
     if (gen !== this.gen) return;
     if (!o.live && o.alang) this.pickAudio(o.alang);
     if (o.startAt > 0 && !o.catchupUrl) await new Promise<void>((r) => av.seekTo(o.startAt * 1000, r, r));
