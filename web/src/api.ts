@@ -1,21 +1,15 @@
 import type { Category, Item, Kind, Programme, Progress, RankedSource, SportEvent, ReminderInfo } from '@shared/protocol.ts';
 import { signal } from '@preact/signals';
-
-const LS = { server: 'relay.server', token: 'relay.token', device: 'relay.device' };
-const ls = {
-  get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k: string, v: string | null) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} },
-};
+import { persisted } from './storage.ts';
 
 const sameOrigin = location.protocol.startsWith('http') && !__TIZEN__ ? location.origin : '';
-export const server = signal<string>(ls.get(LS.server) || sameOrigin || __DEFAULT_SERVER__);
-export const token = signal<string | null>(ls.get(LS.token));
-export const myDeviceId = signal<string | null>(ls.get(LS.device));
+// Only an address someone set is saved: the page's own origin must follow wherever it's opened from (LAN, Tailscale).
+export const server = persisted<string>('server', (v) => v || sameOrigin || __DEFAULT_SERVER__, (v) => (v === sameOrigin ? null : v));
+export const token = persisted<string | null>('token', (v) => v);
+export const myDeviceId = persisted<string | null>('device', (v) => v);
 
-export function setServer(url: string) { server.value = url.replace(/\/+$/, ''); ls.set(LS.server, server.value); }
-export function setCredentials(t: string | null, id: string | null) {
-  token.value = t; myDeviceId.value = id; ls.set(LS.token, t); ls.set(LS.device, id);
-}
+export function setServer(url: string) { server.value = url.replace(/\/+$/, ''); }
+export function setCredentials(t: string | null, id: string | null) { token.value = t; myDeviceId.value = id; }
 
 export class HttpError extends Error { status: number; constructor(s: number, m: string) { super(m); this.status = s; } }
 

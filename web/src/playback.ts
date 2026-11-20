@@ -9,6 +9,7 @@ import type { Player } from './player/types.ts';
 import { isTizen } from './env.ts';
 import { t } from './i18n.ts';
 import { displayName } from '@shared/domain.ts';
+import { persisted } from './storage.ts';
 
 export type Mode = 'off' | 'mini' | 'full';
 export type Status = 'idle' | 'requesting' | 'loading' | 'playing' | 'paused' | 'buffering' | 'error';
@@ -71,27 +72,25 @@ function scheduleNextEpisode() {
   return true;
 }
 /** Preferred audio language (null = the file's default) and subtitles ('off' or a language), per device. */
-const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
-const lsSet = (k: string, v: string | null) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
-export const audioLang = signal<string | null>(lsGet('relay.alang'));
-export const subLang = signal<string>(lsGet('relay.slang') ?? 'off');
-export function setAudioLang(l: string | null) { audioLang.value = l; lsSet('relay.alang', l); }
-export function setSubLang(l: string) { subLang.value = l; lsSet('relay.slang', l); }
+export const audioLang = persisted<string | null>('alang', (v) => v);
+export const subLang = persisted<string>('slang', (v) => v ?? 'off');
+export function setAudioLang(l: string | null) { audioLang.value = l; }
+export function setSubLang(l: string) { subLang.value = l; }
 
 /**
  * Data saver: 'auto' = on when Relay is reached through Tailscale (away from home), 'on' / 'off' always.
  * Only streams that pass through the server can be made smaller, so with it on everything does.
  */
 export type DataSaver = 'auto' | 'on' | 'off';
-export const dataSaver = signal<DataSaver>(((v) => (v === 'on' || v === 'off' ? v : 'auto'))(lsGet('relay.datasaver')));
-export function setDataSaver(v: DataSaver) { dataSaver.value = v; lsSet('relay.datasaver', v); }
+export const dataSaver = persisted<DataSaver>('datasaver', (v) => (v === 'on' || v === 'off' ? v : 'auto'));
+export function setDataSaver(v: DataSaver) { dataSaver.value = v; }
 /** Reached through Tailscale (100.64.0.0/10 or a *.ts.net name), i.e. probably not on the home network. */
 export const isAway = () => typeof location !== 'undefined' && (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(location.hostname) || location.hostname.endsWith('.ts.net'));
 export const lowDataNow = () => !isTizen && (dataSaver.value === 'on' || (dataSaver.value === 'auto' && isAway()));
 
 /** Sports: chase the live edge (lowest delay) instead of playing the provider's backlog smoothly. */
-export const lowLatencySports = signal<boolean>((() => { try { return localStorage.getItem('relay.lowLatency') !== '0'; } catch { return true; } })());
-export function setLowLatency(v: boolean) { lowLatencySports.value = v; try { localStorage.setItem('relay.lowLatency', v ? '1' : '0'); } catch {} }
+export const lowLatencySports = persisted<boolean>('lowLatency', (v) => v !== '0', (v) => (v ? '1' : '0'));
+export function setLowLatency(v: boolean) { lowLatencySports.value = v; }
 
 let player: Player | null = null;
 let pending: { item: Item; mode: Mode } | null = null;

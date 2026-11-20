@@ -1,11 +1,9 @@
-import { signal } from '@preact/signals';
+import { persisted } from './storage.ts';
 import { AR } from './i18n.ar.ts';
 
 /** UI language. English strings are the keys; Arabic comes from i18n.ar.ts (missing keys fall back to English). */
 export type Lang = 'en' | 'ar';
-const KEY = 'relay.lang';
-const saved = (() => { try { return localStorage.getItem(KEY); } catch { return null; } })();
-export const lang = signal<Lang>(saved === 'ar' ? 'ar' : 'en');
+export const lang = persisted<Lang>('lang', (v) => (v === 'ar' ? 'ar' : 'en'));
 
 export function applyLang() {
   const el = document.documentElement;
@@ -15,7 +13,6 @@ export function applyLang() {
 
 export function setLang(l: Lang) {
   lang.value = l;
-  try { localStorage.setItem(KEY, l); } catch {}
   applyLang();
 }
 
