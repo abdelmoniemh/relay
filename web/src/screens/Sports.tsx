@@ -2,17 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SportEvent } from '@shared/protocol.ts';
 import { api } from '../api.ts';
 import { playEvent, play, current, sourceEvent } from '../playback.ts';
-import { railFocused } from '../router.ts';
+import { navFocused } from '../router.ts';
 import { useKeys, useDebounced } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
 import { Logo, clean } from '../ui/common.tsx';
 import { isMobile, isTizen } from '../env.ts';
+import { Btn, IconBtn, LivePill, QualityChip } from '../ui/kit.tsx';
+import { Icon } from '../ui/Icon.tsx';
+import { t, tn } from '../i18n.ts';
 
 const LABEL: Record<string, string> = {
-  football: '⚽ Football', all: 'All sports', basketball: '🏀 Basketball', 'american-football': '🏈 American football', hockey: '🏒 Hockey',
-  baseball: '⚾ Baseball', tennis: '🎾 Tennis', darts: '🎯 Darts', cricket: '🏏 Cricket', rugby: '🏉 Rugby', fighting: '🥊 Fighting',
-  motorsport: '🏎 Motorsport', golf: '⛳ Golf', snooker: '🎱 Snooker', other: 'Other',
+  football: 'Football', all: 'All sports', basketball: 'Basketball', 'american-football': 'American football', hockey: 'Hockey',
+  baseball: 'Baseball', tennis: 'Tennis', darts: 'Darts', cricket: 'Cricket', rugby: 'Rugby', fighting: 'Fighting',
+  motorsport: 'Motorsport', golf: 'Golf', snooker: 'Snooker', other: 'Other',
 };
+const sportName = (k: string) => t(LABEL[k] ?? k);
 
 let lastSport = 'football';
 
@@ -23,7 +27,7 @@ const when = (e: SportEvent) => {
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (d.toDateString() === now.toDateString()) return time;
   const tmr = new Date(now.getTime() + 86400000);
-  if (d.toDateString() === tmr.toDateString()) return `Tmrw ${time}`;
+  if (d.toDateString() === tmr.toDateString()) return `${t('Tmrw')} ${time}`;
   return `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
 };
 
@@ -75,17 +79,17 @@ export function Sports() {
   const sources = detail && detail.id === focusedId ? detail.sources : focused?.sources ?? [];
 
   useKeys((k) => {
-    if (railFocused.value) return false;
+    if (navFocused.value) return false;
     if (zone === 'sports') {
-      if (k === 'up') { const i = Math.max(0, si - 1); setSi(i); setSport(sportsList[i].key); setEi(0); return true; }
-      if (k === 'down') { const i = Math.min(sportsList.length - 1, si + 1); setSi(i); setSport(sportsList[i].key); setEi(0); return true; }
-      if (k === 'right' || k === 'ok') { setZone('events'); return true; }
-      return false;
+      if (k === 'left') { const i = Math.max(0, si - 1); setSi(i); setSport(sportsList[i].key); setEi(0); return true; }
+      if (k === 'right') { const i = Math.min(sportsList.length - 1, si + 1); setSi(i); setSport(sportsList[i].key); setEi(0); return true; }
+      if (k === 'down' || k === 'ok') { setZone('events'); return true; }
+      return false; // up -> top bar
     }
     if (zone === 'events') {
-      if (k === 'up') { if (ei === 0) { input.current?.focus(); } else setEi(ei - 1); return true; }
+      if (k === 'up') { if (ei === 0) setZone('sports'); else setEi(ei - 1); return true; }
       if (k === 'down') { input.current?.blur(); setEi(Math.min(events.length - 1, ei + 1)); return true; }
-      if (k === 'left') { setZone('sports'); return true; }
+      if (k === 'left') return true;
       if (k === 'right') { if (focused) { setZone('detail'); setDi(0); } return true; }
       if (k === 'ok' || k === 'play' || k === 'playpause') { if (focused) playEvent(focused.id); return true; }
       return false;
@@ -98,43 +102,46 @@ export function Sports() {
   });
 
   const watching = current.value && sourceEvent.value;
+  const kb = !navFocused.value;
 
   return (
-    <div class={`sports z-${zone}`}>
-      <div class={`col cats ${zone === 'sports' && !railFocused.value ? 'active' : ''}`}>
-        <h2>Sports</h2>
-        {sportsList.map((s, i) => (
-          <div key={s.key} class={`row cat ${zone === 'sports' && i === si ? 'focus' : ''} ${s.key === sport ? 'sel' : ''}`}
-            onClick={() => { setSi(i); setSport(s.key); setEi(0); setZone('events'); }}>
-            <span class="name">{LABEL[s.key] ?? s.key}</span><span class="count">{s.count}</span>
+    <div class={`sports page z-${zone}`}>
+      <div class={`col events ${zone === 'events' && kb ? 'active' : ''}`}>
+        <div class="sports-head">
+          <h1 class="screen-title">{t('Sports')}</h1>
+          <div class="search-field">
+            <Icon n="search" />
+            <input ref={input} id="sports-search" type="search" placeholder={t('Find a team or competition')} value={q}
+              onInput={(e) => { setQ((e.target as HTMLInputElement).value); setEi(0); }} />
           </div>
-        ))}
-      </div>
-      <div class={`col events ${zone === 'events' && !railFocused.value ? 'active' : ''}`}>
-        <div class="ev-head">
-          <button class="phone-back" onClick={() => setZone('sports')}>‹</button>
-          <input ref={input} type="search" placeholder={`Find a team or competition${isTizen ? '' : '…'}`} value={q}
-            onInput={(e) => { setQ((e.target as HTMLInputElement).value); setEi(0); }} />
+          <div class="chips">
+            {sportsList.map((x, i) => (
+              <button key={x.key} class={`chip ${x.key === sport ? 'on' : ''} ${kb && zone === 'sports' && i === si ? 'focus' : ''}`}
+                onClick={() => { setSi(i); setSport(x.key); setEi(0); }}>
+                {sportName(x.key)} <small>{x.count}</small>
+              </button>
+            ))}
+          </div>
         </div>
         {err && <div class="empty">{err}</div>}
-        {all && !events.length && <div class="empty">{dq ? `Nothing matching “${dq}”` : 'No events found for the next 36 hours.'}</div>}
-        {!all && !err && <div class="spinner inline" />}
-        <VList count={events.length} rowH={isMobile ? 78 : 84} focus={zone === 'events' ? ei : -1} render={(i, f) => {
+        {all && !events.length && <div class="empty">{dq ? t('Nothing matching “{q}”', { q: dq }) : t('No events in the next 36 hours.')}</div>}
+        {!all && !err && <div class="list-skel" />}
+        <VList count={events.length} rowH={isMobile ? 76 : 84} focus={kb && zone === 'events' ? ei : -1} render={(i, f) => {
           const e = events[i];
           const best = e.sources.find((s) => !s.dead);
-          const t = when(e);
+          const w = when(e);
           return (
-            <div class={`row event ${f ? 'focus' : ''} ${e.offline ? 'offline' : ''}`} onClick={() => { setEi(i); if (isMobile) setZone('detail'); else playEvent(e.id); }}
+            <div class={`row event ${f ? 'focus' : ''} ${e.offline ? 'offline' : ''} ${e.id === focused?.id && zone === 'detail' ? 'sel' : ''}`}
+              onClick={() => { setEi(i); if (isMobile) setZone('detail'); else playEvent(e.id); }}
               onDblClick={() => playEvent(e.id)}>
-              <div class="when">{t == null ? <span class="live-pill">LIVE</span> : t}</div>
+              <div class="when">{w == null ? <LivePill /> : <span class="tnum">{w}</span>}</div>
               <div class="meta">
-                <div class="name">{e.home} <span class="muted">v</span> {e.away}</div>
-                <div class="muted small ellipsis">{e.competition ?? LABEL[e.sport]}</div>
+                <div class="name">{e.home} <span class="vs">{t('v')}</span> {e.away}</div>
+                <div class="sub ellipsis">{e.competition ?? sportName(e.sport)}</div>
               </div>
               <div class="q">
-                {e.offline ? <span class="muted small">no signal yet</span>
-                  : best ? <span class={`small ${best.verified ? 'ok' : 'muted'}`}>{best.label.replace(' · unverified', '')}{best.verified ? ' ✓' : ''}</span> : null}
-                <div class="muted small">{e.sourceCount} source{e.sourceCount === 1 ? '' : 's'}</div>
+                {e.offline ? <span class="sub">{t('No signal yet')}</span> : best ? <QualityChip label={best.label} verified={best.verified} /> : null}
+                <div class="sub">{tn(e.sourceCount, '{n} source', '{n} sources')}</div>
               </div>
             </div>
           );
@@ -144,30 +151,31 @@ export function Sports() {
         {focused ? (
           <>
             <div class="ev-title">
-              <button class="phone-back" onClick={() => setZone('events')}>‹</button>
+              <IconBtn n="back" label={t('Back')} class="phone-only" onClick={() => setZone('events')} />
               <div>
-                <h2>{focused.home} v {focused.away}</h2>
-                <div class="muted small">{[focused.competition, focused.status === 'live' ? 'Live now' : when(focused)].filter(Boolean).join(' · ')}</div>
+                <h2>{focused.home} {t('v')} {focused.away}</h2>
+                <div class="sub">{[focused.competition, focused.status === 'live' ? t('Live now') : when(focused)].filter(Boolean).join(' · ')}</div>
               </div>
             </div>
             <div class="ev-actions">
-              <button class="primary" onClick={() => playEvent(focused.id)}>▶ Watch best source</button>
-              <button onClick={requestChecks} disabled={!!watching}>{watching ? 'Checks pause while watching' : 'Check quality now'}</button>
+              <Btn a={{ label: t('Watch best source'), icon: 'play', primary: true, act: () => playEvent(focused.id) }} />
+              <Btn a={{ label: watching ? t('Checks pause while watching') : t('Check quality now'), icon: 'refresh', act: () => { if (!watching) requestChecks(); } }} />
             </div>
-            <VList count={sources.length} rowH={60} focus={zone === 'detail' ? di : -1} render={(i, f) => {
+            <h3 class="list-head">{t('Sources')}</h3>
+            <VList count={sources.length} rowH={60} focus={kb && zone === 'detail' ? di : -1} render={(i, f) => {
               const s = sources[i];
               return (
                 <div class={`row source ${f ? 'focus' : ''} ${s.dead ? 'offline' : ''}`} onClick={() => play(s.item, { sources, eventId: focused.id, mode: 'full' })}>
-                  <span class="num">{i + 1}</span>
+                  <span class="num tnum">{i + 1}</span>
                   <Logo src={s.item.icon} name={s.item.name} size={36} />
                   <div class="meta"><div class="name">{clean(s.item.name)}</div></div>
-                  <span class={`small ${s.verified ? (s.dead ? 'bad' : 'ok') : 'muted'}`}>{s.label}{s.verified && !s.dead ? ' ✓' : ''}</span>
+                  <QualityChip label={s.label} verified={s.verified} dead={s.dead} />
                 </div>
               );
             }} />
-            <p class="muted small help">Quality is measured on the real stream while nothing is playing (✓ = verified). During playback use ◀ ▶ to switch sources.</p>
+            <p class="help">{t('Quality is measured on the real stream while nothing is playing. During playback, use left and right to switch sources.')}</p>
           </>
-        ) : <div class="empty">Select an event</div>}
+        ) : <div class="empty">{t('Select an event')}</div>}
       </div>
     </div>
   );

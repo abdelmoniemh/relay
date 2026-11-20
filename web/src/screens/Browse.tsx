@@ -1,119 +1,115 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, type BrowseRow, type TitleCard } from '../api.ts';
-import { push, railFocused } from '../router.ts';
+import { push, go, back, navFocused, compact } from '../router.ts';
+import { play } from '../playback.ts';
 import { useAsync, useKeys, usePaged } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
-import { img, isMobile } from '../env.ts';
+import { Billboard, PosterTile, Row, Segmented, SkeletonRow, IconBtn, type Action } from '../ui/kit.tsx';
+import { Icon } from '../ui/Icon.tsx';
+import { isMobile, isTizen } from '../env.ts';
+import { t } from '../i18n.ts';
 
 const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 export const openTitle = (tid: number) => push({ name: 'title', tid });
 
-export function Card({ c, focused, onClick, size = 'md' }: { c: TitleCard; focused: boolean; onClick?: () => void; size?: 'md' | 'lg' }) {
+export function Card({ c, focused, onClick }: { c: TitleCard; focused: boolean; onClick?: () => void; size?: 'md' | 'lg' }) {
+  const sub = [c.progress?.label, c.year, c.rating ? `★ ${(c.rating * 2).toFixed(1)}` : null].filter(Boolean).join(' · ');
   return (
-    <div class={`tcard ${size} ${focused ? 'focus' : ''}`} onClick={onClick}>
-      <div class="pwrap">
-        {c.poster ? <img class="poster" src={img(c.poster, size === 'lg' ? 342 : 185)} loading="lazy" decoding="async" alt="" onError={(e) => ((e.currentTarget as HTMLImageElement).style.opacity = '0')} />
-          : <div class="poster ph">{c.name.slice(0, 1)}</div>}
-        {c.uhd && <span class="b4k">4K</span>}
-        {c.fresh && c.wl && <span class="bnew">NEW</span>}
-        {c.wl && !c.watched && <span class="bwl" title="On your Letterboxd watchlist">▼</span>}
-        {c.watched && <span class="bseen">✓{typeof c.watched === 'number' ? ` ${'★'.repeat(Math.floor(c.watched))}${c.watched % 1 ? '½' : ''}` : ''}</span>}
-        {c.progress && c.progress.duration > 0 && <div class="bar card-bar"><i style={{ width: `${Math.min(100, (c.progress.position / c.progress.duration) * 100)}%` }} /></div>}
-      </div>
-      <div class="cap">{c.name}</div>
-      <div class="sub">{[c.progress?.label, c.year, c.rating ? `★ ${(c.rating * 2).toFixed(1)}` : null].filter(Boolean).join(' · ')}</div>
-    </div>
+    <PosterTile src={c.poster} title={c.name} sub={sub} focused={focused} onClick={onClick}
+      progress={c.progress && c.progress.duration > 0 ? c.progress.position / c.progress.duration : undefined}
+      badges={<>
+        {c.uhd && <span class="badge-4k">4K</span>}
+        {c.fresh && c.wl && <span class="badge-new">{t('NEW')}</span>}
+        {c.wl && !c.watched && <span class="badge-wl" title={t('On your Letterboxd watchlist')} />}
+        {c.watched ? <span class="badge-seen"><Icon n="check" />{typeof c.watched === 'number' ? ` ${'★'.repeat(Math.floor(c.watched))}${c.watched % 1 ? '½' : ''}` : ''}</span> : null}
+      </>} />
   );
 }
 
-/** Netflix-style home for movies or series. */
+/** Movies & TV: Movies | Series toggle, filter chips, billboard, then rows (Netflix-style). */
 export function Browse({ kind }: { kind: 'movie' | 'series' }) {
   const rows = useAsync(() => api.browse(kind), [kind]);
-  const top = useMemo(() => [
-    { label: kind === 'movie' ? 'All movies' : 'All series', act: () => push({ name: 'grid', kind, filters: {}, title: kind === 'movie' ? 'All movies' : 'All series' }) },
-    { label: '4K', act: () => push({ name: 'grid', kind, filters: { uhd: '1' }, title: 'In 4K' }) },
-    { label: 'Arabic', act: () => push({ name: 'grid', kind, filters: { lang: 'ar', sort: 'added' }, title: 'Arabic' }) },
-    { label: 'Watchlist', act: () => push({ name: 'grid', kind, filters: { wl: '1', sort: 'watchlist' }, title: 'Your Letterboxd watchlist' }) },
-    { label: 'Provider categories', act: () => push({ name: 'categories', kind }) },
-  ], [kind]);
   const list: BrowseRow[] = rows.data ?? [];
-  const [r, setR] = useState(-1); // -1 = top bar
+  const leadCard = list[0]?.items[0];
+  const lead = useAsync(() => (leadCard ? api.title(leadCard.tid).catch(() => null) : Promise.resolve(null)), [leadCard?.tid]);
+  const bb = lead.data;
+  const all = kind === 'movie' ? t('All movies') : t('All series');
+  const chips = useMemo(() => [
+    { label: all, act: () => push({ name: 'grid', kind, filters: {}, title: all }) },
+    { label: '4K', act: () => push({ name: 'grid', kind, filters: { uhd: '1' }, title: t('In 4K') }) },
+    { label: t('Arabic'), act: () => push({ name: 'grid', kind, filters: { lang: 'ar', sort: 'added' }, title: t('Arabic') }) },
+    { label: t('Watchlist'), act: () => push({ name: 'grid', kind, filters: { wl: '1', sort: 'watchlist' }, title: t('Your Letterboxd watchlist') }) },
+    { label: t('Categories'), act: () => push({ name: 'categories', kind }) },
+  ], [kind, all]);
+  const head = [
+    { label: t('Movies'), act: () => kind !== 'movie' && go({ name: 'movies' }) },
+    { label: t('Series'), act: () => kind !== 'series' && go({ name: 'series' }) },
+    ...chips,
+  ];
+  const bbActions: Action[] = !bb ? [] : [
+    { label: t('Play'), icon: 'play', primary: true, act: () => {
+      const v = bb.versions[0];
+      if (bb.kind === 'movie' && v) play({ ...v.item, duration: (bb.runtime ?? 0) * 60 || null }, { startAt: 0 });
+      else openTitle(bb.tid);
+    } },
+    { label: t('More info'), icon: 'info', act: () => openTitle(bb.tid) },
+  ];
+
+  // focus rows: -2 = toggle + chips, -1 = billboard buttons, 0.. = rows
+  const [r, setR] = useState(-1);
   const [cols, setCols] = useState<Record<string, number>>({});
-  const [tb, setTb] = useState(0);
-  const scroller = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef<(HTMLElement | null)[]>([]);
-  const ri = Math.min(r, list.length - 1);
-  const row = ri >= 0 ? list[ri] : null;
-  const cards = (rw: BrowseRow) => rw.items.length + (rw.more ? 1 : 0);
-  const ci = row ? Math.min(cols[row.id] ?? 0, cards(row) - 1) : 0;
-  useEffect(() => { if (rows.data && r === -1 && !isMobile) setR(0); }, [rows.data]);
+  const minR = -2;
+  const ri = Math.max(minR, Math.min(r, list.length - 1));
+  const rowLen = (i: number) => (i === -2 ? head.length : i === -1 ? bbActions.length : list[i].items.length + (list[i].more ? 1 : 0));
+  const keyOf = (i: number) => (i < 0 ? String(i) : list[i].id);
+  const ci = Math.min(cols[keyOf(ri)] ?? (ri === -2 ? (kind === 'movie' ? 0 : 1) : 0), Math.max(0, rowLen(ri) - 1));
+  useEffect(() => { if (r === -1 && rows.data && !bbActions.length && !compact.value) setR(0); }, [rows.data, bb]);
 
   const activate = (rw: BrowseRow, i: number) => {
     if (i < rw.items.length) openTitle(rw.items[i].tid);
-    else if (rw.more) push({ name: 'grid', kind, filters: rw.more, title: rw.title });
+    else if (rw.more) push({ name: 'grid', kind, filters: rw.more, title: t(rw.title) });
   };
 
   useKeys((k) => {
-    if (railFocused.value) return false;
-    if (ri < 0) {
-      if (k === 'left') { if (tb === 0) return false; setTb(tb - 1); return true; }
-      if (k === 'right') { setTb(Math.min(top.length - 1, tb + 1)); return true; }
-      if (k === 'down') { if (list.length) setR(0); return true; }
-      if (k === 'ok') { top[tb].act(); return true; }
-      return false;
-    }
-    if (!row) return false;
-    if (k === 'up') { setR(ri - 1); return true; }
-    if (k === 'down') { setR(Math.min(list.length - 1, ri + 1)); return true; }
-    if (k === 'left') { if (ci === 0) return false; setCols({ ...cols, [row.id]: ci - 1 }); return true; }
-    if (k === 'right') { setCols({ ...cols, [row.id]: Math.min(cards(row) - 1, ci + 1) }); return true; }
-    if (k === 'ok') { activate(row, ci); return true; }
+    if (navFocused.value) return false;
+    if (k === 'up') { let n = ri - 1; if (n === -1 && !bbActions.length) n = -2; if (n < minR) return false; setR(n); return true; }
+    if (k === 'down') { let n = ri + 1; if (n === -1 && !bbActions.length) n = 0; setR(Math.min(list.length - 1, n)); return true; }
+    if (k === 'left') { if (ci > 0) setCols({ ...cols, [keyOf(ri)]: ci - 1 }); return true; }
+    if (k === 'right') { setCols({ ...cols, [keyOf(ri)]: Math.min(rowLen(ri) - 1, ci + 1) }); return true; }
+    if (k === 'ok') { if (ri === -2) head[ci]?.act(); else if (ri === -1) bbActions[ci]?.act(); else activate(list[ri], ci); return true; }
     return false;
   });
 
-  // keep the focused row/card in view
-  useLayoutEffect(() => {
-    const el = rowRefs.current[ri];
-    if (el && scroller.current) {
-      const top = el.offsetTop - scroller.current.clientHeight * 0.18;
-      scroller.current.scrollTop = Math.max(0, top);
-      const strip = el.querySelector('.hscroll') as HTMLElement | null;
-      const card = strip?.children[ci] as HTMLElement | undefined;
-      if (strip && card) {
-        if (card.offsetLeft < strip.scrollLeft + 8) strip.scrollLeft = card.offsetLeft - 8;
-        else if (card.offsetLeft + card.offsetWidth > strip.scrollLeft + strip.clientWidth - 8) strip.scrollLeft = card.offsetLeft + card.offsetWidth - strip.clientWidth + 8;
-      }
-    } else if (ri < 0 && scroller.current) scroller.current.scrollTop = 0;
-  }, [ri, ci]);
-
+  const kb = !navFocused.value && !compact.value;
+  const meta = bb ? [bb.year, bb.genres.slice(0, 3).join(' · '), bb.rating ? `★ ${(bb.rating * 2).toFixed(1)}` : null, bb.uhd ? '4K' : null].filter(Boolean).join('  ·  ') : '';
   return (
-    <div class="browse" ref={scroller}>
+    <div class="browse page">
       <div class="browse-head">
-        <h1>{kind === 'movie' ? 'Movies' : 'Series'}</h1>
-        <div class="tb">
-          {top.map((b, i) => <button key={b.label} class={ri < 0 && i === tb && !railFocused.value ? 'focus' : ''} onClick={b.act}>{b.label}</button>)}
+        <Segmented value={kind} options={[{ v: 'movie', label: t('Movies') }, { v: 'series', label: t('Series') }]}
+          onChange={(v) => go({ name: v === 'movie' ? 'movies' : 'series' })} focus={kb && ri === -2 && ci < 2 ? ci : -1} />
+        <div class="chips">
+          {chips.map((b, i) => <button key={b.label} class={`chip ${kb && ri === -2 && ci === i + 2 ? 'focus' : ''}`} onClick={b.act}>{b.label}</button>)}
         </div>
       </div>
-      {rows.loading && !rows.data && <div class="spinner inline" />}
-      {rows.error && <div class="empty">{rows.error.message}</div>}
-      {list.map((rw, n) => {
-        const near = Math.abs(n - Math.max(0, ri)) <= 3; // render nearby rows only: keeps the TV fast
-        return (
-          <section key={rw.id} class="brow" ref={(el) => { rowRefs.current[n] = el; }}>
-            <h3>{rw.title}</h3>
-            {near ? (
-              <div class="hscroll">
-                {rw.items.map((c, i) => <Card key={c.tid} c={c} focused={!railFocused.value && n === ri && i === ci} onClick={() => { setR(n); setCols({ ...cols, [rw.id]: i }); openTitle(c.tid); }} />)}
-                {rw.more && (
-                  <div class={`tcard more ${!railFocused.value && n === ri && ci === rw.items.length ? 'focus' : ''}`} onClick={() => activate(rw, rw.items.length)}>
-                    <div class="pwrap"><div class="poster ph">See all ›</div></div>
-                  </div>
-                )}
-              </div>
-            ) : <div class="hscroll placeholder" />}
-          </section>
-        );
-      })}
+      {bb ? <Billboard backdrop={bb.backdrop} poster={bb.poster} title={bb.name} meta={meta} plot={bb.plot} eyebrow={list[0] ? t(list[0].title) : undefined}
+        actions={bbActions} focus={kb && ri === -1 ? ci : -1} /> : rows.loading ? <div class="billboard skel" /> : null}
+      <div class="rows">
+        {rows.loading && !rows.data && <><SkeletonRow /><SkeletonRow /></>}
+        {rows.error && <div class="empty">{rows.error.message}</div>}
+        {list.map((rw, n) => {
+          const near = !isTizen || Math.abs(n - Math.max(0, ri)) <= 3; // TV only: render rows near the D-pad focus (mouse/touch scrolling never moves it)
+          return near ? (
+            <Row key={rw.id} title={t(rw.title)} focus={kb && n === ri ? ci : -1} onMore={rw.more ? () => activate(rw, rw.items.length) : undefined}>
+              {rw.items.map((c, i) => <Card key={c.tid} c={c} focused={kb && n === ri && i === ci} onClick={() => { setR(n); setCols({ ...cols, [rw.id]: i }); openTitle(c.tid); }} />)}
+              {rw.more && (
+                <div class={`tile poster more ${kb && n === ri && ci === rw.items.length ? 'focus' : ''}`} onClick={() => activate(rw, rw.items.length)} role="button">
+                  <div class="art"><span class="ph"><Icon n="chevron" />{t('See all')}</span></div>
+                </div>
+              )}
+            </Row>
+          ) : <SkeletonRow key={rw.id} />;
+        })}
+      </div>
     </div>
   );
 }
@@ -169,18 +165,19 @@ export function Grid({ kind, filters, title }: { kind: 'movie' | 'series'; filte
   };
 
   useKeys((k) => {
-    if (railFocused.value) return false;
+    if (navFocused.value) return false;
     if (k === 'back') return false;
     if (zone === 'chips') {
-      if (k === 'left') { if (chi === 0) return false; setChi(chi - 1); return true; }
+      if (k === 'left') { setChi(Math.max(0, chi - 1)); return true; }
       if (k === 'right') { setChi(Math.min(chips.length - 1, chi + 1)); return true; }
       if (k === 'ok') { cycle(chips[chi]); return true; }
       if (k === 'down') { setZone('grid'); return true; }
+      if (k === 'up') return false;
       return true;
     }
     if (k === 'up') { if (fi < cols) setZone('chips'); else setFi(fi - cols); return true; }
     if (k === 'down') { setFi(Math.min(paged.total - 1, fi + cols)); return true; }
-    if (k === 'left') { if (fi % cols === 0) return false; setFi(fi - 1); return true; }
+    if (k === 'left') { if (fi % cols !== 0) setFi(fi - 1); return true; }
     if (k === 'right') { setFi(Math.min(paged.total - 1, fi + 1)); return true; }
     if (k === 'chdown') { setFi(Math.min(paged.total - 1, fi + cols * 3)); return true; }
     if (k === 'chup') { setFi(Math.max(0, fi - cols * 3)); return true; }
@@ -188,24 +185,33 @@ export function Grid({ kind, filters, title }: { kind: 'movie' | 'series'; filte
     return false;
   });
 
+  const kb = !navFocused.value && !compact.value;
   return (
-    <div class="grid-screen">
+    <div class="grid-screen page">
       <div class="grid-head">
-        <h2>{title ?? (kind === 'movie' ? 'Movies' : 'Series')} <small>{paged.ready ? paged.total.toLocaleString() : ''}</small></h2>
+        <h1 class="screen-title"><IconBtn n="back" label={t('Back')} onClick={() => back()} />{title ?? (kind === 'movie' ? t('Movies') : t('Series'))} <small>{paged.ready ? paged.total.toLocaleString() : ''}</small></h1>
         <div class="chips">
-          {chips.map((c, i) => (
-            <button key={c.label} class={`chip ${zone === 'chips' && i === chi && !railFocused.value ? 'focus' : ''} ${c.value ? 'on' : ''}`}
-              onClick={() => cycle(c)} onContextMenu={(e) => { e.preventDefault(); cycle(c, -1); }}>
-              {c.opts.find((o) => o.v === c.value)?.label ?? c.opts[0].label}
-            </button>
-          ))}
+          {chips.map((c, i) => {
+            const cur = c.opts.find((o) => o.v === c.value) ?? c.opts[0];
+            const cls = `chip ${kb && zone === 'chips' && i === chi ? 'focus' : ''} ${c.value ? 'on' : ''}`;
+            return isTizen ? (
+              <button key={c.label} class={cls} onClick={() => cycle(c)}>{t(cur.label)}</button>
+            ) : (
+              <label key={c.label} class={`${cls} select`}>
+                <span>{t(cur.label)}</span><Icon n="down" />
+                <select id={`grid-${c.label}`} aria-label={t(c.label)} value={c.value} onChange={(e) => c.set((e.target as HTMLSelectElement).value)}>
+                  {c.opts.map((o) => <option key={o.v} value={o.v}>{t(o.label)}</option>)}
+                </select>
+              </label>
+            );
+          })}
         </div>
       </div>
       <div class="grid-body" ref={gridRef}>
-        {paged.ready && paged.total === 0 && <div class="empty">Nothing matches these filters.</div>}
-        <VList count={paged.total} rowH={rowH} cols={cols} focus={zone === 'grid' ? fi : -1} onRange={(s, e) => paged.ensure(s, e)} render={(i, foc) => {
+        {paged.ready && paged.total === 0 && <div class="empty">{t('Nothing matches these filters.')}</div>}
+        <VList count={paged.total} rowH={rowH} cols={cols} focus={kb && zone === 'grid' ? fi : -1} onRange={(s, e) => paged.ensure(s, e)} render={(i, foc) => {
           const c = get(i);
-          return c ? <Card c={c} focused={foc && !railFocused.value} onClick={() => { setFi(i); openTitle(c.tid); }} /> : <div class="tcard skel" />;
+          return c ? <Card c={c} focused={foc} onClick={() => { setFi(i); openTitle(c.tid); }} /> : <div class="tile poster skel" />;
         }} />
       </div>
     </div>

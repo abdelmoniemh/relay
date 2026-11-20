@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { token, loadFavorites, myDeviceId } from './api.ts';
-import { connect, connected, lease, devices } from './ws.ts';
-import { stack, route, go, back, railFocused, TOP, type Route } from './router.ts';
+import { connect, connected, lease } from './ws.ts';
+import { stack, route, go, back, navFocused, SECTIONS, UTILITIES, compact, lastVod, tabOf, scrolled, type Route, type Tab } from './router.ts';
 import { toast, current, takeover, mode } from './playback.ts';
 import { useKeys } from './ui/hooks.ts';
 import { PlayerHost } from './player/host.tsx';
@@ -16,20 +16,16 @@ import { Sports } from './screens/Sports.tsx';
 import { Browse, Grid } from './screens/Browse.tsx';
 import { TitleScreen } from './screens/Title.tsx';
 import { Pair } from './screens/Pair.tsx';
-import { clean } from './ui/common.tsx';
+import { Icon, type IconName } from './ui/Icon.tsx';
+import { MiniPlayer } from './ui/kit.tsx';
 import { isMobile, isTizen } from './env.ts';
+import { t, lang } from './i18n.ts';
 
-const ICONS: Record<string, string> = {
-  home: 'M3 11l9-8 9 8v10h-6v-6H9v6H3z',
-  sports: 'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zm0-13l3.5 2.5-1.3 4h-4.4l-1.3-4zM12 3v5m8.5 3.5l-5 -1M3.5 11.5l5-1M7 19l2.8-4.5M17 19l-2.8-4.5',
-  live: 'M3 6h18v12H3zM8 21h8M12 3l-3 3m3-3l3 3',
-  movies: 'M4 4h16v16H4zM4 9h16M9 4v5m6-5v5',
-  series: 'M3 5h18v11H3zM7 20h10',
-  search: 'M10 17a7 7 0 1 1 0-14 7 7 0 0 1 0 14zm5-2l6 6',
-  remote: 'M8 2h8v20H8zM12 7v.01M10 12h4M12 10v4',
-  settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8-3l2-1-2-4-2 1-2-1V5h-4v2l-2 1-2-1-2 4 2 1v2l-2 1 2 4 2-1 2 1v2h4v-2l2-1 2 1 2-4-2-1z',
-};
-const LABEL: Record<string, string> = { home: 'Home', sports: 'Sports', live: 'Live TV', movies: 'Movies', series: 'Series', search: 'Search', remote: 'Remote', settings: 'Settings' };
+const ICON: Record<Tab, IconName> = { home: 'home', live: 'live', sports: 'sports', vod: 'film', search: 'search', remote: 'remote', settings: 'settings' };
+const LABEL = (k: Tab) => ({ home: t('Home'), live: t('Live TV'), sports: t('Sports'), vod: t('Movies & TV'), search: t('Search'), remote: t('Remote'), settings: t('Settings') })[k];
+
+/** Screens whose first thing is full-bleed artwork: the desktop/TV top bar floats over them. */
+const BILLBOARD: Route['name'][] = ['home', 'movies', 'series', 'title'];
 
 function Screen({ r }: { r: Route }) {
   switch (r.name) {
@@ -53,54 +49,87 @@ export function App() {
   const [paired, setPaired] = useState(!!token.value);
   useEffect(() => { if (paired) { connect(); loadFavorites().catch(() => {}); } }, [paired]);
   useEffect(() => { if (!token.value) setPaired(false); }, [token.value]);
+  lang.value; // re-render everything when the language changes
 
-  const tabs = TOP.filter((t) => !(isTizen && t === 'remote'));
+  const phone = compact.value;
+  const r = route();
   const top = stack.value[0].name;
-  const [ri, setRi] = useState(0);
-  useEffect(() => { setRi(Math.max(0, tabs.indexOf(top))); }, [top]);
+  const active = tabOf(top);
+  // Phone: Remote/Settings open from Home's header, so the Home tab stays lit.
+  const lit: Tab = phone && (active === 'remote' || active === 'settings') ? 'home' : active;
+  const navItems: Tab[] = phone ? SECTIONS : [...SECTIONS, ...UTILITIES];
+  const [ni, setNi] = useState(0);
+  useEffect(() => { setNi(Math.max(0, navItems.indexOf(lit))); }, [lit, phone, navFocused.value]);
+  useEffect(() => { if (top === 'movies' || top === 'series') lastVod.value = top; }, [top]);
+  useEffect(() => { scrolled.value = false; }, [r]);
 
-  // App shell keys (lowest layer): rail navigation; screens hand off 'left' / 'back' by not consuming them.
+  const open = (k: Tab) => {
+    navFocused.value = false;
+    if (k === active && stack.value.length > 1) { go(stack.value[0]); return; } // re-select a section: back to its root
+    if (k === active) return;
+    go({ name: k === 'vod' ? lastVod.value : k } as Route);
+  };
+
+  // App shell keys (lowest layer). Screens return false for 'up' at their top edge and for unhandled 'back'.
   useKeys((k) => {
-    if (railFocused.value) {
-      if (k === 'up') { setRi(Math.max(0, ri - 1)); return true; }
-      if (k === 'down') { setRi(Math.min(tabs.length - 1, ri + 1)); return true; }
-      if (k === 'ok' || k === 'right') { if (tabs[ri] !== top) go({ name: tabs[ri] } as Route); railFocused.value = false; return true; }
-      if (k === 'back') { if (top !== 'home') { go({ name: 'home' }); railFocused.value = false; } else if (isTizen) { try { window.tizen.application.getCurrentApplication().hide(); } catch {} } return true; }
-      return false;
-    }
-    if (k === 'left' || k === 'back') {
-      if (k === 'back' && back()) return true;
-      railFocused.value = true;
+    if (navFocused.value) {
+      if (k === 'left') { setNi(Math.max(0, ni - 1)); return true; }
+      if (k === 'right') { setNi(Math.min(navItems.length - 1, ni + 1)); return true; }
+      if (k === 'ok') { open(navItems[ni]); return true; }
+      if (k === 'down') { navFocused.value = false; return true; }
+      if (k === 'back') {
+        if (top !== 'home') go({ name: 'home' });
+        else if (isTizen) { try { window.tizen.application.getCurrentApplication().hide(); } catch {} }
+        return true;
+      }
       return true;
     }
+    if (k === 'back') { if (back()) return true; navFocused.value = true; return true; }
+    if (k === 'up' && !phone) { navFocused.value = true; return true; }
     if (k === 'green' && lease.value && lease.value.deviceId !== myDeviceId.value && !current.value) { takeover(); return true; }
     return false;
   }, 0);
 
   if (!paired) return <Pair onDone={() => setPaired(true)} />;
 
-  const r = route();
-  const l = lease.value;
-  const elsewhere = l && l.deviceId !== myDeviceId.value && !current.value && r.name !== 'home' && r.name !== 'remote' ? l : null;
+  const rtl = document.documentElement.dir === 'rtl';
+  const kind = isTizen ? 'tv' : isMobile ? 'phone' : 'desktop';
+  const overArt = BILLBOARD.includes(r.name);
 
   return (
-    <div class={`app ${isTizen ? 'tv' : isMobile ? 'phone' : 'desktop'} ${railFocused.value ? 'rail-focus' : ''}`}>
-      <nav class="rail">
-        {tabs.map((t, i) => (
-          <button key={t} class={`${t === top ? 'sel' : ''} ${railFocused.value && i === ri ? 'focus' : ''}`} onClick={() => { go({ name: t } as Route); railFocused.value = false; }}>
-            <svg viewBox="0 0 24 24"><path d={ICONS[t]} /></svg><span>{LABEL[t]}</span>
+    <div class={`app ${kind} ${phone ? 'compact' : 'wide'} ${navFocused.value ? 'nav-focus' : ''} ${overArt ? 'over-art' : ''}`} dir={rtl ? 'rtl' : 'ltr'}>
+      {phone ? (
+        <nav class="tabbar" aria-label={t('Sections')}>
+          {SECTIONS.map((k, i) => (
+            <button key={k} class={`${k === lit ? 'sel' : ''} ${navFocused.value && i === ni ? 'focus' : ''}`} aria-current={k === lit ? 'page' : undefined} onClick={() => open(k)}>
+              <i class="tab-ic"><Icon n={ICON[k]} filled={false} /></i><span>{LABEL(k)}</span>
+            </button>
+          ))}
+        </nav>
+      ) : (
+        <header class={`topbar ${scrolled.value || !overArt ? 'solid' : ''}`}>
+          <button class="brand" onClick={() => open('home')} aria-label="Relay">
+            <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" /><path d="M24 18v28l22-14z" /></svg>
+            <span>Relay</span>
           </button>
-        ))}
-        <div class={`conn ${connected.value ? 'on' : ''}`} title={connected.value ? 'Connected' : 'Reconnecting…'} />
-      </nav>
-      <main class="screen"><Screen r={r} /></main>
-      {elsewhere && (
-        <button class="handoff-banner" onClick={() => takeover()}>
-          ▶ <b>{clean(elsewhere.item.name)}</b> is playing on {devices.value.find((d) => d.id === elsewhere.deviceId)?.name ?? 'another device'} — <u>Continue here</u> <span class="key green" />
-        </button>
+          <nav class="sections" aria-label={t('Sections')}>
+            {navItems.map((k, i) => {
+              const util = !SECTIONS.includes(k) || (k === 'search' && !isTizen);
+              return (
+                <button key={k} class={`${util ? 'util' : 'link'} ${k === lit ? 'sel' : ''} ${navFocused.value && i === ni ? 'focus' : ''}`}
+                  aria-current={k === lit ? 'page' : undefined} aria-label={LABEL(k)} title={util ? LABEL(k) : undefined} onClick={() => open(k)}>
+                  {util ? <Icon n={ICON[k]} /> : LABEL(k)}
+                </button>
+              );
+            })}
+          </nav>
+          <span class={`conn ${connected.value ? 'on' : ''}`} title={connected.value ? t('Connected') : t('Reconnecting…')} />
+        </header>
       )}
+      <main class="screen"><Screen r={r} /></main>
+      {r.name !== 'remote' && <MiniPlayer />}
       <PlayerHost />
-      {toast.value && <div class={`toast ${mode.value === 'full' ? 'over' : ''}`}>{toast.value}</div>}
+      {toast.value && <div class={`toast ${mode.value === 'full' ? 'over' : ''}`} role="status">{toast.value}</div>}
     </div>
   );
 }

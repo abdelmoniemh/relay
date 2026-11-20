@@ -13,6 +13,8 @@ import { Logo, clean } from '../ui/common.tsx';
 import { api, myDeviceId, toggleFavorite, favorites } from '../api.ts';
 import { devices, send } from '../ws.ts';
 import { route, go } from '../router.ts';
+import { Icon } from '../ui/Icon.tsx';
+import { t } from '../i18n.ts';
 
 /** Element the Live screen offers as the preview area. */
 export const previewBox = signal<HTMLElement | null>(null);
@@ -120,7 +122,7 @@ export function PlayerHost() {
       const w = Math.min(480, W * (small ? 0.55 : 0.45)), h = (w * 9) / 16;
       const gap = small ? 12 : 24;
       // Keep clear of the bottom tab bar on phones.
-      const rail = document.querySelector('.rail')?.getBoundingClientRect();
+      const rail = document.querySelector('.tabbar')?.getBoundingClientRect();
       const bottom = rail && rail.top > H / 2 ? H - rail.top + gap : gap;
       setRect({ x: W - w - gap, y: H - h - bottom, w, h });
     };
@@ -155,8 +157,8 @@ export function PlayerHost() {
       {m === 'mini' && rect && !hw && !onLive && (
         <div class="mini-ctl" style={{ left: rect.x, top: rect.y - 40, width: rect.w }}>
           <span class="name">{current.value && clean(current.value.name)}</span>
-          <button onClick={() => setMode('full')}>⤢</button>
-          <button onClick={() => stop()}>✕</button>
+          <button aria-label={t('Full screen')} onClick={() => setMode('full')}><Icon n="expand" /></button>
+          <button aria-label={t('Stop')} onClick={() => stop()}><Icon n="close" /></button>
         </div>
       )}
       {m === 'full' && <Overlay />}
@@ -255,34 +257,38 @@ function Overlay() {
     <div class={`overlay ${shown ? 'show' : ''}`} onMouseMove={isMobile ? undefined : poke} onClick={onTap}
       onDblClick={isMobile ? undefined : (e) => { if (!(e.target as HTMLElement).closest('button, input, .dialog, .nextup')) toggleFullscreen(); }}>
       {(st === 'requesting' || st === 'loading' || st === 'buffering') && <div class="spinner" />}
-      {st === 'error' && <div class="err">{errorMsg.value}<br /><button onClick={() => play(it, { mode: 'full' })}>Retry</button></div>}
+      {st === 'error' && <div class="err" role="alert"><p>{errorMsg.value}</p><button class="btn primary" onClick={() => play(it, { mode: 'full' })}><Icon n="refresh" />{t('Try again')}</button></div>}
+      {!live && (st === 'playing' || st === 'paused') && (
+        <div class="center-ctl">
+          <button class="cbtn" aria-label={t('Back 10 seconds')} onClick={() => { poke(); seekBy(-10); }}><Icon n="back10" /></button>
+          <button class="cbtn big" aria-label={st === 'paused' ? t('Play') : t('Pause')} onClick={() => { poke(); togglePause(); }}><Icon n={st === 'paused' ? 'play' : 'pause'} /></button>
+          <button class="cbtn" aria-label={t('Forward 10 seconds')} onClick={() => { poke(); seekBy(10); }}><Icon n="fwd10" /></button>
+        </div>
+      )}
       {digits && <div class="digits">{digits}</div>}
       <div class="top">
-        <button class="ico" onClick={() => (live ? setMode('mini') : stop())}>‹</button>
+        <button class="ico tool" aria-label={t('Back')} onClick={() => (live ? setMode('mini') : stop())}><Icon n="back" /></button>
         {live && <Logo src={it.icon} name={it.name} size={56} />}
         <div class="t">
-          <div class="name">{clean(it.name)} {favorites.value.has(it.id) && <span class="star">★</span>}</div>
-          {it.kind === 'episode' && <div class="muted">S{it.season} · E{it.episode}</div>}
+          <div class="name">{clean(it.name)}{favorites.value.has(it.id) && <Icon n="star" filled class="fav-mark" />}</div>
+          {it.kind === 'episode' && <div class="sub">S{it.season} · E{it.episode}</div>}
         </div>
-        <div class="clock">{clock(now)}</div>
-        {airplay.value && <button class="ico tool" title="AirPlay" aria-label="AirPlay" onClick={() => { poke(); showAirplay(); }}>
-          <svg viewBox="0 0 24 24"><path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1M12 15l5 6H7z" /></svg></button>}
-        {canPip && <button class="ico tool" title="Picture in picture" aria-label="Picture in picture" onClick={() => { poke(); togglePip(); }}>
-          <svg viewBox="0 0 24 24"><path d="M3 5h18v14H3zM12 12h7v5h-7z" /></svg></button>}
-        {canFullscreen && <button class="ico tool" title="Full screen" aria-label="Full screen" onClick={() => { poke(); toggleFullscreen(); }}>
-          <svg viewBox="0 0 24 24"><path d={isFull.value ? 'M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6' : 'M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6'} /></svg></button>}
+        <div class="clock tnum">{clock(now)}</div>
+        {airplay.value && <button class="ico tool" title="AirPlay" aria-label="AirPlay" onClick={() => { poke(); showAirplay(); }}><Icon n="airplay" /></button>}
+        {canPip && <button class="ico tool" title={t('Picture in picture')} aria-label={t('Picture in picture')} onClick={() => { poke(); togglePip(); }}><Icon n="pip" /></button>}
+        {canFullscreen && <button class="ico tool" title={t('Full screen')} aria-label={t('Full screen')} onClick={() => { poke(); toggleFullscreen(); }}><Icon n={isFull.value ? 'shrink' : 'expand'} /></button>}
       </div>
       <div class="bottom">
         {live ? (
           p ? (
             <div class="epg">
-              <div><b>{p.title}</b> <span class="muted">{clock(p.start)}–{clock(p.stop)}</span></div>
+              <div><span class="live-pill">{t('LIVE')}</span> <b>{p.title}</b> <span class="sub tnum">{clock(p.start)}–{clock(p.stop)}</span></div>
               <div class="bar"><i style={{ width: `${((now - p.start) / (p.stop - p.start)) * 100}%` }} /></div>
-              {epg?.[1] && <div class="muted">Next: {epg[1].title} · {clock(epg[1].start)}</div>}
+              {epg?.[1] && <div class="sub">{t('Next')}: {epg[1].title} · <span class="tnum">{clock(epg[1].start)}</span></div>}
             </div>
-          ) : <div class="muted">Live</div>
+          ) : <div><span class="live-pill">{t('LIVE')}</span></div>
         ) : (
-          <div class="seek">
+          <div class="seek tnum">
             <span>{fmtTime(position.value)}</span>
             <input type="range" min={0} max={duration.value || 1} step={1} value={position.value} onInput={(e) => seekTo(Number((e.target as HTMLInputElement).value))} />
             <span>{fmtTime(duration.value)}</span>
@@ -293,34 +299,31 @@ function Overlay() {
           const src = sources.value[i];
           return (
             <div class="srcline">
-              <button onClick={() => nextSource(-1)}>◀</button>
-              <span>Source <b>{i + 1}</b>/{sources.value.length}{src ? <> · <span class={src.verified ? 'ok' : 'muted'}>{src.label}{src.verified && !src.dead ? ' ✓' : ''}</span></> : null}</span>
-              <button onClick={() => nextSource(1)}>▶</button>
-              <span class="muted small">{sourceEvent.value ? 'same match on other channels' : 'other copies of this channel'}</span>
+              <button class="pill-btn" aria-label={t('Previous source')} onClick={() => nextSource(-1)}><Icon n="back" /></button>
+              <span>{t('Source {i} of {n}', { i: i + 1, n: sources.value.length })}{src ? <> · <span class={`qchip ${src.verified && !src.dead ? 'ok' : 'unverified'}`}>{src.label.replace(' · unverified', '')}</span></> : null}</span>
+              <button class="pill-btn" aria-label={t('Next source')} onClick={() => nextSource(1)}><Icon n="chevron" /></button>
+              <span class="sub">{sourceEvent.value ? t('Same match on other channels') : t('Other copies of this channel')}</span>
             </div>
           );
         })()}
         <div class="ctl">
-          {live ? <>
-            <button onClick={() => zap('prev')}>▲ CH</button><button onClick={() => zap('next')}>▼ CH</button>
-          </> : <>
-            <button onClick={() => seekBy(-10)}>⟲ 10</button>
-            <button class="big" onClick={togglePause}>{st === 'paused' ? '▶' : '❚❚'}</button>
-            <button onClick={() => seekBy(10)}>10 ⟳</button>
+          {live && <>
+            <button class="pill-btn" onClick={() => zap('prev')}><Icon n="up" />{t('Previous channel')}</button>
+            <button class="pill-btn" onClick={() => zap('next')}><Icon n="down" />{t('Next channel')}</button>
           </>}
-          {it.kind === 'episode' && nextEpisode() && <button onClick={playNextEpisode}>Next episode ⏭</button>}
-          {live && <button onClick={() => toggleFavorite(it)}>{favorites.value.has(it.id) ? '★' : '☆'}</button>}
-          {others.length > 0 && <button onClick={() => setSendMenu(true)}>Send to… <span class="key blue" /></button>}
+          {it.kind === 'episode' && nextEpisode() && <button class="pill-btn" onClick={playNextEpisode}><Icon n="next" />{t('Next episode')}</button>}
+          {live && <button class="pill-btn" aria-pressed={favorites.value.has(it.id)} onClick={() => toggleFavorite(it)}><Icon n="star" filled={favorites.value.has(it.id)} />{favorites.value.has(it.id) ? t('Favourite') : t('Add to favourites')}</button>}
+          {others.length > 0 && <button class="pill-btn" onClick={() => setSendMenu(true)}><Icon n="send" />{t('Send to…')}<span class="keydot blue" /></button>}
         </div>
       </div>
       {nextUp.value && <NextUp />}
       {sendMenu && (
         <div class="dialog" onClick={(e) => e.stopPropagation()}>
-          <h3>Continue on…</h3>
+          <h3>{t('Continue on…')}</h3>
           {others.map((d, i) => (
-            <button key={d.id} onClick={() => { send({ t: 'sendTo', target: d.id }); setSendMenu(false); }}>{i + 1}. {d.name}</button>
+            <button key={d.id} class="list-row" onClick={() => { send({ t: 'sendTo', target: d.id }); setSendMenu(false); }}><span class="tnum">{i + 1}</span><span class="lr-main"><b>{d.name}</b></span></button>
           ))}
-          <button class="muted" onClick={() => setSendMenu(false)}>Cancel</button>
+          <button class="btn secondary" onClick={() => setSendMenu(false)}>{t('Cancel')}</button>
         </div>
       )}
     </div>
@@ -335,9 +338,9 @@ function NextUp() {
   const secs = Math.max(0, Math.ceil((n.at - Date.now()) / 1000));
   return (
     <div class="nextup" onClick={(e) => e.stopPropagation()}>
-      <div class="muted small">Next episode in {secs}s</div>
+      <div class="sub">{t('Next episode in {n}s', { n: secs })}</div>
       <div class="name">S{n.item.season} E{n.item.episode} · {n.item.name}</div>
-      <div class="ctl"><button class="big" onClick={playNextEpisode}>▶ Play now</button><button onClick={cancelNextUp}>Cancel</button></div>
+      <div class="ctl"><button class="btn primary" onClick={playNextEpisode}><Icon n="play" />{t('Play now')}</button><button class="btn secondary" onClick={cancelNextUp}>{t('Cancel')}</button></div>
     </div>
   );
 }

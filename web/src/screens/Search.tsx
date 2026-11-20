@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Item } from '@shared/protocol.ts';
-import { api, type TitleCard } from '../api.ts';
+import { api, favorites, type TitleCard } from '../api.ts';
 import { play } from '../playback.ts';
-import { push, railFocused } from '../router.ts';
+import { push, navFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
-import { VList } from '../ui/VList.tsx';
-import { Logo, NowLine, Star, clean } from '../ui/common.tsx';
+import { Logo, NowLine, clean } from '../ui/common.tsx';
+import { Icon } from '../ui/Icon.tsx';
 import { img, isTizen } from '../env.ts';
+import { t } from '../i18n.ts';
+import { compact } from '../router.ts';
 
-const KLABEL: Record<string, string> = { live: 'LIVE', movie: 'MOVIE', series: 'SERIES' };
+const GROUPS: { kind: 'live' | 'movie' | 'series'; label: string }[] = [
+  { kind: 'live', label: 'Channels' }, { kind: 'movie', label: 'Movies' }, { kind: 'series', label: 'Series' },
+];
 let lastQ = '';
 
 export function openItem(it: Item) {
@@ -40,43 +44,71 @@ export function Search({ onPick, autoFocus = true }: { onPick?: (it: Item) => vo
   useEffect(() => { if (autoFocus && !isTizen) input.current?.focus(); }, []);
   const pick = onPick ?? openItem;
 
+  // Results grouped by type (Channels / Movies / Series); focus walks the flat order.
+  const groups = GROUPS.map((g) => ({ ...g, items: items.filter((it) => it.kind === g.kind).slice(0, 60) })).filter((g) => g.items.length);
+  const flat = groups.flatMap((g) => g.items);
+
   useKeys((k) => {
-    if (railFocused.value) return false;
+    if (navFocused.value) return false;
     if (fi < 0) {
-      if (k === 'down' && items.length) { input.current?.blur(); setFi(0); return true; }
+      if (k === 'down' && flat.length) { input.current?.blur(); setFi(0); return true; }
       if (k === 'ok') { input.current?.focus(); return true; }
       return false;
     }
     if (k === 'up') { if (fi === 0) { setFi(-1); input.current?.focus(); } else setFi(fi - 1); return true; }
-    if (k === 'down') { setFi(Math.min(items.length - 1, fi + 1)); return true; }
-    if (k === 'ok') { pick(items[fi]); return true; }
-    if (k === 'left') return false;
-    return false;
+    if (k === 'down') { setFi(Math.min(flat.length - 1, fi + 1)); return true; }
+    if (k === 'ok') { pick(flat[fi]); return true; }
+    return k === 'left' || k === 'right';
   });
+  useEffect(() => { (document.querySelector('.search .result.focus') as HTMLElement | null)?.scrollIntoView({ block: 'nearest' }); }, [fi]);
 
+  const kb = !navFocused.value && !compact.value;
+  let n = -1;
   return (
-    <div class="search">
-      <div class="search-bar">
-        <input ref={input} class={fi < 0 && !railFocused.value ? 'focus' : ''} type="search" placeholder="Search channels, movies, series…" value={q}
-          onInput={(e) => { setQ((e.target as HTMLInputElement).value); setFi(-1); }} enterKeyHint="search" />
+    <div class="search page">
+      <div class="search-top">
+        {!onPick && <h1 class="screen-title">{t('Search')}</h1>}
+        <div class={`search-field big ${kb && fi < 0 ? 'focus' : ''}`}>
+          <Icon n="search" />
+          <input ref={input} id="search-input" type="search" placeholder={t('Channels, movies, series')} value={q}
+            onInput={(e) => { setQ((e.target as HTMLInputElement).value); setFi(-1); }} enterKeyHint="search" />
+          {q && <button class="clear" aria-label={t('Clear')} onClick={() => { setQ(''); input.current?.focus(); }}><Icon n="close" /></button>}
+        </div>
         <div class="chips">
-          {(['', 'live', 'movie', 'series'] as const).map((k) => <button key={k} class={kind === k ? 'sel' : ''} onClick={() => setKind(k)}>{k ? KLABEL[k] : 'ALL'}</button>)}
+          {(['', 'live', 'movie', 'series'] as const).map((k) => (
+            <button key={k} class={`chip ${kind === k ? 'on' : ''}`} onClick={() => setKind(k)}>
+              {k === '' ? t('All') : t(GROUPS.find((g) => g.kind === k)!.label)}
+            </button>
+          ))}
         </div>
       </div>
-      {dq.length >= 2 && !res.loading && !items.length && <div class="empty">No results for “{dq}”</div>}
-      <VList count={items.length} rowH={84} focus={fi} render={(i, f) => {
-        const it = items[i];
-        return (
-          <div class={`row result ${f ? 'focus' : ''}`} onClick={() => pick(it)}>
-            {it.kind === 'live' ? <Logo src={it.icon} name={it.name} size={56} /> : <img class="thumb small" src={img(it.icon, 92)} loading="lazy" alt="" />}
-            <div class="meta">
-              <div class="name">{clean(it.name)} <Star id={it.id} /></div>
-              {it.kind === 'live' ? <NowLine list={nowNext(it.epg)} /> : <div class="muted small">{it.rating ? `★ ${(it.rating * 2).toFixed(1)}` : ''}</div>}
+      <div class="search-results">
+        {dq.length < 2 && <div class="empty">{t('Type at least two letters.')}</div>}
+        {dq.length >= 2 && res.loading && !items.length && <div class="list-skel" />}
+        {dq.length >= 2 && !res.loading && !items.length && <div class="empty">{t('No results for “{q}”', { q: dq })}</div>}
+        {groups.map((g) => (
+          <section key={g.kind} class="result-group">
+            <h2 class="list-head">{t(g.label)} <small>{g.items.length}</small></h2>
+            <div class="list-group">
+              {g.items.map((it) => {
+                n++;
+                const i = n;
+                return (
+                  <div key={it.id} class={`list-row result ${kb && i === fi ? 'focus' : ''}`} onClick={() => pick(it)} role="button">
+                    {it.kind === 'live' ? <Logo src={it.icon} name={it.name} size={48} />
+                      : it.icon ? <img class="thumb-poster" src={img(it.icon, 92)} loading="lazy" alt="" /> : <span class="thumb-poster ph">{it.name.slice(0, 1)}</span>}
+                    <span class="lr-main">
+                      <b>{clean(it.name)}{favorites.value.has(it.id) && <Icon n="star" filled class="fav-mark" />}</b>
+                      {it.kind === 'live' ? <NowLine list={nowNext(it.epg)} /> : <span class="lr-sub">{it.rating ? `★ ${(it.rating * 2).toFixed(1)}` : ''}</span>}
+                    </span>
+                    <Icon n="chevron" class="lr-chev" />
+                  </div>
+                );
+              })}
             </div>
-            <span class={`badge k-${it.kind}`}>{KLABEL[it.kind]}</span>
-          </div>
-        );
-      }} />
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

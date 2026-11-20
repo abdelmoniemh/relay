@@ -1,6 +1,7 @@
 import type { Item, Programme } from '@shared/protocol.ts';
 import { clock, img } from '../env.ts';
 import { favorites } from '../api.ts';
+import { Icon } from './Icon.tsx';
 
 export function Logo({ src, name, size = 40 }: { src?: string | null; name: string; size?: number }) {
   return src
@@ -16,7 +17,7 @@ export function Poster({ item, w = 185 }: { item: Item; w?: 154 | 185 | 342 }) {
 }
 
 export function Star({ id }: { id: string }) {
-  return favorites.value.has(id) ? <span class="star">★</span> : null;
+  return favorites.value.has(id) ? <Icon n="star" filled class="fav-mark" /> : null;
 }
 
 export function ProgBar({ p, d }: { p: number; d: number }) {
@@ -30,7 +31,7 @@ export function NowLine({ list }: { list?: Programme[] }) {
   const now = Date.now() / 1000;
   return (
     <div class="now">
-      <span class="t">{clock(p.start)}</span> {p.title}
+      <span class="t tnum">{clock(p.start)}</span> {p.title}
       <div class="bar thin"><i style={{ width: `${Math.max(0, Math.min(100, ((now - p.start) / (p.stop - p.start)) * 100))}%` }} /></div>
     </div>
   );

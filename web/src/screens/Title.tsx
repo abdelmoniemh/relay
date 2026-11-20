@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { Item } from '@shared/protocol.ts';
 import { api, favorites, toggleFavorite, type TitleCard, type TitleDetail, type VersionInfo } from '../api.ts';
-import { back, railFocused } from '../router.ts';
+import { back, navFocused, compact } from '../router.ts';
 import { play } from '../playback.ts';
 import { useAsync, useKeys } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
 import { ProgBar } from '../ui/common.tsx';
+import { Btn, IconBtn, Row, Sheet, type Action } from '../ui/kit.tsx';
+import { Icon } from '../ui/Icon.tsx';
 import { fmtTime, img, isTizen } from '../env.ts';
+import { t as tr } from '../i18n.ts';
 import { Card, openTitle } from './Browse.tsx';
 
 type Ep = Item & { plot?: string; duration?: number };
@@ -77,18 +80,19 @@ export function TitleScreen({ tid }: { tid: number }) {
   const isFav = t ? favorites.value.has(`t${t.tid}`) : false;
   const fav = () => t && toggleFavorite({ id: `t${t.tid}`, kind: t.kind, name: t.name, icon: t.poster });
 
-  const buttons = !t ? [] : [
+  const buttons: Action[] = !t ? [] : [
     ...(t.kind === 'movie'
-      ? resumeAt ? [{ label: `▶ Resume ${fmtTime(resumeAt.p)}`, act: () => playMovie(ver, resumeAt.p) }, { label: '⟲ Start over', act: () => playMovie(ver, 0) }]
-        : [{ label: '▶ Play', act: () => playMovie(ver, 0) }]
-      : resumeEp.ep ? [{ label: resumeEp.at > 30 ? `▶ Resume S${resumeEp.ep.season} E${resumeEp.ep.episode}` : `▶ Play S${resumeEp.ep.season} E${resumeEp.ep.episode}`, act: () => playEp(resumeEp.ep, resumeEp.at) }] : []),
-    ...(t.versions.length > 1 ? [{ label: `Versions (${t.versions.length})`, act: () => { setPi(verIdx); setPanel('versions'); } }] : []),
-    ...(t.trailer ? [{ label: '▷ Trailer', act: () => setPanel('trailer') }] : []),
-    { label: isFav ? '✓ My list' : '+ My list', act: fav },
+      ? resumeAt ? [{ label: tr('Resume {t}', { t: fmtTime(resumeAt.p) }), icon: 'play' as const, primary: true, act: () => playMovie(ver, resumeAt.p) },
+          { label: tr('Start over'), icon: 'restart' as const, act: () => playMovie(ver, 0) }]
+        : [{ label: tr('Play'), icon: 'play' as const, primary: true, act: () => playMovie(ver, 0) }]
+      : resumeEp.ep ? [{ label: tr(resumeEp.at > 30 ? 'Resume S{s} E{e}' : 'Play S{s} E{e}', { s: resumeEp.ep.season ?? '', e: resumeEp.ep.episode ?? '' }), icon: 'play' as const, primary: true, act: () => playEp(resumeEp.ep, resumeEp.at) }] : []),
+    ...(t.trailer ? [{ label: tr('Trailer'), icon: 'trailer' as const, act: () => setPanel('trailer') }] : []),
+    { label: isFav ? tr('In my list') : tr('My list'), icon: isFav ? 'check' as const : 'plus' as const, act: fav },
+    ...(t.versions.length > 1 ? [{ label: tr('Versions ({n})', { n: t.versions.length }), icon: 'film' as const, act: () => { setPi(verIdx); setPanel('versions'); } }] : []),
   ];
   const rows: { title: string; items: TitleCard[] }[] = !t ? [] : [
-    ...(t.collection.length ? [{ title: 'Collection', items: t.collection }] : []),
-    ...(t.similar.length ? [{ title: 'More like this', items: t.similar }] : []),
+    ...(t.collection.length ? [{ title: tr('Collection'), items: t.collection }] : []),
+    ...(t.similar.length ? [{ title: tr('More like this'), items: t.similar }] : []),
   ];
 
   // ---- focus ----
@@ -113,19 +117,19 @@ export function TitleScreen({ tid }: { tid: number }) {
   }, 2);
 
   useKeys((k) => {
-    if (railFocused.value) return false;
+    if (navFocused.value) return false;
     if (k === 'back') { back(); return true; }
     if (k === 'red') { fav(); return true; }
     if (k === 'play' || k === 'playpause') { buttons[0]?.act(); return true; }
     switch (zone) {
       case 'buttons':
-        if (k === 'left') { if (bi === 0) return false; setBi(bi - 1); return true; }
+        if (k === 'left') { setBi(Math.max(0, bi - 1)); return true; }
         if (k === 'right') { setBi(Math.min(buttons.length - 1, bi + 1)); return true; }
         if (k === 'ok') { buttons[bi]?.act(); return true; }
         if (k === 'down') { move(1); return true; }
-        return false;
+        return false; // 'up' -> top bar
       case 'seasons':
-        if (k === 'left') { if (si === 0) return false; setSi(si - 1); setEi(0); return true; }
+        if (k === 'left') { if (si > 0) { setSi(si - 1); setEi(0); } return true; }
         if (k === 'right') { setSi(Math.min(seasons.length - 1, si + 1)); setEi(0); return true; }
         if (k === 'up') { move(-1); return true; }
         if (k === 'down' || k === 'ok') { setZone('eps'); return true; }
@@ -139,7 +143,7 @@ export function TitleScreen({ tid }: { tid: number }) {
         const row = rows[ri];
         if (k === 'up') { if (ri === 0) move(-1); else { setRi(ri - 1); setRc(0); } return true; }
         if (k === 'down') { if (ri < rows.length - 1) { setRi(ri + 1); setRc(0); } return true; }
-        if (k === 'left') { if (rc === 0) return false; setRc(rc - 1); return true; }
+        if (k === 'left') { if (rc > 0) setRc(rc - 1); return true; }
         if (k === 'right') { setRc(Math.min(row.items.length - 1, rc + 1)); return true; }
         if (k === 'ok') { openTitle(row.items[rc].tid); return true; }
         return false;
@@ -153,82 +157,104 @@ export function TitleScreen({ tid }: { tid: number }) {
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [zone, bi, si, ei, ri, rc]);
 
-  if (d.loading && !t) return <div class="title-screen"><div class="spinner inline" /></div>;
-  if (!t) return <div class="title-screen"><div class="empty">{d.error?.message ?? 'Not found'}</div></div>;
-  const f = (z: Zone) => zone === z && !railFocused.value && panel === 'none';
-  const meta = [t.year, t.runtime ? (t.kind === 'movie' ? `${Math.floor(t.runtime / 60)}h ${t.runtime % 60}m` : `${t.runtime} min episodes`) : null,
-    t.rating ? `★ ${(t.rating * 2).toFixed(1)}${t.votes ? ` (${t.votes.toLocaleString()})` : ''}` : null, t.genres.slice(0, 3).join(', ') || null].filter(Boolean);
+  if (d.loading && !t) return <div class="title-screen page"><div class="billboard skel" /></div>;
+  if (!t) return <div class="title-screen page"><div class="empty">{d.error?.message ?? tr('Not found')}</div></div>;
+  const f = (z: Zone) => zone === z && !navFocused.value && panel === 'none' && !compact.value;
+  const meta = [t.year, t.runtime ? (t.kind === 'movie' ? `${Math.floor(t.runtime / 60)}h ${t.runtime % 60}m` : tr('{n} min episodes', { n: t.runtime })) : null,
+    t.rating ? `★ ${(t.rating * 2).toFixed(1)}` : null, t.genres.slice(0, 3).join(', ') || null].filter(Boolean);
+  const audio = ver?.probe?.alangs ? langs(ver.probe.alangs) : '';
+  const subs = ver?.probe?.slangs ? langs(ver.probe.slangs) : '';
 
   return (
-    <div class="title-screen">
-      {t.backdrop && <img class="hero-bg" src={img(t.backdrop, 1280)} alt="" />}
-      <div class="hero">
-        {t.poster && <img class="poster hero-poster" src={img(t.poster, 342)} alt="" />}
-        <div class="hero-txt">
-          <button class="back-link" onClick={() => back()}>‹ Back</button>
-          <h1>{t.name}</h1>
-          <div class="facts">{meta.join(' · ')} {t.uhd && <span class="b4k inline">4K</span>} {t.top250 && <span class="badge imdb">IMDb Top 250 #{t.top250}</span>}
-            {t.wl && !t.watched && <span class="badge lbwl">On your watchlist</span>}
-            {t.watched && <span class="badge lbseen">Watched{typeof t.watched === 'number' ? ` · you rated ${'★'.repeat(Math.floor(t.watched))}${t.watched % 1 ? '½' : ''}` : ''}</span>}</div>
-          {ver && <div class="muted small vline">Version: {ver.label}{ver.probe?.alangs ? ` · Audio: ${langs(ver.probe.alangs)}` : ''}{ver.probe?.slangs ? ` · Subtitles: ${langs(ver.probe.slangs)}` : ''}</div>}
+    <div class="title-screen page">
+      <section class={`billboard title-hero ${t.backdrop ? '' : 'no-art'}`}>
+        {t.backdrop ? <img class="bb-art" src={img(t.backdrop, 1280)} alt="" /> : t.poster ? <img class="bb-art blur" src={img(t.poster, 342)} alt="" /> : null}
+        <div class="bb-scrim" />
+        <IconBtn n="back" label={tr('Back')} class="title-back" onClick={() => back()} />
+        <div class="bb-body">
+          {!t.backdrop && t.poster && <img class="title-poster" src={img(t.poster, 342)} alt="" />}
+          <h1 class="bb-title">{t.name}</h1>
+          <div class="bb-meta">
+            {meta.join('  ·  ')}
+            {t.uhd && <span class="badge-inline">4K</span>}
+            {t.top250 && <span class="badge-inline imdb">IMDb Top 250 #{t.top250}</span>}
+            {t.wl && !t.watched && <span class="badge-inline lb">{tr('On your watchlist')}</span>}
+            {t.watched && <span class="badge-inline lb">{tr('Watched')}{typeof t.watched === 'number' ? ` · ${'★'.repeat(Math.floor(t.watched))}${t.watched % 1 ? '½' : ''}` : ''}</span>}
+          </div>
           {resumeAt && t.kind === 'movie' && <ProgBar p={resumeAt.p} d={resumeAt.d} />}
-          <div class="btns">{buttons.map((b, i) => <button key={b.label} class={f('buttons') && i === bi ? 'focus' : ''} onClick={b.act}>{b.label}</button>)}</div>
-          {t.plot && <p class="plot">{t.plot}</p>}
-          {t.cast && <p class="muted small">Starring: {t.cast}</p>}
-          {t.director && <p class="muted small">{t.kind === 'movie' ? 'Director' : 'Created by'}: {t.director}</p>}
+          <div class="bb-actions">{buttons.map((b, i) => <Btn key={b.label} a={b} focused={f('buttons') && i === bi} />)}</div>
         </div>
+      </section>
+
+      <div class="title-body">
+        <div class="title-about">
+          {t.plot && <p class="plot">{t.plot}</p>}
+          <dl class="facts">
+            {t.cast && <><dt>{tr('Starring')}</dt><dd>{t.cast}</dd></>}
+            {t.director && <><dt>{t.kind === 'movie' ? tr('Director') : tr('Created by')}</dt><dd>{t.director}</dd></>}
+            {ver && <><dt>{tr('Version')}</dt><dd>{ver.label}</dd></>}
+            {audio && <><dt>{tr('Audio')}</dt><dd>{audio}</dd></>}
+            {subs && <><dt>{tr('Subtitles')}</dt><dd>{subs}</dd></>}
+          </dl>
+        </div>
+
+        {t.kind === 'series' && (
+          <section class="episodes">
+            <div class="ep-head">
+              <h2 class="row-title">{tr('Episodes')}</h2>
+              <div class="chips seasons">
+                {seasons.map((x, n) => (
+                  <button key={x.season} class={`chip ${n === si ? 'on' : ''} ${f('seasons') && n === si ? 'focus' : ''}`} onClick={() => { setSi(n); setEi(0); setZone('eps'); }}>
+                    {x.season === 0 ? tr('Specials') : tr('Season {n}', { n: x.season })}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {ser.loading && <div class="ep-skel" />}
+            <VList class="eps" count={eps.length} rowH={isTizen ? 168 : compact.value ? 116 : 132} focus={f('eps') ? ei : -1} render={(n, foc) => {
+              const e = eps[n];
+              const pr = epProg.data?.[e.id];
+              const done = pr && pr[0] > pr[1] * 0.95;
+              return (
+                <div class={`ep ${foc ? 'focus' : ''}`} onClick={() => { setEi(n); playEp(e); }} role="button">
+                  <div class="ep-thumb">
+                    {e.icon ? <img src={img(e.icon, 185)} loading="lazy" alt="" /> : <span class="ph">{e.episode}</span>}
+                    <span class="ep-play"><Icon n="play" /></span>
+                    {pr && !done && <div class="tile-bar"><i style={{ width: `${Math.min(100, (pr[0] / pr[1]) * 100)}%` }} /></div>}
+                  </div>
+                  <div class="ep-txt">
+                    <div class="ep-name"><span class="ep-num">{e.episode}</span>{e.name.replace(/^.* - S\d+E\d+$/, tr('Episode {n}', { n: e.episode ?? '' }))}</div>
+                    <div class="ep-meta">{e.duration ? fmtTime(e.duration) : ''}{done ? ` · ${tr('Watched')}` : ''}</div>
+                    {e.plot && <div class="ep-plot">{e.plot}</div>}
+                  </div>
+                </div>
+              );
+            }} />
+          </section>
+        )}
+
+        {rows.map((row, n) => (
+          <Row key={row.title} title={row.title} focus={f('rows') && n === ri ? rc : -1}>
+            {row.items.map((c, i) => <Card key={c.tid} c={c} focused={f('rows') && n === ri && i === rc} onClick={() => openTitle(c.tid)} />)}
+          </Row>
+        ))}
       </div>
 
-      {t.kind === 'series' && (
-        <div class="episodes">
-          {ser.loading && <div class="spinner inline" />}
-          <div class="tabs">
-            {seasons.map((x, n) => (
-              <button key={x.season} class={`${n === si ? 'sel' : ''} ${f('seasons') && n === si ? 'focus' : ''}`} onClick={() => { setSi(n); setEi(0); setZone('eps'); }}>
-                {x.season === 0 ? 'Specials' : `Season ${x.season}`}
-              </button>
-            ))}
-          </div>
-          <VList class="eps" count={eps.length} rowH={isTizen ? 150 : 124} focus={f('eps') ? ei : -1} render={(n, foc) => {
-            const e = eps[n];
-            const pr = epProg.data?.[e.id];
-            return (
-              <div class={`row ep ${foc ? 'focus' : ''}`} onClick={() => { setEi(n); playEp(e); }}>
-                {e.icon ? <img class="thumb" src={img(e.icon, 185)} loading="lazy" alt="" /> : <div class="thumb ph">{e.episode}</div>}
-                <div class="meta">
-                  <div class="name">{e.episode}. {e.name.replace(/^.* - S\d+E\d+$/, `Episode ${e.episode}`)}</div>
-                  <div class="muted small">{e.duration ? fmtTime(e.duration) : ''}{pr && pr[0] > pr[1] * 0.95 ? ' · Watched' : ''}</div>
-                  {e.plot && <div class="desc clamp">{e.plot}</div>}
-                  {pr && <ProgBar p={pr[0]} d={pr[1]} />}
-                </div>
-              </div>
-            );
-          }} />
-        </div>
-      )}
-
-      {rows.map((row, n) => (
-        <section key={row.title} class="brow">
-          <h3>{row.title}</h3>
-          <div class="hscroll">{row.items.map((c, i) => <Card key={c.tid} c={c} focused={f('rows') && n === ri && i === rc} onClick={() => openTitle(c.tid)} />)}</div>
-        </section>
-      ))}
-
       {panel === 'versions' && (
-        <div class="modal" onClick={() => setPanel('none')}>
-          <div class="dialog versions" onClick={(e) => e.stopPropagation()}>
-            <h3>Choose a version</h3>
+        <Sheet title={tr('Choose a version')} onClose={() => setPanel('none')}>
+          <div class="list-group">
             {t.versions.map((v, i) => (
-              <button key={v.item.id} class={`${i === pi ? 'focus' : ''} ${i === verIdx ? 'sel' : ''}`} onClick={() => { setVerIdx(i); setPanel('none'); if (t.kind === 'movie') playMovie(v, resumeAt?.p ?? 0); }}>
-                <b>{v.label}</b>
-                <span class="muted small">{[v.probe?.alangs && `Audio: ${langs(v.probe.alangs)}`, v.probe?.slangs && `Subs: ${langs(v.probe.slangs)}`, v.probe ? '✓ checked' : 'not checked yet'].filter(Boolean).join(' · ')}</span>
+              <button key={v.item.id} class={`list-row ${i === pi ? 'focus' : ''}`} onClick={() => { setVerIdx(i); setPanel('none'); if (t.kind === 'movie') playMovie(v, resumeAt?.p ?? 0); }}>
+                <span class="lr-main"><b>{v.label}</b>
+                  <span class="lr-sub">{[v.probe?.alangs && `${tr('Audio')}: ${langs(v.probe.alangs)}`, v.probe?.slangs && `${tr('Subtitles')}: ${langs(v.probe.slangs)}`, v.probe ? tr('Checked') : tr('Not checked yet')].filter(Boolean).join(' · ')}</span></span>
+                {i === verIdx && <Icon n="check" class="lr-check" />}
               </button>
             ))}
           </div>
-        </div>
+        </Sheet>
       )}
       {panel === 'trailer' && t.trailer && (
-        <div class="modal trailer" onClick={() => setPanel('none')}>
+        <div class="sheet-backdrop trailer" onClick={() => setPanel('none')}>
           <iframe src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(t.trailer)}?autoplay=1&rel=0`} allow="autoplay; encrypted-media; fullscreen" allowFullScreen />
         </div>
       )}

@@ -2,15 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Category, Item } from '@shared/protocol.ts';
 import { api, favorites, toggleFavorite } from '../api.ts';
 import { current, mode, play, setMode, status, errorMsg } from '../playback.ts';
-import { railFocused } from '../router.ts';
+import { navFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, usePaged, nowNext, epgVersion } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
 import { Logo, NowLine, Star, clean } from '../ui/common.tsx';
 import { clock, isMobile } from '../env.ts';
+import { Icon } from '../ui/Icon.tsx';
+import { t } from '../i18n.ts';
 import { previewBox } from '../player/host.tsx';
 
-const FAV: Category = { id: '__fav', name: '★ Favorites', count: 0 };
-const RECENT: Category = { id: '__recent', name: '◷ Recent', count: 0 };
+const FAV: Category = { id: '__fav', name: 'Favourites', count: 0 };
+const RECENT: Category = { id: '__recent', name: 'Recently watched', count: 0 };
+const catName = (c: Category) => (c.id.startsWith('__') ? t(c.name) : c.name);
 let lastCat = 0; // remember position across visits
 let lastChan = 0;
 
@@ -44,15 +47,15 @@ export function Live() {
   };
 
   useKeys((k) => {
-    if (railFocused.value) return false;
+    if (navFocused.value) return false;
     if (zone === 'cats') {
-      if (k === 'up') { setCi((i) => Math.max(0, i - 1)); return true; }
+      if (k === 'up') { if (ci === 0) return false; setCi((i) => Math.max(0, i - 1)); return true; }
       if (k === 'down') { setCi((i) => Math.min(allCats.length - 1, i + 1)); return true; }
       if (k === 'right' || k === 'ok') { setZone('chans'); return true; }
-      return false; // left -> rail
+      return k === 'left';
     }
     const page = 10;
-    if (k === 'up') { setFi((i) => Math.max(0, i - 1)); return true; }
+    if (k === 'up') { if (fi === 0) return false; setFi((i) => Math.max(0, i - 1)); return true; }
     if (k === 'down') { setFi((i) => Math.min(count - 1, i + 1)); return true; }
     if (k === 'chup') { setFi((i) => Math.max(0, i - page)); return true; }
     if (k === 'chdown') { setFi((i) => Math.min(count - 1, i + page)); return true; }
@@ -66,57 +69,66 @@ export function Live() {
   const live = current.value?.kind === 'live' ? current.value : null;
 
   return (
-    <div class={`live z-${zone}`}>
-      <div class={`col cats ${zone === 'cats' && !railFocused.value ? 'active' : ''}`}>
-        <h2>Live TV</h2>
+    <div class={`live page z-${zone}`}>
+      <div class={`col cats ${zone === 'cats' && !navFocused.value ? 'active' : ''}`}>
+        <h1 class="screen-title">{t('Live TV')}</h1>
         <VList count={allCats.length} rowH={52} focus={zone === 'cats' ? ci : -1} render={(i, f) => {
           const c = allCats[i];
           return (
             <div class={`row cat ${f ? 'focus' : ''} ${i === ci ? 'sel' : ''}`} onClick={() => { setCi(i); setZone('chans'); }}>
-              <span class="name">{c.name}</span>
+              {c.id === '__fav' && <Icon n="star" filled class="cat-ic" />}
+              <span class="name">{catName(c)}</span>
               <span class="count">{c.id === '__fav' ? favList.length || '' : c.id === '__recent' ? '' : c.count}</span>
             </div>
           );
         }} />
       </div>
-      <div class={`col chans ${zone === 'chans' && !railFocused.value ? 'active' : ''}`}>
-        <h2><button class="phone-back" onClick={() => setZone('cats')}>‹</button>{cat.name} <small>{count || ''}</small></h2>
-        {count === 0 && (virtual || paged.ready) && <div class="empty">{cat.id === '__fav' ? 'No favorites yet — press the red button (or F) on a channel.' : 'Nothing here.'}</div>}
-        <VList count={count} rowH={76} focus={zone === 'chans' ? fi : -1} onRange={(s, e) => paged.ensure(s, e)} render={(i, f) => {
+      <div class={`col chans ${zone === 'chans' && !navFocused.value ? 'active' : ''}`}>
+        <div class="col-head">
+          <button class="cat-picker" onClick={() => setZone('cats')} aria-label={t('Choose a category')}>
+            <span>{catName(cat)}</span><Icon n="down" />
+          </button>
+          <h2 class="col-title">{catName(cat)} <small>{count || ''}</small></h2>
+        </div>
+        {count === 0 && (virtual || paged.ready) && <div class="empty">{cat.id === '__fav' ? t('No favourites yet. Tap the star on a channel, or press the red button.') : t('Nothing here.')}</div>}
+        <VList count={count} rowH={isMobile ? 72 : 76} focus={zone === 'chans' ? fi : -1} onRange={(s, e) => paged.ensure(s, e)} render={(i, f) => {
           const it = get(i);
           if (!it) return <div class="row chan skel" />;
           const playing = live?.id === it.id;
+          const fav = favorites.value.has(it.id);
           return (
             <div class={`row chan ${f ? 'focus' : ''} ${playing ? 'playing' : ''}`}
               onClick={() => { setZone('chans'); setFi(i); activate(it); }}
               onDblClick={() => { play(it, { mode: 'full' }); }}>
-              <span class="num">{i + 1}</span>
+              <span class="num">{playing ? <Icon n="play" /> : i + 1}</span>
               <Logo src={it.icon} name={it.name} />
               <div class="meta">
-                <div class="name">{clean(it.name)} <Star id={it.id} />{it.archive ? <span class="badge">CATCH-UP</span> : null}</div>
+                <div class="name">{clean(it.name)}{it.archive ? <span class="badge-inline">{t('Catch-up')}</span> : null}</div>
                 <NowLine list={nowNext(it.epg)} />
               </div>
+              <button class={`fav-btn ${fav ? 'on' : ''}`} aria-label={fav ? t('Remove from favourites') : t('Add to favourites')} aria-pressed={fav}
+                onClick={(e) => { e.stopPropagation(); toggleFavorite(it); }}><Icon n="star" filled={fav} /></button>
             </div>
           );
         }} />
       </div>
       <div class="col side">
         <div class="preview" ref={(el) => { previewBox.value = el; }}>
-          {!live && <div class="hint">{isMobile ? 'Tap a channel to watch' : 'OK to preview · OK again for full screen'}</div>}
+          {!live && <div class="hint">{isMobile ? t('Tap a channel to watch') : t('Select a channel to preview it. Select again for full screen.')}</div>}
           {live && mode.value === 'mini' && (status.value === 'requesting' || status.value === 'loading' || status.value === 'buffering') && <div class="spinner" />}
           {live && mode.value === 'mini' && status.value === 'error' && <div class="perr">{errorMsg.value}</div>}
         </div>
         {focused && (
-          <div class="info panel">
+          <div class="info">
             <div class="title"><Logo src={focused.icon} name={focused.name} size={56} /> <span>{clean(focused.name)}</span></div>
             {epgNow?.length ? epgNow.slice(0, 2).map((p, n) => (
               <div class="prog" key={p.start}>
-                <div class="when">{n === 0 ? 'Now' : 'Next'} · {clock(p.start)}–{clock(p.stop)}</div>
+                <div class="when">{n === 0 ? t('Now') : t('Next')} · <span class="tnum">{clock(p.start)}–{clock(p.stop)}</span></div>
                 <div class="pt">{p.title}</div>
                 {n === 0 && p.desc && <div class="desc">{p.desc}</div>}
               </div>
-            )) : <div class="desc muted">No programme guide for this channel</div>}
-            <div class="keys muted"><b class="red">●</b> Favorite</div>
+            )) : <div class="desc">{t('No programme guide for this channel')}</div>}
+            <div class="keys"><span class="keydot red" />{favorites.value.has(focused.id) ? t('Remove from favourites') : t('Add to favourites')}</div>
           </div>
         )}
       </div>

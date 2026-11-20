@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Category, Item } from '@shared/protocol.ts';
 import { api, favorites, toggleFavorite, type Sort } from '../api.ts';
-import { back, push, railFocused } from '../router.ts';
+import { back, push, navFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, usePaged } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
 import { Poster, Star, clean } from '../ui/common.tsx';
 import { isMobile } from '../env.ts';
+import { IconBtn, PosterTile } from '../ui/kit.tsx';
+import { t } from '../i18n.ts';
 
 type VCat = Category & { sort?: Sort };
 const memory: Record<string, { ci: number; fi: number }> = {};
@@ -13,8 +15,8 @@ const memory: Record<string, { ci: number; fi: number }> = {};
 export function Vod({ kind }: { kind: 'movie' | 'series' }) {
   const cats = useAsync(() => api.categories(kind), [kind]);
   const all: VCat[] = useMemo(() => [
-    { id: '__added', name: '✦ Recently added', count: 0, sort: 'added' },
-    { id: '__fav', name: '★ Favorites', count: 0 },
+    { id: '__added', name: t('Recently added'), count: 0, sort: 'added' },
+    { id: '__fav', name: t('Favourites'), count: 0 },
     ...(cats.data ?? []),
   ], [cats.data]);
   const mem = memory[kind] ?? { ci: 0, fi: 0 };
@@ -43,7 +45,7 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
     return () => ro.disconnect();
   }, []);
   const colW = (gridRef.current?.clientWidth ?? 1200) / cols;
-  const rowH = Math.round(colW * 1.5 + 56);
+  const rowH = Math.round(colW * 1.5 + 64);
 
   const open = (it?: Item) => {
     if (!it) return;
@@ -52,9 +54,9 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
   };
 
   useKeys((k) => {
-    if (railFocused.value) return false;
+    if (navFocused.value) return false;
     if (zone === 'cats') {
-      if (k === 'up') { setCi((i) => Math.max(0, i - 1)); return true; }
+      if (k === 'up') { if (ci === 0) return false; setCi((i) => Math.max(0, i - 1)); return true; }
       if (k === 'down') { setCi((i) => Math.min(all.length - 1, i + 1)); return true; }
       if (k === 'right' || k === 'ok') { setZone('grid'); return true; }
       return false;
@@ -62,7 +64,7 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
     if (k === 'back') { back(); return true; }
     if (k === 'left') { if (fi % cols === 0) setZone('cats'); else setFi(fi - 1); return true; }
     if (k === 'right') { setFi(Math.min(count - 1, fi + 1)); return true; }
-    if (k === 'up') { if (fi >= cols) setFi(fi - cols); return true; }
+    if (k === 'up') { if (fi < cols) return false; setFi(fi - cols); return true; }
     if (k === 'down') { setFi(Math.min(count - 1, fi + cols)); return true; }
     if (k === 'chdown') { setFi(Math.min(count - 1, fi + cols * 3)); return true; }
     if (k === 'chup') { setFi(Math.max(0, fi - cols * 3)); return true; }
@@ -72,28 +74,26 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
   });
 
   return (
-    <div class={`vod z-${zone}`}>
-      <div class={`col cats ${zone === 'cats' && !railFocused.value ? 'active' : ''}`}>
-        <h2><button class="back-link" onClick={() => back()}>‹</button> Categories</h2>
+    <div class={`vod page z-${zone}`}>
+      <div class={`col cats ${zone === 'cats' && !navFocused.value ? 'active' : ''}`}>
+        <h1 class="screen-title"><IconBtn n="back" label={t('Back')} onClick={() => back()} />{t('Categories')}</h1>
         <VList count={all.length} rowH={52} focus={zone === 'cats' ? ci : -1} render={(i, f) => (
           <div class={`row cat ${f ? 'focus' : ''} ${i === ci ? 'sel' : ''}`} onClick={() => { setCi(i); setZone('grid'); }}>
             <span class="name">{all[i].name}</span><span class="count">{all[i].id === '__fav' ? favs.length || '' : all[i].count || ''}</span>
           </div>
         )} />
       </div>
-      <div class={`col grid ${zone === 'grid' && !railFocused.value ? 'active' : ''}`} ref={gridRef}>
-        <h2><button class="phone-back" onClick={() => setZone('cats')}>‹</button>{cat.name} <small>{count ? count.toLocaleString() : ''}</small></h2>
-        {count === 0 && (virtual || paged.ready) && <div class="empty">Nothing here yet.</div>}
+      <div class={`col grid ${zone === 'grid' && !navFocused.value ? 'active' : ''}`} ref={gridRef}>
+        <div class="col-head">
+          <button class="cat-picker" onClick={() => setZone('cats')}><span>{cat.name}</span></button>
+          <h2 class="col-title">{cat.name} <small>{count ? count.toLocaleString() : ''}</small></h2>
+        </div>
+        {count === 0 && (virtual || paged.ready) && <div class="empty">{t('Nothing here yet.')}</div>}
         <VList count={count} rowH={rowH} cols={cols} focus={zone === 'grid' ? fi : -1} onRange={(s, e) => paged.ensure(s, e)} render={(i, f) => {
           const it = get(i);
-          if (!it) return <div class="card skel" />;
-          return (
-            <div class={`card ${f ? 'focus' : ''}`} onClick={() => { setZone('grid'); setFi(i); open(it); }}>
-              <Poster item={it} w={colW > 200 ? 342 : 185} />
-              <div class="cap">{clean(it.name)} <Star id={it.id} /></div>
-              {it.rating ? <div class="rating">★ {it.rating.toFixed(1)}</div> : null}
-            </div>
-          );
+          if (!it) return <div class="tile poster skel" />;
+          return <PosterTile src={it.icon} title={clean(it.name)} sub={it.rating ? `★ ${it.rating.toFixed(1)}` : undefined} focused={f}
+            onClick={() => { setZone('grid'); setFi(i); open(it); }} />;
         }} />
       </div>
     </div>
