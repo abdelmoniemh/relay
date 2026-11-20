@@ -122,7 +122,8 @@ export class Hub {
       this.lease = { deviceId, item, position: start, duration: handedOver?.item.id === item.id ? handedOver.duration : 0, paused: false, since: this.now() };
       if (item.kind === 'live') this.deps.saveProgress(item, 0, 0);
       this.deps.log?.(`lease -> ${deviceId}: ${item.name} @${Math.round(start)}s`);
-      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item), ...(this.deps.txMode?.(item) ? { hevc: true, tx: this.deps.txMode!(item) } : {}), ...(this.deps.interlaced?.(item) ? { interlaced: true } : {}) });
+      const tx = this.deps.txMode?.(item);
+      this.sendTo(deviceId, { t: 'granted', item, startAt: start, urls: this.deps.urls(item), ...(tx ? { tx } : {}), ...(this.deps.interlaced?.(item) ? { interlaced: true } : {}) });
       this.broadcastState();
     });
   }

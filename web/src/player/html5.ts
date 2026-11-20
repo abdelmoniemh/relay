@@ -2,11 +2,8 @@ import type { LoadOpts, MediaTracks, Player, PlayerEvent } from './types.ts';
 import { isIOS } from '../env.ts';
 import { api } from '../api.ts';
 
-const HEVC_KEY = 'relay.hevc';
-const hevcIds: Set<string> = (() => { try { return new Set(JSON.parse(localStorage.getItem(HEVC_KEY) ?? '[]')); } catch { return new Set<string>(); } })();
 /** Can this browser decode HEVC itself (Safari, Chrome/Edge on Windows/Mac with a hardware decoder)? */
 const canHevc = (() => { try { return MediaSource.isTypeSupported('video/mp4; codecs="hvc1.2.4.L153.B0"') || MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90"'); } catch { return false; } })();
-const saveHevc = () => { try { localStorage.setItem(HEVC_KEY, JSON.stringify([...hevcIds].slice(-1000))); } catch {} };
 
 type TxMode = 'full' | 'audio';
 
@@ -27,6 +24,8 @@ export class Html5Player implements Player {
   /** Converted movie: media time 0 of the stream corresponds to this position in the movie. null = direct playback. */
   private txOffset: number | null = null;
   private txMode: TxMode = 'full';
+  /** This browser failed to play the original (reported with the conversion request, so the server learns it). */
+  private failed = false;
   private parked: number | null = null; // converted movie paused long enough that we released the stream
   private parkTimer: ReturnType<typeof setTimeout> | undefined;
   private audioCheck: ReturnType<typeof setTimeout> | undefined;
@@ -141,7 +140,7 @@ export class Html5Player implements Player {
   async load(urls: string[], o: LoadOpts) {
     this.stop();
     this.opts = o;
-    this.txOffset = null; this.parked = null;
+    this.txOffset = null; this.parked = null; this.failed = false;
     const gen = ++this.gen;
     if (o.live) this.armWatchdog(gen, 12_000);
     const hls = urls.find((u) => u.endsWith('.m3u8'));
@@ -150,7 +149,7 @@ export class Html5Player implements Player {
     if (o.live && ts && this.mse && !this.nativeHls) {
       // Channels we already know are HEVC go straight to the server's GPU transcode: no failed first attempt.
       // Data saver: always the server's (smaller) version.
-      const useTx = !!o.transcodeUrl && (!!o.lowData || (!canHevc && (o.hevc || (!!o.id && hevcIds.has(o.id)))) || !!o.interlaced);
+      const useTx = !!o.transcodeUrl && (!!o.lowData || (!canHevc && !!o.hevc) || !!o.interlaced);
       if (await this.mpegts(useTx ? o.transcodeUrl! : ts, gen, useTx ? undefined : o)) return;
     }
     if (o.live && this.nativeHls && o.hlsUrl && (o.hevc || o.lowData)) {
@@ -206,9 +205,10 @@ export class Html5Player implements Player {
     }, 3500);
   }
 
+  /** The original didn't play here: convert it, and tell the server (every device skips the failed try next time). */
   private toVodTranscode(mode: TxMode, at: number) {
     if (!this.opts?.transcodeUrl) return;
-    if (this.opts.id) { hevcIds.add(this.opts.id); saveHevc(); }
+    this.failed = true;
     this.cb('waiting');
     this.startVodTranscode(mode, at);
   }
@@ -223,7 +223,7 @@ export class Html5Player implements Player {
     this.txOffset = Math.max(0, Math.floor(at));
     this.parked = null;
     if (this.nativeHls) { this.releaseHls(); this.startHls(gen, this.txOffset); return; }
-    const url = `${this.opts!.transcodeUrl}&mode=${mode}&start=${this.txOffset}${this.opts!.alang ? `&alang=${encodeURIComponent(this.opts!.alang)}` : ''}`;
+    const url = `${this.opts!.transcodeUrl}&mode=${mode}&start=${this.txOffset}${this.failed ? '&failed=1' : ''}${this.opts!.alang ? `&alang=${encodeURIComponent(this.opts!.alang)}` : ''}`;
     this.mpegts(url, gen);
   }
 
@@ -336,12 +336,11 @@ export class Html5Player implements Player {
     const toTranscode = () => {
       if (switched || gen !== this.gen) return;
       switched = true;
-      if (fallback?.id) { hevcIds.add(fallback.id); saveHevc(); }
       this.cb('waiting');
       // Free the provider connection first, then let the server open its own.
       this.engine?.destroy();
       this.engine = null;
-      this.mpegts(fallback!.transcodeUrl!, gen);
+      this.mpegts(`${fallback!.transcodeUrl!}&failed=1`, gen);
     };
     p.on(mpegts.Events.ERROR, (type: string, detail: string, info: any) => {
       if (gen !== this.gen || switched) return;

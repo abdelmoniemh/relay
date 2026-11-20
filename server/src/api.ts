@@ -8,7 +8,8 @@ import type { Hub } from './hub.ts';
 import type { Provider } from './xtream.ts';
 import { kvGet, kvSet } from './db.ts';
 import { isSyncing, runSync } from './sync.ts';
-import type { Transcoder, HevcRegistry } from './transcode.ts';
+import type { Transcoder } from './transcode.ts';
+import type { MediaFacts } from './facts.ts';
 import type { EventsIndex } from './events.ts';
 import type { Prober } from './prober.ts';
 import { readFile } from 'node:fs/promises';
@@ -19,7 +20,6 @@ import type { Reminders } from './reminders.ts';
 import { pickAudio, pickSub, trackName, keyframeAt, type Tracks, type TrackStore } from './tracks.ts';
 import { vodLayout, sessionFiles, parseSubName, subName, withToken, subtitlePlaylist, subtitleSegment, masterPlaylist } from './hls.ts';
 import { rankSources } from './quality.ts';
-import { probeToSource } from './prober.ts';
 import { videoPlan, type SourceInfo } from './media.ts';
 import type { Tmdb } from './tmdb.ts';
 import type { Library } from './library.ts';
@@ -31,8 +31,8 @@ const KINDS = new Set<Kind>(['live', 'movie', 'series']);
 const isLocal = (ip: string) => ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : d; };
 
-export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void; reminders: Reminders; vodProxy: VodProxy; trackStore: TrackStore; prefetcher: Prefetcher }) {
-  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher } = ctx;
+export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; facts: MediaFacts; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void; reminders: Reminders; vodProxy: VodProxy; trackStore: TrackStore; prefetcher: Prefetcher }) {
+  const { db, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher } = ctx;
   const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.regions.join('')}`; events.invalidate(); };
   db.prepare(`DELETE FROM kv WHERE k = 'show_adult'`).run();
   catalog.regions = JSON.parse(kvGet(db, 'regions') ?? '["UK","US","CA","AR","4K"]');
@@ -196,14 +196,6 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
 
 
   /** What the prober / movie probe measured about a source: picks deinterlacing, dithering, tone mapping, audio layout. */
-  const vodProbe = db.prepare('SELECT * FROM vod_probes WHERE id = ? AND ok = 1');
-  const sourceInfo = (id: string, kind: string): SourceInfo | null => {
-    if (kind === 'live') { const sid = Number(id.slice(1)); return probeToSource(prober.results([sid]).get(sid)); }
-    const r = vodProbe.get(id) as any;
-    if (!r) return null;
-    const hdr = r.hdr === 'hdr10' || r.hdr === 'dv' ? 'pq' : r.hdr === 'hlg' ? 'hlg' : null;
-    return { vcodec: r.vcodec, width: r.width, height: r.height, hdr, bitDepth: hdr ? 10 : null, interlaced: false, acodec: r.acodec, channels: r.channels };
-  };
 
   /** Seconds of picture kept before a seek point, so going back a little after a seek needs no restart. */
   const SEEK_PREROLL = 20;
@@ -243,7 +235,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     if (kind !== 'episode' && !catalog.playable({ id, kind })) return reply.code(404).send({ error: 'not found' });
     if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
     const mode = q.mode === 'audio' ? 'audio' : 'full';
-    hevc.add(id, mode);
+    if (q.failed === '1') facts.learn(id, mode); // this browser couldn't play the original
     let cu: ReturnType<typeof catchupOf> = null;
     try { cu = kind === 'live' ? catchupOf(parseId(id).sid, q) : null; } catch (e) { return reply.code(404).send({ error: (e as Error).message }); }
     // Movies go through the local range proxy: seeks restart ffmpeg, and it makes them ~1 provider request.
@@ -256,7 +248,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const known = kind !== 'live' ? trackStore.get(id) : undefined;
     if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext)); // markers & thumbnails, once it's idle
     const audio = known && q.alang ? pickAudio(known, q.alang) : undefined;
-    try { started = await transcoder.start(src, cu ? 0 : Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live' || !!cu, mode, info: sourceInfo(id, kind), signal: ac.signal, audio, skip: cu?.skip, low: q.q === 'low' }); }
+    try { started = await transcoder.start(src, cu ? 0 : Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live' || !!cu, mode, info: facts.source(id), signal: ac.signal, audio, skip: cu?.skip, low: q.q === 'low' }); }
     catch (e) {
       if ((e as Error).message === 'superseded') return reply.code(409).send({ error: 'superseded by a newer request' });
       return reply.code(502).send({ error: `Transcode failed: ${(e as Error).message}` });
@@ -277,18 +269,6 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   // Safari plays neither MKV/AVI, a raw MPEG-TS stream, nor HEVC inside the provider's TS-based HLS (Apple only
   // takes HEVC in fMP4), but plays fMP4 HLS natively: repackage (or convert) on the fly.
   // Video codec per title, learned from earlier plays/probes; decides copy (instant, lossless) vs conversion.
-  const vcodecs = new Map<string, string | null>(Object.entries(JSON.parse(kvGet(db, 'hls_vcodecs') ?? '{}')));
-  const probedCodec = db.prepare('SELECT vcodec FROM vod_probes WHERE id = ? AND ok = 1');
-  const itemName = db.prepare('SELECT name FROM items WHERE kind = ? AND sid = ?');
-  const guessCodec = (id: string, kind: string, sid: number, ext?: string): string | null => {
-    if (vcodecs.has(id)) return vcodecs.get(id)!;
-    const probed = (probedCodec.get(id) as { vcodec: string | null } | undefined)?.vcodec;
-    if (probed) return probed;
-    // Unknown: guess from the name; ffmpeg tells startHls the truth within a second and it corrects itself.
-    if (ext === 'avi' || ext === 'flv') return null; // old Xvid/DivX era: needs converting
-    const name = (itemName.get(kind, sid) as { name: string } | undefined)?.name ?? '';
-    return /\b(x265|h\.?265|hevc|hdr|dv|2160p?|4k|uhd)\b/i.test(name) ? 'hevc' : 'h264';
-  };
   app.post('/api/hls/:id', async (req, reply) => {
     const id = String((req.params as any).id);
     const q = req.query as Record<string, string>;
@@ -301,7 +281,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const live = kind === 'live' && !cu; // a catch-up programme plays like a movie: from the start, seekable
     const src = cu ? cu.url : live ? provider.source({ id, kind }) : await vodProxy.url(provider.source({ id, kind, ext: q.ext }));
     // Live: the iPhone only asks for channels that didn't play directly, which are almost always HEVC.
-    const guess = cu ? (sourceInfo(id, kind)?.vcodec ?? 'h264') : live ? (vcodecs.get(id) ?? sourceInfo(id, kind)?.vcodec ?? 'hevc') : guessCodec(id, kind, sid, q.ext);
+    const guess = cu ? (facts.source(id)?.vcodec ?? 'h264') : facts.videoCodec(id, q.ext);
     // Movies: every audio language (iOS lists them in its menu), subtitles, the preferred ones selected.
     const tracks = kind === 'live' ? null : await tracksOf(id, src);
     if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext));
@@ -312,7 +292,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     // and tell the player where that is; it jumps to the second asked for, and short rewinds are already there.
     // Data saver: always re-encoded (720p ~3 Mbps), which also makes seeks exact without the keyframe step.
     const low = q.q === 'low';
-    const info = sourceInfo(id, kind) ?? (tracks ? { vcodec: tracks.vcodec } : null);
+    const info = facts.source(id) ?? (tracks ? { vcodec: tracks.vcodec } : null);
     const want = !live && !cu ? Math.max(0, Number(q.start) || 0) : 0;
     let from = want;
     if (want > 0 && videoPlan(tracks?.vcodec ?? guess, low) === 'copy') {
@@ -322,11 +302,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
       const r = await transcoder.startHls({ src, startAt: from > 0 ? from + 0.01 : 0, guess: tracks?.vcodec ?? guess, owner: req.deviceId, live, layout, skip: cu?.skip, low, info, log: (m) => app.log.warn(m) });
       // Really HEVC: every device now skips the failing direct attempt. (Not on a mere failure: the first try
       // often fails only because the provider still counts the previous connection.)
-      if (live && r.vcodec === 'hevc') hevc.add(id, 'full');
-      if (r.vcodec && vcodecs.get(id) !== r.vcodec) {
-        vcodecs.set(id, r.vcodec);
-        kvSet(db, 'hls_vcodecs', JSON.stringify(Object.fromEntries([...vcodecs].slice(-5000))));
-      }
+      if (live && r.vcodec === 'hevc') facts.learn(id, 'full');
       const tok = encodeURIComponent(String(q.token ?? ''));
       return {
         url: `/api/hls/${r.sid}/${r.entry}?token=${tok}${layout && defSub >= 0 && layout.subs.includes(defSub) ? `&ds=${defSub}` : ''}`,

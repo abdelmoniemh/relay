@@ -3,7 +3,7 @@
 // falls back to software x264. Only one transcode at a time: the provider allows one connection.
 import { spawn, execFileSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { transcodeArgs, inputArgs, videoArgs, videoPlan, MOBILE_H, type SourceInfo } from './media.ts';
+import { transcodeArgs, inputArgs, videoArgs, videoPlan, MOBILE_H, type SourceInfo, type TxMode } from './media.ts';
 import { sessionFiles, isSessionFile, hlsOutputArgs, type VodLayout } from './hls.ts';
 import { ProviderSlot } from './slot.ts';
 import { randomBytes } from 'node:crypto';
@@ -51,26 +51,6 @@ function detectGpu(): boolean {
     const hw = execFileSync('ffmpeg', ['-hide_banner', '-hwaccels'], { encoding: 'utf8', timeout: 5000 });
     return enc.includes('h264_nvenc') && hw.includes('cuda');
   } catch { return false; }
-}
-
-export type TxMode = 'full' | 'audio';
-
-/** Items browsers can't play directly (HEVC video / AC3-DTS audio), shared with every device so they skip the failed try. */
-export class HevcRegistry {
-  private ids: Map<string, TxMode>;
-  private save: (entries: [string, TxMode][]) => void;
-  constructor(initial: unknown, save: (entries: [string, TxMode][]) => void) {
-    // older format was a plain id list (all HEVC)
-    this.ids = new Map(Array.isArray(initial) ? initial.map((x: any): [string, TxMode] => (Array.isArray(x) ? [x[0], x[1]] : [x, 'full'])) : []);
-    this.save = save;
-  }
-  has(id: string) { return this.ids.has(id); }
-  mode(id: string): TxMode | undefined { return this.ids.get(id); }
-  add(id: string, mode: TxMode = 'full') {
-    if (this.ids.get(id) === mode || (this.ids.get(id) === 'full' && mode === 'audio')) return;
-    this.ids.set(id, mode);
-    this.save([...this.ids].slice(-5000));
-  }
 }
 
 export class Transcoder {

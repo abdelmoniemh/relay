@@ -16,7 +16,8 @@ import { Hub } from './hub.ts';
 import { registerApi } from './api.ts';
 import { scheduleSync } from './sync.ts';
 import { Provider } from './xtream.ts';
-import { Transcoder, HevcRegistry } from './transcode.ts';
+import { Transcoder } from './transcode.ts';
+import { MediaFacts } from './facts.ts';
 import { kvGet, kvSet } from './db.ts';
 import { EventsIndex } from './events.ts';
 import { Prober } from './prober.ts';
@@ -37,7 +38,6 @@ const auth = new Auth(db);
 // The provider allows one connection: everything that opens one goes through the slot.
 const slot = new ProviderSlot();
 const transcoder = new Transcoder(slot);
-const hevc = new HevcRegistry(JSON.parse(kvGet(db, 'hevc_ids') ?? '[]'), (entries) => kvSet(db, 'hevc_ids', JSON.stringify(entries)));
 process.on('exit', () => { transcoder.stop(); });
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { transcoder.stop().finally(() => process.exit(0)); });
 
@@ -76,6 +76,7 @@ const prober = new Prober(db, provider, slot, {
 });
 // Skip-intro markers and seek thumbnails for titles being watched.
 const prefetcher = new Prefetcher(config.dataDir, trackStore, slot, (m) => app.log.info(m));
+const facts = new MediaFacts(db, prober, trackStore);
 
 const hub = new Hub({
   listDevices: () => auth.devices(),
@@ -90,7 +91,7 @@ const hub = new Hub({
     await slot.clear();
     await transcoder.releaseExcept(deviceId);
   },
-  txMode: (item) => hevc.mode(item.id),
+  txMode: (item) => facts.browserNeeds(item.id),
   interlaced: (item) => item.kind === 'live' && !!prober.results([Number(item.id.slice(1))]).get(Number(item.id.slice(1)))?.interlaced,
   allowed: (item) => catalog.playable(item),
   log: (m) => app.log.info(m),
@@ -102,7 +103,7 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transpor
 await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
-registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
+registerApi(app, { db, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
 // Reminders: every open app shows it; an "auto-start" device starts playing; installed apps get a notification.
 reminders.start((r) => {
   hub.broadcast({ t: 'reminder', reminder: { id: r.id, item: r.item, title: r.title, start: r.start, stop: r.stop, eventId: r.eventId, autoplay: r.autoplay } });

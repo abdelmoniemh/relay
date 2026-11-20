@@ -351,7 +351,7 @@ onServer((m: ServerMsg) => {
       if (pending) mode.value = pending.mode;
       pending = null;
       status.value = 'loading';
-      lastUrls = m.urls; lastStart = m.startAt; lastHevc = !!m.hevc; lastTx = m.tx; lastInterlaced = !!m.interlaced; retried = false;
+      lastUrls = m.urls; lastStart = m.startAt; lastHevc = m.tx === 'full'; lastTx = m.tx; lastInterlaced = !!m.interlaced; retried = false;
       extras.value = null; creditsShown = null;
       if (item.kind === 'movie' || item.kind === 'episode') {
         api.extras(item.id).then((x) => { if (current.value?.id === item.id) extras.value = x; }).catch(() => {});
@@ -360,7 +360,7 @@ onServer((m: ServerMsg) => {
       }
       position.value = m.startAt;
       if (m.urls[0]) preconnect(m.urls[0]);
-      player.load(m.urls, loadOpts(item, m.startAt, !!m.hevc)).catch(() => {});
+      player.load(m.urls, loadOpts(item, m.startAt, m.tx === 'full')).catch(() => {});
       return;
     }
     case 'stop': {
