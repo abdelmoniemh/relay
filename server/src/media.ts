@@ -69,8 +69,6 @@ export interface TxOpts {
   dither?: Dither;
   /** Only send frames for one field-pair (25p) instead of one per field (50p) when deinterlacing. */
   deintFrame?: boolean;
-  userAgent?: string;
-  output?: string;
   /** Audio track (0-based among audio streams) to keep; default the first. */
   audio?: number;
   /** Seconds to drop from the start of the output (catch-up: the provider only starts on whole minutes). */
@@ -157,28 +155,63 @@ export function encoderArgs(p: EncoderProfile, gpu: boolean, fps: number): strin
   ];
 }
 
-export function transcodeArgs(src: string, o: TxOpts): string[] {
-  const vod = !!o.vod, mode = o.mode ?? 'full', info = o.info ?? null;
-  const p = o.profile ?? (o.maxHeight ? MOBILE : vod ? VOD : LIVE);
+/** Movies: read this many seconds ahead before settling to real time (fills the player's buffer fast). */
+export const HEAD_START_S = 45;
+
+/** Copy the video as it is (browsers/Safari decode H.264 and HEVC), or encode it. Data saver always encodes. */
+export type VideoPlan = 'copy' | 'encode';
+export const videoPlan = (vcodec: string | null | undefined, low = false): VideoPlan => (!low && (vcodec === 'h264' || vcodec === 'hevc') ? 'copy' : 'encode');
+
+export interface InputOpts {
+  vod: boolean;
+  startAt?: number;
+  /** Seconds to drop from the output's start (catch-up starts on whole minutes). */
+  skip?: number;
+  plan: VideoPlan;
+  gpu: boolean;
+  /** Report the input on stderr (the HLS start reads its codec from there). */
+  verbose?: boolean;
+  bench?: boolean;
+}
+
+/** Everything up to and including the input (plus the output-side skip). */
+export function inputArgs(src: string, o: InputOpts): string[] {
   const net = !o.bench && /^https?:/.test(src);
-  const input = [
-    '-hide_banner', '-loglevel', 'error', '-nostdin',
-    '-fflags', '+genpts+discardcorrupt',
-    ...(net ? ['-user_agent', o.userAgent ?? UA] : []),
-    ...(!vod ? ['-probesize', '2M', '-analyzeduration', '1500000'] : []), // live: start fast
-    ...(vod && !o.bench ? ['-readrate', '1', '-readrate_initial_burst', String(30 + (o.skip ?? 0))] : []), // movies: real-time after a 30s head start
-    ...(o.startAt && o.startAt > 0 ? ['-ss', String(o.startAt)] : []),
-    ...(net && vod ? ['-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4'] : []),
+  const skip = o.skip && o.skip > 0 ? o.skip : 0;
+  return [
+    '-hide_banner', '-loglevel', o.verbose ? 'info' : 'error', ...(o.verbose ? ['-nostats'] : []), '-nostdin',
+    '-fflags', '+genpts+discardcorrupt', ...(net ? ['-user_agent', UA] : []),
+    // Live: start fast; copying needs the codec parameters up front, so look a little further.
+    ...(!o.vod ? ['-probesize', o.plan === 'copy' ? '5M' : '2M', '-analyzeduration', o.plan === 'copy' ? '2000000' : '1500000'] : []),
+    ...(o.vod && !o.bench ? ['-readrate', '1', '-readrate_initial_burst', String(HEAD_START_S + skip)] : []),
+    // From the start nothing needs to jump around the file, so read it straight through. Otherwise ffmpeg peeks
+    // at the end (MKV cues, AVI index): every jump is a new provider request (measured: opening 1.5–9s → 0.5–0.8s).
+    ...(o.vod ? (o.startAt && o.startAt > 0 ? ['-ss', String(o.startAt)] : net ? ['-seekable', '0'] : []) : []),
+    ...(net && o.vod ? ['-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4'] : []),
+    ...(o.plan === 'encode' && o.gpu ? ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'] : []),
+    '-i', src,
+    ...(skip ? ['-ss', String(skip)] : []),
   ];
-  // B-frames need a little mux delay or DTS can fall behind the PCR.
-  const out = [
+}
+
+/** Video options for the plan. `container` matters for copied HEVC: MP4/fMP4 (Safari) needs Apple's hvc1 tag. */
+export function videoArgs(plan: VideoPlan, o: TxOpts & { vcodec?: string | null; container: 'mpegts' | 'fmp4' }): string[] {
+  if (plan === 'copy') return o.vcodec === 'hevc' && o.container === 'fmp4' ? ['-c:v', 'copy', '-tag:v', 'hvc1'] : ['-c:v', 'copy'];
+  const p = o.profile ?? (o.maxHeight ? MOBILE : o.vod ? VOD : LIVE);
+  return ['-vf', videoFilter(o.info, o), ...encoderArgs(p, o.gpu, outFps(o.info, o))];
+}
+
+/** Desktop browsers: one MPEG-TS stream (mpegts.js) with the picked audio track. */
+export function transcodeArgs(src: string, o: TxOpts): string[] {
+  const vod = !!o.vod, info = o.info ?? null;
+  const plan: VideoPlan = o.mode === 'audio' ? 'copy' : 'encode';
+  const p = o.profile ?? (o.maxHeight ? MOBILE : vod ? VOD : LIVE);
+  return [
+    ...inputArgs(src, { vod, startAt: o.startAt, skip: o.skip, plan, gpu: o.gpu, bench: o.bench }),
     '-map', '0:v:0', '-map', `0:a:${o.audio && o.audio > 0 ? o.audio : 0}?`,
+    ...videoArgs(plan, { ...o, container: 'mpegts' }),
     ...(o.maxHeight ? [...(vod ? [] : ['-af', 'aresample=async=1:first_pts=0']), '-c:a', 'aac', '-ac', '2', '-b:a', '128k'] : audioArgs(info, vod)),
-    '-f', 'mpegts', '-muxdelay', p.bf ? '0.2' : '0', '-muxpreload', '0', o.output ?? 'pipe:1',
+    // B-frames need a little mux delay or DTS can fall behind the PCR.
+    '-f', 'mpegts', '-muxdelay', p.bf ? '0.2' : '0', '-muxpreload', '0', 'pipe:1',
   ];
-  const skip = o.skip && o.skip > 0 ? ['-ss', String(o.skip)] : [];
-  if (mode === 'audio') return [...input, '-i', src, ...skip, '-c:v', 'copy', ...out];
-  const fps = outFps(info, o);
-  const hw = o.gpu ? ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'] : [];
-  return [...input, ...hw, '-i', src, ...skip, '-vf', videoFilter(info, o), ...encoderArgs(p, o.gpu, fps), ...out];
 }

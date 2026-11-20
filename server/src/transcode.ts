@@ -1,11 +1,10 @@
 // On-the-fly HEVC -> H.264 for browsers that can't decode HEVC (Chrome on Linux).
 // Uses NVDEC/NVENC when available (≈3x realtime on an RTX 3060 for 1080p50 10-bit, near-zero CPU),
 // falls back to software x264. Only one transcode at a time: the provider allows one connection.
-import { USER_AGENT } from './xtream.ts';
 import { spawn, execFileSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { transcodeArgs, encoderArgs, videoFilter, outFps, VOD, MOBILE, MOBILE_H, type SourceInfo } from './media.ts';
-import { sessionFiles, isSessionFile, SEGMENT_S, type VodLayout } from './hls.ts';
+import { transcodeArgs, inputArgs, videoArgs, videoPlan, MOBILE_H, type SourceInfo } from './media.ts';
+import { sessionFiles, isSessionFile, hlsOutputArgs, type VodLayout } from './hls.ts';
 import { ProviderSlot } from './slot.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -21,9 +20,29 @@ const HLS_ROOT = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), '
 /** Segments (4s each, so ≈20 min) kept behind the newest one the player asked for; seeking further back restarts. */
 const HLS_KEEP_BEHIND = 300;
 /** How each source video codec goes into HLS for Safari. */
-const hlsVideoPlan = (c: string | null) => (c === 'h264' || c === 'hevc' ? c : 'encode');
 /** No playlist/segment request for this long (app closed, phone locked): free the provider connection. */
 const HLS_IDLE_MS = 45_000;
+/** What an HLS session should play. */
+export interface HlsStart {
+  src: string;
+  /** Movies: position to start at (seconds). */
+  startAt?: number;
+  /** Expected video codec (corrected as soon as ffmpeg reports the real one). */
+  guess: string | null;
+  /** Device the session belongs to (a lease moving elsewhere stops it). */
+  owner: string | null;
+  live?: boolean;
+  /** A movie with its languages; null = one audio track, no subtitles. */
+  layout?: VodLayout | null;
+  /** Catch-up: seconds to drop from the start (the provider starts on whole minutes). */
+  skip?: number;
+  /** Data saver: always encoded, 720p ~3 Mbps. */
+  low?: boolean;
+  /** What's known about the source (deinterlacing, HDR tone mapping when encoding). */
+  info?: SourceInfo | null;
+  log?: (m: string) => void;
+}
+
 type Proc = ChildProcessByStdio<null, Readable, Readable>;
 
 function detectGpu(): boolean {
@@ -86,83 +105,22 @@ export class Transcoder {
   }
 
   /**
-   * HLS (fMP4 segments) for Safari. H.264/HEVC video is copied untouched; anything else is encoded to H.264.
-   * Audio always becomes stereo AAC (AC3/DTS/… in MKV are the usual reason a file won't play).
-   */
-  private hlsArgs(src: string, startAt: number, vcodec: string | null, gpu: boolean, dir: string, live: boolean, layout: VodLayout | null = null, skip = 0, low?: { info: SourceInfo | null }): string[] {
-    // Data saver: always re-encode, 720p ~3 Mbps (GPU decode + filters: deinterlace, HDR tone mapping, 10-bit)
-    const video = low ? ['-vf', videoFilter(low.info, { gpu, maxHeight: MOBILE_H }), ...encoderArgs(MOBILE, gpu, outFps(low.info))]
-      : vcodec === 'h264' ? ['-c:v', 'copy']
-      : vcodec === 'hevc' ? ['-c:v', 'copy', '-tag:v', 'hvc1']
-      : gpu ? [...encoderArgs({ ...VOD, gopSec: 4 }, true, 24), '-pix_fmt', 'yuv420p']
-      : ['-vf', 'scale=w=min(iw\\,1920):h=-2,format=yuv420p', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-maxrate', '12M', '-bufsize', '12M', '-g', '96'];
-    const net = /^https?:/.test(src);
-    return [
-      // 'info' so the input's codec shows up on stderr (startHls reads it instead of a separate ffprobe)
-      '-hide_banner', '-loglevel', 'info', '-nostats', '-nostdin',
-      '-fflags', '+genpts+discardcorrupt', ...(net ? ['-user_agent', USER_AGENT] : []),
-      // Live arrives in real time by itself (after the provider's backlog burst, which makes it start fast).
-      ...(live ? ['-probesize', '5M', '-analyzeduration', '2000000'] : [
-        '-readrate', '1', '-readrate_initial_burst', String(45 + skip),
-        // From the start nothing needs to jump around the file, so read it straight through. Otherwise ffmpeg
-        // peeks at the end (MKV cues, AVI index): every jump is a new provider request, and the provider is slow
-        // to answer one that follows a closed one. Measured: opening 1.5–9s → 0.5–0.8s.
-        ...(startAt > 0 ? ['-ss', String(startAt)] : ['-seekable', '0']),
-        ...(net ? ['-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4'] : []),
-      ]),
-      ...(low && gpu ? ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'] : []),
-      '-i', src,
-      ...(skip > 0 ? ['-ss', String(skip)] : []), // catch-up: from a whole minute to the second asked for
-      ...(layout ? this.vodOutputs(layout, video, dir, low ? '128k' : '192k') : this.singleOutput(video, live, dir, low ? '128k' : '192k')),
-    ];
-  }
-
-  /** Movie with every audio language as an alternate rendition, plus each text subtitle as a growing .vtt. */
-  private vodOutputs(l: VodLayout, video: string[], dir: string, abr: string): string[] {
-    const f = sessionFiles(l);
-    return [
-      '-map', '0:v:0', ...l.audio.flatMap((n) => ['-map', `0:a:${n}`]), ...video,
-      '-c:a', 'aac', '-b:a', abr, '-ac', '2', '-max_muxing_queue_size', '4096',
-      '-f', 'hls', '-hls_time', String(SEGMENT_S), '-hls_list_size', '0', '-hls_playlist_type', 'event',
-      '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
-      '-hls_segment_filename', join(dir, f.segmentPattern), '-hls_flags', 'independent_segments+temp_file',
-      '-master_pl_name', f.entry, '-var_stream_map', f.streamMap!.join(' '),
-      join(dir, f.playlistPattern),
-      // Subtitles: a second output per track, flushed cue by cue.
-      ...l.subs.flatMap((n) => ['-map', `0:s:${n}`, '-c:s', 'webvtt', '-flush_packets', '1', '-f', 'webvtt', join(dir, f.subVtt(n))]),
-    ];
-  }
-
-  private singleOutput(video: string[], live: boolean, dir: string, abr: string): string[] {
-    const f = sessionFiles(null);
-    return [
-      // Live: video optional, so a radio station that ends up here still plays.
-      '-map', live ? '0:v:0?' : '0:v:0', '-map', '0:a:0?', ...video,
-      ...(live ? ['-af', 'aresample=async=1:first_pts=0'] : []), // live: absorb provider timestamp gaps
-      '-c:a', 'aac', '-b:a', abr, '-ac', '2', '-max_muxing_queue_size', '2048',
-      '-f', 'hls', '-hls_time', String(SEGMENT_S),
-      // Movies: every segment stays listed (seekable). Live: a sliding window; ffmpeg deletes what falls out.
-      ...(live ? ['-hls_list_size', '8', '-hls_delete_threshold', '4'] : ['-hls_list_size', '0', '-hls_playlist_type', 'event']),
-      '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
-      '-hls_segment_filename', join(dir, f.segmentPattern), '-hls_flags', `independent_segments+temp_file${live ? '+delete_segments' : ''}`,
-      join(dir, f.entry),
-    ];
-  }
-
-  /**
    * Starts an HLS session; resolves once the first segment is ready to play.
    * `guess` is the expected video codec. ffmpeg reports the real one as it opens the file: if the guess
    * was wrong (e.g. HEVC copied without Apple's tag, or MPEG-4 that needs converting) it restarts right away.
    * That's much faster than a separate ffprobe, which costs an extra provider connection that the provider
    * keeps counting for a moment (so the real one then fails and has to retry).
    */
-  startHls(...a: Parameters<Transcoder['doStartHls']>) { return this.claim(() => this.doStartHls(...a)); }
-  private async doStartHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false, layout: VodLayout | null = null, skip = 0, low?: { info: SourceInfo | null }): Promise<{ sid: string; vcodec: string | null; entry: string }> {
+  startHls(o: HlsStart) { return this.claim(() => this.doStartHls(o)); }
+  private async doStartHls(o: HlsStart): Promise<{ sid: string; vcodec: string | null; entry: string }> {
+    const { src, owner, live = false, layout = null, skip = 0, low = false, info = null } = o;
+    const log = o.log ?? (() => {});
+    const startAt = live ? 0 : o.startAt ?? 0;
     const files = sessionFiles(layout);
     await this.stop();
     await Promise.all([...this.dying]);
     await this.slot.clear();
-    let vcodec = guess, lastErr = '', corrected = false;
+    let vcodec = o.guess, lastErr = '', corrected = false;
     for (let attempt = 0; attempt < 3;) {
       if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
       const t0 = Date.now();
@@ -170,7 +128,13 @@ export class Transcoder {
       const dir = join(HLS_ROOT, sid);
       mkdirSync(dir, { recursive: true });
       const gpu = this.gpu && attempt < 2;
-      const proc = spawn('ffmpeg', this.hlsArgs(src, live ? 0 : startAt, vcodec, gpu, dir, live, layout, skip, low), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
+      const plan = videoPlan(vcodec, low);
+      const args = [
+        ...inputArgs(src, { vod: !live, startAt, skip, plan, gpu, verbose: true }),
+        ...hlsOutputArgs({ layout, dir, live, abr: low ? '128k' : '192k',
+          video: videoArgs(plan, { gpu, info, vcodec, vod: !live, maxHeight: low ? MOBILE_H : undefined, container: 'fmp4' }) }),
+      ];
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
       this.current = proc; this.owner = owner;
       this.hls = { sid, dir, proc, lastHit: Date.now(), pruned: 0, layout };
       let stderr = '', head = '', detected: string | null | undefined;
@@ -184,7 +148,7 @@ export class Transcoder {
         else if (/Stream mapping|Output #0/.test(head) || head.length > 64_000) detected = null;
       });
       proc.stdout.resume();
-      const wrong = () => !low && detected != null && hlsVideoPlan(detected) !== hlsVideoPlan(vcodec); // data saver encodes anyway
+      const wrong = () => detected != null && (videoPlan(detected, low) !== videoPlan(vcodec, low) || (videoPlan(detected, low) === 'copy' && detected !== vcodec));
       try {
         await new Promise<void>((resolve, reject) => {
           const tick = setInterval(() => {
@@ -196,7 +160,7 @@ export class Transcoder {
             else if (Date.now() - t0 > 25_000) { clearInterval(tick); reject(new Error('no output after 25s')); }
           }, 100);
         });
-        const how = low ? `data saver ${gpu ? 'nvenc' : 'x264'}` : hlsVideoPlan(vcodec) === 'encode' ? (gpu ? 'nvenc' : 'x264') : `copy ${vcodec}`;
+        const how = videoPlan(vcodec, low) === 'copy' ? `copy ${vcodec}` : `${low ? 'data saver ' : ''}${gpu ? 'nvenc' : 'x264'}`;
         const langs = layout && (layout.audio.length > 1 || layout.subs.length) ? `, ${layout.audio.length} audio, ${layout.subs.length} subs` : '';
         log(`hls started in ${Date.now() - t0}ms (${live ? 'live, ' : ''}${how}${langs}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
         return { sid, vcodec: detected ?? vcodec, entry: files.entry };
@@ -240,9 +204,7 @@ export class Transcoder {
   /** Ends the HLS session if it's this one (the player stopped). */
   stopHls(sid: string) { return this.hls?.sid === sid ? this.stop() : Promise.resolve(); }
 
-  private args(src: string, gpu: boolean, startAt: number, vod: boolean, mode: TxMode, info: SourceInfo | null, audio?: number, skip?: number, maxHeight?: number): string[] {
-    return transcodeArgs(src, { gpu, startAt, vod, mode, info, audio, skip, maxHeight });
-  }
+
 
   private async claim<T>(fn: () => Promise<T>): Promise<T> {
     this.claims++;
@@ -299,7 +261,7 @@ export class Transcoder {
       if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
       if (gone()) throw new Error('superseded');
       const gpu = this.gpu && attempt < 3; // last resort: software path
-      const proc = spawn('ffmpeg', this.args(src, gpu, startAt, !!opts.vod, opts.low ? 'full' : opts.mode ?? 'full', opts.info ?? null, opts.audio, opts.skip, opts.low ? MOBILE_H : undefined), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
+      const proc = spawn('ffmpeg', transcodeArgs(src, { gpu, startAt, vod: !!opts.vod, mode: opts.low ? 'full' : opts.mode ?? 'full', info: opts.info ?? null, audio: opts.audio, skip: opts.skip, maxHeight: opts.low ? MOBILE_H : undefined }), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
       this.current = proc;
       this.owner = owner;
       let stderr = '';

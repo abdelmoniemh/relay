@@ -20,7 +20,7 @@ import { pickAudio, pickSub, trackName, keyframeAt, type Tracks, type TrackStore
 import { vodLayout, sessionFiles, parseSubName, subName, withToken, subtitlePlaylist, subtitleSegment, masterPlaylist } from './hls.ts';
 import { rankSources } from './quality.ts';
 import { probeToSource } from './prober.ts';
-import type { SourceInfo } from './media.ts';
+import { videoPlan, type SourceInfo } from './media.ts';
 import type { Tmdb } from './tmdb.ts';
 import type { Library } from './library.ts';
 import type { Letterboxd } from './letterboxd.ts';
@@ -207,7 +207,6 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
 
   /** Seconds of picture kept before a seek point, so going back a little after a seek needs no restart. */
   const SEEK_PREROLL = 20;
-  const hlsVideoPlan = (c: string | null) => (c === 'h264' || c === 'hevc' ? 'copy' : 'encode');
   const tracksOf = async (id: string, src: string): Promise<Tracks | null> => {
     const known = trackStore.get(id);
     if (known) return known;
@@ -312,14 +311,15 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     // Movies seeking: start at the keyframe ~20s before (exactly on it, so picture and subtitles share one clock),
     // and tell the player where that is; it jumps to the second asked for, and short rewinds are already there.
     // Data saver: always re-encoded (720p ~3 Mbps), which also makes seeks exact without the keyframe step.
-    const low = q.q === 'low' ? { info: sourceInfo(id, kind) ?? (tracks ? { vcodec: tracks.vcodec } : null) } : undefined;
+    const low = q.q === 'low';
+    const info = sourceInfo(id, kind) ?? (tracks ? { vcodec: tracks.vcodec } : null);
     const want = !live && !cu ? Math.max(0, Number(q.start) || 0) : 0;
     let from = want;
-    if (want > 0 && !low && hlsVideoPlan(tracks?.vcodec ?? guess) !== 'encode') {
+    if (want > 0 && videoPlan(tracks?.vcodec ?? guess, low) === 'copy') {
       try { from = await transcoder.withConnection(() => keyframeAt(src, Math.max(0, want - SEEK_PREROLL))); } catch (e) { app.log.warn(`keyframe ${id} @${want}: ${(e as Error).message.split('\n')[0]}`); }
     }
     try {
-      const r = await transcoder.startHls(src, from > 0 ? from + 0.01 : 0, tracks?.vcodec ?? guess, req.deviceId, (m) => app.log.warn(m), live, layout, cu?.skip ?? 0, low);
+      const r = await transcoder.startHls({ src, startAt: from > 0 ? from + 0.01 : 0, guess: tracks?.vcodec ?? guess, owner: req.deviceId, live, layout, skip: cu?.skip, low, info, log: (m) => app.log.warn(m) });
       // Really HEVC: every device now skips the failing direct attempt. (Not on a mere failure: the first try
       // often fails only because the provider still counts the previous connection.)
       if (live && r.vcodec === 'hevc') hevc.add(id, 'full');

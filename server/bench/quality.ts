@@ -70,7 +70,7 @@ function run(cmd: string, args: string[]): Promise<{ out: string; err: string; c
 /** Encode with exactly the production arguments, streaming to a file (measures time to first byte like the API does). */
 async function encode(clip: Clip, cand: Candidate, file: string, gpu: boolean) {
   const info = cand.info ? cand.info(clip) : clip.info;
-  const args = transcodeArgs(clip.file, { gpu, bench: true, vod: clip.vod, mode: cand.mode ?? 'full', info, profile: cand.profile, ...cand.opts, output: 'pipe:1' });
+  const args = transcodeArgs(clip.file, { gpu, bench: true, vod: clip.vod, mode: cand.mode ?? 'full', info, profile: cand.profile, ...cand.opts });
   const t0 = performance.now();
   let first = 0;
   const p = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });

@@ -99,7 +99,7 @@ test('movie session end to end: all audio languages, subtitles in sync, readable
   assert.deepEqual(layout.audio, [1, 0], 'preferred language first (it becomes the default rendition)');
 
   const tx = new Transcoder();
-  const r = await tx.startHls(mkv, 0, tracks.vcodec, null, () => {}, false, layout);
+  const r = await tx.startHls({ src: mkv, guess: tracks.vcodec, owner: null, layout });
   t.after(() => tx.stop());
   assert.equal(r.entry, 'master.m3u8');
   await new Promise((res) => setTimeout(res, 2500)); // let it write a few segments

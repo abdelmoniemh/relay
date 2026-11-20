@@ -128,3 +128,32 @@ export function masterPlaylist(pl: string, layout: VodLayout | null, ds: number,
   });
   return pl.replace(/^(#EXT-X-STREAM-INF:.*)$/m, `${media.join('\n')}\n$1,SUBTITLES="subs"`);
 }
+
+/** ffmpeg output options for a session: mapping, audio, the HLS muxer and (movies) one .vtt per subtitle track. */
+export function hlsOutputArgs(o: { layout: VodLayout | null; dir: string; live: boolean; video: string[]; abr: string }): string[] {
+  const f = sessionFiles(o.layout), at = (name: string) => `${o.dir}/${name}`;
+  const l = o.layout;
+  if (l) return [
+    '-map', '0:v:0', ...l.audio.flatMap((n) => ['-map', `0:a:${n}`]), ...o.video,
+    '-c:a', 'aac', '-b:a', o.abr, '-ac', '2', '-max_muxing_queue_size', '4096',
+    '-f', 'hls', '-hls_time', String(SEGMENT_S), '-hls_list_size', '0', '-hls_playlist_type', 'event',
+    '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
+    '-hls_segment_filename', at(f.segmentPattern), '-hls_flags', 'independent_segments+temp_file',
+    '-master_pl_name', f.entry, '-var_stream_map', f.streamMap!.join(' '),
+    at(f.playlistPattern),
+    // Subtitles: a second output per track, flushed cue by cue.
+    ...l.subs.flatMap((n) => ['-map', `0:s:${n}`, '-c:s', 'webvtt', '-flush_packets', '1', '-f', 'webvtt', at(f.subVtt(n))]),
+  ];
+  return [
+    // Live: video optional, so a radio station that ends up here still plays.
+    '-map', o.live ? '0:v:0?' : '0:v:0', '-map', '0:a:0?', ...o.video,
+    ...(o.live ? ['-af', 'aresample=async=1:first_pts=0'] : []), // live: absorb provider timestamp gaps
+    '-c:a', 'aac', '-b:a', o.abr, '-ac', '2', '-max_muxing_queue_size', '2048',
+    '-f', 'hls', '-hls_time', String(SEGMENT_S),
+    // Movies: every segment stays listed (seekable). Live: a sliding window; ffmpeg deletes what falls out.
+    ...(o.live ? ['-hls_list_size', '8', '-hls_delete_threshold', '4'] : ['-hls_list_size', '0', '-hls_playlist_type', 'event']),
+    '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
+    '-hls_segment_filename', at(f.segmentPattern), '-hls_flags', `independent_segments+temp_file${o.live ? '+delete_segments' : ''}`,
+    at(f.entry),
+  ];
+}
