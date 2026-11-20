@@ -12,6 +12,7 @@ import type { Transcoder, HevcRegistry } from './transcode.ts';
 import type { EventsIndex } from './events.ts';
 import type { Prober } from './prober.ts';
 import { readFile } from 'node:fs/promises';
+import { VodProxy } from './vodproxy.ts';
 import { rankSources } from './quality.ts';
 import { probeToSource } from './prober.ts';
 import type { SourceInfo } from './media.ts';
@@ -27,6 +28,7 @@ const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Num
 
 export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void }) {
   const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick } = ctx;
+  const vodProxy = new VodProxy((m) => app.log.warn(m));
   const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.regions.join('')}`; events.invalidate(); };
   db.prepare(`DELETE FROM kv WHERE k = 'show_adult'`).run();
   catalog.regions = JSON.parse(kvGet(db, 'regions') ?? '["UK","US","CA","AR","4K"]');
@@ -215,7 +217,8 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const mode = q.mode === 'audio' ? 'audio' : 'full';
     hevc.add(id, mode);
     const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
-    const src = kind === 'live' ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
+    // Movies go through the local range proxy: seeks restart ffmpeg, and it makes them ~1 provider request.
+    const src = kind === 'live' ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : await vodProxy.url(urls[0]);
     let started;
     // The player gave up on this request (seeked, switched, closed): don't keep starting ffmpeg for it.
     const ac = new AbortController();
@@ -263,7 +266,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const live = kind === 'live';
     const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
     // Live: one continuous MPEG-TS connection rather than the provider's HLS (a request per segment).
-    const src = live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
+    const src = live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : await vodProxy.url(urls[0]);
     // Live: the iPhone only asks for channels that didn't play directly, which are almost always HEVC.
     const guess = live ? (vcodecs.get(id) ?? sourceInfo(id, kind)?.vcodec ?? 'hevc') : guessCodec(id, kind, sid, q.ext);
     await prober.abort(); // a background probe may hold the provider connection
