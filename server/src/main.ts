@@ -15,7 +15,7 @@ import { Auth } from './auth.ts';
 import { Hub } from './hub.ts';
 import { registerApi } from './api.ts';
 import { scheduleSync } from './sync.ts';
-import { apiUrl, getJson, streamUrls, setProviderTz } from './xtream.ts';
+import { Provider } from './xtream.ts';
 import { Transcoder, HevcRegistry } from './transcode.ts';
 import { kvGet, kvSet } from './db.ts';
 import { EventsIndex } from './events.ts';
@@ -29,7 +29,7 @@ import { Library } from './library.ts';
 import { Letterboxd } from './letterboxd.ts';
 import type { Item } from '../../shared/protocol.ts';
 
-const provider = parseProvider();
+const provider = new Provider(parseProvider());
 const db = openDb(config.dbPath);
 const catalog = new Catalog(db);
 const auth = new Auth(db);
@@ -43,10 +43,10 @@ const upsertProgress = db.prepare(`INSERT INTO progress (item, json, position, d
 const getProgress = db.prepare('SELECT position, duration FROM progress WHERE item = ?');
 
 // Catch-up URLs take the provider's local time: learn its timezone (kept for offline starts; refreshed daily).
-setProviderTz(kvGet(db, 'provider_tz') ?? 'UTC');
-const loadTz = () => getJson(apiUrl(provider), 15_000)
-  .then((j: any) => { const tz = j?.server_info?.timezone; if (typeof tz === 'string' && tz) { setProviderTz(tz); kvSet(db, 'provider_tz', tz); } })
-  .catch(() => {});
+provider.timezone = kvGet(db, 'provider_tz') ?? 'UTC';
+const loadTz = () => provider.loadTimezone()
+  .then((tz) => kvSet(db, 'provider_tz', tz))
+  .catch((e) => app.log.warn(`provider timezone: ${(e as Error).message} (catch-up uses ${provider.timezone})`));
 loadTz(); setInterval(loadTz, 24 * 3600_000).unref();
 
 const reminders = new Reminders(db);
@@ -55,7 +55,7 @@ const trackStore = new TrackStore(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}'), (
 const events = new EventsIndex(db);
 const tmdb = new Tmdb(db, () => process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || kvGet(db, 'tmdb_key'), (m) => app.log.warn(m));
 const library = new Library(db, tmdb);
-library.providerInfo = (sid) => getJson(apiUrl(provider, 'get_vod_info', { vod_id: String(sid) }), 8000);
+library.providerInfo = (sid) => provider.json('get_vod_info', { vod_id: String(sid) }, 8000);
 const tmdbTick = tmdb.start(() => library.mask, () => library.invalidate());
 const letterboxd = new Letterboxd(db, () => library.invalidate());
 library.lb = letterboxd;
@@ -85,7 +85,7 @@ const hub = new Hub({
     const r = getProgress.get(item.id) as { position: number; duration: number } | undefined;
     return r && r.duration > 0 && !isFinished(r.position, r.duration) ? r.position : 0;
   },
-  urls: (item) => streamUrls(provider, item),
+  urls: (item) => provider.urls(item),
   leaseMoved: async (deviceId) => {
     // Free every server-side use of the provider connection before the new device starts.
     prefetcher.abort();

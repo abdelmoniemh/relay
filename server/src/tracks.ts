@@ -1,4 +1,5 @@
 // Audio and subtitle tracks of a movie/episode file, and choosing between them.
+import { USER_AGENT } from './xtream.ts';
 import { execFile } from 'node:child_process';
 import { lang2, sameLang } from '../../shared/domain.ts';
 
@@ -57,7 +58,7 @@ export function parseTracks(json: string): Tracks {
 /** Reads the track list (only the start of the file is needed: through the VOD proxy this is usually from memory). */
 export function probeTracks(url: string, timeoutMs = 12_000): Promise<Tracks> {
   return new Promise((resolve, reject) => {
-    execFile('ffprobe', ['-v', 'error', '-user_agent', 'Relay/1.0 (like VLC/3.0.20)', '-probesize', '2M', '-analyzeduration', '0',
+    execFile('ffprobe', ['-v', 'error', '-user_agent', USER_AGENT, '-probesize', '2M', '-analyzeduration', '0',
       '-show_chapters', '-show_entries', 'format=duration:stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,attached_pic',
       '-of', 'json', url], { timeout: timeoutMs, maxBuffer: 4 << 20 }, (err, out) => {
       if (err) return reject(err);
@@ -128,7 +129,7 @@ export function trackName(t: { lang: string | null; title: string | null }, extr
  */
 export function keyframeAt(url: string, at: number, timeoutMs = 8000): Promise<number> {
   return new Promise((resolve, reject) => {
-    execFile('ffprobe', ['-v', 'error', '-user_agent', 'Relay/1.0 (like VLC/3.0.20)', '-read_intervals', `${at}%+#1`, '-select_streams', 'v:0',
+    execFile('ffprobe', ['-v', 'error', '-user_agent', USER_AGENT, '-read_intervals', `${at}%+#1`, '-select_streams', 'v:0',
       '-show_entries', 'packet=pts_time,flags', '-of', 'csv=p=0', url], { timeout: timeoutMs }, (err, out) => {
       if (err) return reject(err);
       const line = out.split('\n').find((l) => /K/.test(l.split(',')[1] ?? '')) ?? out.split('\n')[0];

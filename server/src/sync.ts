@@ -1,7 +1,8 @@
 import { Worker } from 'node:worker_threads';
 import type { DatabaseSync } from 'node:sqlite';
 import { kvGet } from './db.ts';
-import { config, type Provider } from './config.ts';
+import { config } from './config.ts';
+import type { Provider } from './xtream.ts';
 
 type What = 'catalog' | 'live' | 'epg';
 let running: Promise<void> | null = null;
@@ -10,7 +11,7 @@ export function runSync(provider: Provider, what: What[], onLog = console.log): 
   if (running) return running;
   running = new Promise<void>((resolve, reject) => {
     const w = new Worker(new URL('./sync-worker.ts', import.meta.url), {
-      workerData: { dbPath: config.dbPath, provider, epgUrl: config.epgUrl, what },
+      workerData: { dbPath: config.dbPath, provider: provider.creds, epgUrl: config.epgUrl, what },
     });
     w.on('message', (m) => {
       if (m.log) onLog(`[sync] ${m.log}`);

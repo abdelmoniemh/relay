@@ -1,14 +1,10 @@
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-export interface Provider {
-  base: string; // e.g. http://host:port
-  user: string;
-  pass: string;
-}
+import type { ProviderCreds } from './xtream.ts';
 
 /** Accepts an Xtream-style M3U link (get.php?username=..&password=..) or explicit XTREAM_* env vars. */
-export function parseProvider(env = process.env): Provider {
+export function parseProvider(env = process.env): ProviderCreds {
   if (env.XTREAM_URL && env.XTREAM_USER && env.XTREAM_PASS) {
     return { base: env.XTREAM_URL.replace(/\/+$/, ''), user: env.XTREAM_USER, pass: env.XTREAM_PASS };
   }

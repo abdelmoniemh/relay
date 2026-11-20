@@ -12,7 +12,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 
-const UA = 'Relay/1.0 (like VLC/3.0.20)';
+import { USER_AGENT as UA } from './xtream.ts';
 /** Reads starting this close to either end of the file are metadata (MKV header/Cues, MP4 moov, AVI index). */
 const META_ZONE = 32 * 1024 * 1024;
 /** Bytes kept per metadata read. */

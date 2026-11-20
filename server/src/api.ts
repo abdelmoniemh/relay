@@ -5,8 +5,7 @@ import { Catalog, type Sort } from './catalog.ts';
 import { itemId, parseId, isVodId, displayName, FINISHED, MIN_RESUME_S } from '../../shared/domain.ts';
 import type { Auth } from './auth.ts';
 import type { Hub } from './hub.ts';
-import type { Provider } from './config.ts';
-import { apiUrl, getJson, streamUrls, catchupSource } from './xtream.ts';
+import type { Provider } from './xtream.ts';
 import { kvGet, kvSet } from './db.ts';
 import { isSyncing, runSync } from './sync.ts';
 import type { Transcoder, HevcRegistry } from './transcode.ts';
@@ -150,7 +149,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     if (!catalog.get((req.params as any).id)) return reply.code(404).send({ error: 'not found' });
     const hit = vodInfo.get(sid);
     if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.v;
-    const r = await getJson<any>(apiUrl(provider, 'get_vod_info', { vod_id: String(sid) }), 15_000);
+    const r = await provider.json<any>('get_vod_info', { vod_id: String(sid) }, 15_000);
     const i = r?.info ?? {};
     const v = {
       plot: i.plot || i.description || null, genre: i.genre || null, year: i.releasedate?.slice(0, 4) || i.year || null,
@@ -169,7 +168,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     if (kind !== 'series') return reply.code(400).send({ error: 'bad id' });
     const hit = seriesSt.get.get(sid) as { json: string; fetched: number } | undefined;
     if (hit && Date.now() - hit.fetched < 6 * 3600_000) return reply.type('application/json').send(hit.json);
-    const r = await getJson<any>(apiUrl(provider, 'get_series_info', { series_id: String(sid) }), 20_000);
+    const r = await provider.json<any>('get_series_info', { series_id: String(sid) }, 20_000);
     const parent = catalog.get(itemId('series', sid));
     const info = r?.info ?? {};
     const seasons = Object.entries<any[]>(r?.episodes ?? {})
@@ -218,7 +217,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     catch (e) { app.log.warn(`tracks ${id}: ${(e as Error).message.split('\n')[0]}`); return null; }
   };
   /** A movie/episode's file through the proxy, for the background prefetcher. */
-  const vodSrc = (id: string, ext?: string) => () => { const { kind } = parseId(id); return vodProxy.url(streamUrls(provider, { id, kind: kind ?? 'movie', name: '', ext })[0]); };
+  const vodSrc = (id: string, ext?: string) => () => { const { kind } = parseId(id); return vodProxy.url(provider.source({ id, kind: kind ?? 'movie', ext })); };
   // Catch-up: a programme from a channel's archive (?cs=<start>&ce=<stop>, unix seconds; ?start= seconds into it).
   const archiveDays = db.prepare("SELECT archive FROM items WHERE kind = 'live' AND sid = ?");
   const catchupOf = (sid: number, q: Record<string, string>) => {
@@ -227,7 +226,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const days = (archiveDays.get(sid) as { archive: number } | undefined)?.archive ?? 0;
     const now = Date.now() / 1000;
     if (!days || ce <= cs || cs > now || cs < now - days * 86400 - 600) throw new Error(days ? 'That programme is outside this channel\'s archive' : 'This channel has no catch-up');
-    return catchupSource(provider, sid, { start: cs, stop: ce }, Number(q.start) || 0, now);
+    return provider.catchup(sid, { start: cs, stop: ce }, Number(q.start) || 0, now);
   };
   // For the TV, which plays the archive stream itself (whole minutes).
   app.get('/api/catchup/:id', async (req, reply) => {
@@ -248,11 +247,10 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
     const mode = q.mode === 'audio' ? 'audio' : 'full';
     hevc.add(id, mode);
-    const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
     let cu: ReturnType<typeof catchupOf> = null;
     try { cu = kind === 'live' ? catchupOf(parseId(id).sid, q) : null; } catch (e) { return reply.code(404).send({ error: (e as Error).message }); }
     // Movies go through the local range proxy: seeks restart ffmpeg, and it makes them ~1 provider request.
-    const src = cu ? cu.url : kind === 'live' ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : await vodProxy.url(urls[0]);
+    const src = cu ? cu.url : kind === 'live' ? provider.source({ id, kind }) : await vodProxy.url(provider.source({ id, kind, ext: q.ext }));
     let started;
     // The player gave up on this request (seeked, switched, closed): don't keep starting ffmpeg for it.
     const ac = new AbortController();
@@ -304,9 +302,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     let cu: ReturnType<typeof catchupOf> = null;
     try { cu = kind === 'live' ? catchupOf(sid, q) : null; } catch (e) { return reply.code(404).send({ error: (e as Error).message }); }
     const live = kind === 'live' && !cu; // a catch-up programme plays like a movie: from the start, seekable
-    const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
-    // Live: one continuous MPEG-TS connection rather than the provider's HLS (a request per segment).
-    const src = cu ? cu.url : live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : await vodProxy.url(urls[0]);
+    const src = cu ? cu.url : live ? provider.source({ id, kind }) : await vodProxy.url(provider.source({ id, kind, ext: q.ext }));
     // Live: the iPhone only asks for channels that didn't play directly, which are almost always HEVC.
     const guess = cu ? (sourceInfo(id, kind)?.vcodec ?? 'h264') : live ? (vcodecs.get(id) ?? sourceInfo(id, kind)?.vcodec ?? 'hevc') : guessCodec(id, kind, sid, q.ext);
     await prober.abort(); // a background probe may hold the provider connection
@@ -486,7 +482,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const d = await library.detail(Number((req.params as any).tid), device(req.query as any));
     if (!d) return reply.code(404).send({ error: 'not found' });
     // Check the real quality of the movie files while nothing is playing.
-    if (d.kind === 'movie') prober.requestVod(d.versions.slice(0, 8).map((v) => ({ id: v.item.id, url: streamUrls(provider, v.item)[0] })));
+    if (d.kind === 'movie') prober.requestVod(d.versions.slice(0, 8).map((v) => ({ id: v.item.id, url: provider.source(v.item) })));
     return d;
   });
 

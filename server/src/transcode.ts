@@ -1,6 +1,7 @@
 // On-the-fly HEVC -> H.264 for browsers that can't decode HEVC (Chrome on Linux).
 // Uses NVDEC/NVENC when available (≈3x realtime on an RTX 3060 for 1080p50 10-bit, near-zero CPU),
 // falls back to software x264. Only one transcode at a time: the provider allows one connection.
+import { USER_AGENT } from './xtream.ts';
 import { spawn, execFileSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { transcodeArgs, encoderArgs, videoFilter, outFps, VOD, MOBILE, MOBILE_H, type SourceInfo } from './media.ts';
@@ -109,7 +110,7 @@ export class Transcoder {
     return [
       // 'info' so the input's codec shows up on stderr (startHls reads it instead of a separate ffprobe)
       '-hide_banner', '-loglevel', 'info', '-nostats', '-nostdin',
-      '-fflags', '+genpts+discardcorrupt', ...(net ? ['-user_agent', 'Relay/1.0 (like VLC/3.0.20)'] : []),
+      '-fflags', '+genpts+discardcorrupt', ...(net ? ['-user_agent', USER_AGENT] : []),
       // Live arrives in real time by itself (after the provider's backlog burst, which makes it start fast).
       ...(live ? ['-probesize', '5M', '-analyzeduration', '2000000'] : [
         '-readrate', '1', '-readrate_initial_burst', String(45 + skip),

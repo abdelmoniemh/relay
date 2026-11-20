@@ -3,7 +3,7 @@
 // allows one connection — and aborts instantly when someone presses play.
 import { spawn } from 'node:child_process';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Provider } from './config.ts';
+import { USER_AGENT, type Provider } from './xtream.ts';
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Probe } from './quality.ts';
@@ -126,13 +126,13 @@ export class Prober {
   private async probe(sid: number) {
     const ctl = (this.ctl = new AbortController());
     this.active = sid;
-    const url = `${this.provider.base}/live/${this.provider.user}/${this.provider.pass}/${sid}.ts`;
+    const url = this.provider.live(sid);
     const t0 = performance.now();
     const chunks: Buffer[] = [];
     let size = 0, ttfb = 0;
     const timer = setTimeout(() => ctl.abort(), CAPTURE_MS + 6000);
     try {
-      const res = await fetch(url, { signal: ctl.signal, headers: { 'user-agent': 'Relay/1.0 (like VLC/3.0.20)' } });
+      const res = await fetch(url, { signal: ctl.signal, headers: { 'user-agent': USER_AGENT } });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
       const reader = res.body.getReader();
       let first = 0;
@@ -186,7 +186,7 @@ export interface VodProbeResult { width: number | null; height: number | null; h
 /** ffprobe a remote movie file (reads the header + a little data). */
 export function probeVodUrl(url: string, signal: AbortSignal): Promise<VodProbeResult> {
   return new Promise((resolve, reject) => {
-    const p = spawn('ffprobe', ['-v', 'error', '-of', 'json', '-probesize', '5M', '-analyzeduration', '2000000', '-user_agent', 'Relay/1.0',
+    const p = spawn('ffprobe', ['-v', 'error', '-of', 'json', '-probesize', '5M', '-analyzeduration', '2000000', '-user_agent', USER_AGENT,
       '-show_entries', 'stream=codec_type,codec_name,width,height,color_transfer,channels,side_data_list:stream_tags=language', '-i', url],
       { stdio: ['ignore', 'pipe', 'pipe'] });
     const kill = () => p.kill('SIGKILL');

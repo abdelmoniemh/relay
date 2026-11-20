@@ -2,15 +2,15 @@
 // without blocking the API / WebSocket event loop. WAL keeps readers on the old snapshot until commit.
 import { parentPort, workerData } from 'node:worker_threads';
 import { openDb, kvSet } from './db.ts';
-import { apiUrl, getJson, getStream, xmltvUrl } from './xtream.ts';
+import { Provider, type ProviderCreds } from './xtream.ts';
 import { parseXmltv } from './epg.ts';
 import { channelKey, isAdultCategory, isAdultChannel, regionOf } from './normalize.ts';
 import { classify, parseTmdb, titleKey, type Lang } from './vod.ts';
-import type { Provider } from './config.ts';
 
-const { dbPath, provider, epgUrl, what } = workerData as {
-  dbPath: string; provider: Provider; epgUrl: string | null; what: Array<'catalog' | 'live' | 'epg'>;
+const { dbPath, provider: creds, epgUrl, what } = workerData as {
+  dbPath: string; provider: ProviderCreds; epgUrl: string | null; what: Array<'catalog' | 'live' | 'epg'>;
 };
+const provider = new Provider(creds);
 const db = openDb(dbPath);
 const log = (msg: string) => parentPort?.postMessage({ log: msg });
 
@@ -29,7 +29,7 @@ async function syncCatalog(only?: 'live') {
   // Download all catalogs concurrently (network-bound), import sequentially (CPU/disk-bound).
   const t0 = performance.now();
   const kinds = only ? KINDS.filter((k) => k.kind === only) : KINDS;
-  const downloads = kinds.map((k) => Promise.all([getJson<any[]>(apiUrl(provider, k.cats)), getJson<any[]>(apiUrl(provider, k.items))]));
+  const downloads = kinds.map((k) => Promise.all([provider.json<any[]>(k.cats), provider.json<any[]>(k.items)]));
   downloads.forEach((d) => d.catch(() => {}));
   for (let ki = 0; ki < kinds.length; ki++) {
     const k = kinds[ki];
@@ -188,7 +188,7 @@ async function syncEpg() {
   const used = new Set((db.prepare(`SELECT DISTINCT epg FROM items WHERE kind = 'live' AND epg IS NOT NULL`).all() as { epg: string }[]).map((r) => r.epg));
   const now = Math.floor(Date.now() / 1000);
   const ins = db.prepare('INSERT OR REPLACE INTO epg (ch, start, stop, title, descr) VALUES (?, ?, ?, ?, ?)');
-  const body = await getStream(epgUrl || xmltvUrl(provider));
+  const body = await provider.download(epgUrl || provider.xmltv());
   db.exec('BEGIN');
   try {
     db.exec('DELETE FROM epg');

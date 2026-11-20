@@ -79,7 +79,7 @@ export interface TxOpts {
   maxHeight?: number;
 }
 
-const UA = 'Relay/1.0 (like VLC/3.0.20)';
+import { USER_AGENT as UA } from './xtream.ts';
 
 /** Tallest picture we tone map in real time (see videoFilter). */
 export const HDR_MAX_H = 1440;
