@@ -6,6 +6,7 @@ import { spawn, execFileSync, type ChildProcessByStdio } from 'node:child_proces
 import type { Readable } from 'node:stream';
 import { transcodeArgs, encoderArgs, videoFilter, outFps, VOD, MOBILE, MOBILE_H, type SourceInfo } from './media.ts';
 import type { Tracks } from './tracks.ts';
+import { ProviderSlot } from './slot.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -75,6 +76,9 @@ export class Transcoder {
   private current: Proc | null = null;
   /** Device the running transcode belongs to. */
   owner: string | null = null;
+  private slot: ProviderSlot;
+  /** Starts and probes in progress: the connection counts as taken before ffmpeg even runs. */
+  private claims = 0;
   /** Killed processes that haven't exited yet: a new provider connection waits for these. */
   private dying = new Set<Promise<void>>();
   /** Bumped by every start(): an older start still retrying gives up instead of killing the newer one's process. */
@@ -83,7 +87,9 @@ export class Transcoder {
   /** Current HLS session (iPhone/iPad Safari can't play MKV/AVI, raw MPEG-TS or HEVC in TS-based HLS, but plays fMP4 HLS natively). */
   private hls: { sid: string; dir: string; proc: Proc; lastHit: number; pruned: number; layout: VodLayout | null } | null = null;
 
-  constructor() {
+  constructor(slot: ProviderSlot = new ProviderSlot()) {
+    this.slot = slot;
+    slot.hold({ active: () => !!this.current || this.claims > 0 });
     let ok = true;
     try { execFileSync('ffmpeg', ['-version'], { timeout: 5000 }); } catch { ok = false; }
     this.available = ok;
@@ -165,11 +171,13 @@ export class Transcoder {
    * That's much faster than a separate ffprobe, which costs an extra provider connection that the provider
    * keeps counting for a moment (so the real one then fails and has to retry).
    */
-  async startHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false, layout: VodLayout | null = null, skip = 0, low?: { info: SourceInfo | null }): Promise<{ sid: string; vcodec: string | null; entry: string }> {
+  startHls(...a: Parameters<Transcoder['doStartHls']>) { return this.claim(() => this.doStartHls(...a)); }
+  private async doStartHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false, layout: VodLayout | null = null, skip = 0, low?: { info: SourceInfo | null }): Promise<{ sid: string; vcodec: string | null; entry: string }> {
     const entry = layout ? 'master.m3u8' : 'index.m3u8';
     const videoPl = layout ? 'idx_v.m3u8' : 'index.m3u8';
     await this.stop();
     await Promise.all([...this.dying]);
+    await this.slot.clear();
     let vcodec = guess, lastErr = '', corrected = false;
     for (let attempt = 0; attempt < 3;) {
       if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
@@ -254,6 +262,20 @@ export class Transcoder {
     return transcodeArgs(src, { gpu, startAt, vod, mode, info, audio, skip, maxHeight });
   }
 
+  private async claim<T>(fn: () => Promise<T>): Promise<T> {
+    this.claims++;
+    try { return await fn(); }
+    finally { this.claims--; if (!this.claims && !this.current) this.slot.released(); }
+  }
+
+  /**
+   * Run `fn` with the provider connection to itself (e.g. reading a file's header before converting it):
+   * the running conversion and any background work are stopped first.
+   */
+  withConnection<T>(fn: () => Promise<T>): Promise<T> {
+    return this.claim(async () => { await this.stop(); await Promise.all([...this.dying]); await this.slot.clear(); return fn(); });
+  }
+
   /** Kills the running transcode; resolves once the process (and its provider connection) is really gone. */
   stop(): Promise<void> {
     const p = this.current;
@@ -269,7 +291,7 @@ export class Transcoder {
       setTimeout(resolve, 1000);
     }).then(cleanup);
     this.dying.add(gone);
-    gone.finally(() => this.dying.delete(gone));
+    gone.finally(() => { this.dying.delete(gone); if (!this.current && !this.claims) this.slot.released(); });
     return gone;
   }
 
@@ -282,11 +304,13 @@ export class Transcoder {
    * Starts a transcode and resolves once ffmpeg produced its first bytes (or rejects).
    * Retries briefly: right after a handoff the provider may still count the previous connection.
    */
-  async start(src: string, startAt = 0, log: (m: string) => void = () => {}, owner: string | null = null, opts: { vod?: boolean; mode?: TxMode; info?: SourceInfo | null; signal?: AbortSignal; audio?: number; skip?: number; low?: boolean } = {}): Promise<{ proc: Proc; first: Buffer }> {
+  start(...a: Parameters<Transcoder['doStart']>) { return this.claim(() => this.doStart(...a)); }
+  private async doStart(src: string, startAt = 0, log: (m: string) => void = () => {}, owner: string | null = null, opts: { vod?: boolean; mode?: TxMode; info?: SourceInfo | null; signal?: AbortSignal; audio?: number; skip?: number; low?: boolean } = {}): Promise<{ proc: Proc; first: Buffer }> {
     const my = ++this.startGen;
     const gone = () => my !== this.startGen || !!opts.signal?.aborted;
     await this.stop();
     await Promise.all([...this.dying]);
+    await this.slot.clear();
     this.owner = owner;
     let lastErr = '';
     for (let attempt = 0; attempt < 4; attempt++) {

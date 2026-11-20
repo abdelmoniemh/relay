@@ -212,8 +212,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   const tracksOf = async (id: string, src: string): Promise<Tracks | null> => {
     const known = trackStore.get(id);
     if (known) return known;
-    await transcoder.stop(); // one provider connection: the previous session must let go before we read the header
-    try { return await trackStore.probe(id, src); }
+    try { return await transcoder.withConnection(() => trackStore.probe(id, src)); }
     catch (e) { app.log.warn(`tracks ${id}: ${(e as Error).message.split('\n')[0]}`); return null; }
   };
   /** A movie/episode's file through the proxy, for the background prefetcher. */
@@ -305,7 +304,6 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const src = cu ? cu.url : live ? provider.source({ id, kind }) : await vodProxy.url(provider.source({ id, kind, ext: q.ext }));
     // Live: the iPhone only asks for channels that didn't play directly, which are almost always HEVC.
     const guess = cu ? (sourceInfo(id, kind)?.vcodec ?? 'h264') : live ? (vcodecs.get(id) ?? sourceInfo(id, kind)?.vcodec ?? 'hevc') : guessCodec(id, kind, sid, q.ext);
-    await prober.abort(); // a background probe may hold the provider connection
     // Movies: every audio language (iOS lists them in its menu), subtitles, the preferred ones selected.
     const tracks = kind === 'live' ? null : await tracksOf(id, src);
     if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext));
@@ -319,8 +317,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const want = !live && !cu ? Math.max(0, Number(q.start) || 0) : 0;
     let from = want;
     if (want > 0 && !low && hlsVideoPlan(tracks?.vcodec ?? guess) !== 'encode') {
-      await transcoder.stop();
-      try { from = await keyframeAt(src, Math.max(0, want - SEEK_PREROLL)); } catch (e) { app.log.warn(`keyframe ${id} @${want}: ${(e as Error).message.split('\n')[0]}`); }
+      try { from = await transcoder.withConnection(() => keyframeAt(src, Math.max(0, want - SEEK_PREROLL))); } catch (e) { app.log.warn(`keyframe ${id} @${want}: ${(e as Error).message.split('\n')[0]}`); }
     }
     try {
       const r = await transcoder.startHls(src, from > 0 ? from + 0.01 : 0, tracks?.vcodec ?? guess, req.deviceId, (m) => app.log.warn(m), live, layout, cu?.skip ?? 0, low);

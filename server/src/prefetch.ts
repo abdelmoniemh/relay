@@ -6,6 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { markersFrom, type Markers, type TrackStore } from './tracks.ts';
+import type { ProviderSlot, Worker } from './slot.ts';
 
 /** Sprite layout: 10×10 tiles of 160 px wide frames. */
 export const THUMB_COLS = 10, THUMB_ROWS = 10, THUMB_W = 160, THUMB_H = 90;
@@ -19,22 +20,24 @@ export interface Extras {
   thumbs: { interval: number; cols: number; rows: number; w: number; h: number } | null;
 }
 
-export class Prefetcher {
+export class Prefetcher implements Worker {
   private queue: { id: string; url: () => Promise<string> }[] = [];
   private running = false;
   private proc: ChildProcess | null = null;
   private dir: string;
   private tracks: TrackStore;
-  private canRun: () => boolean;
+  private slot: ProviderSlot;
+  private loop: Promise<void> = Promise.resolve();
   private log: (m: string) => void;
 
   private pace: number;
 
-  constructor(dataDir: string, tracks: TrackStore, canRun: () => boolean, log: (m: string) => void = () => {}, paceMs = PACE_MS) {
+  constructor(dataDir: string, tracks: TrackStore, slot: ProviderSlot, log: (m: string) => void = () => {}, paceMs = PACE_MS) {
     this.pace = paceMs;
     this.dir = join(dataDir, 'thumbs');
     mkdirSync(this.dir, { recursive: true });
-    this.tracks = tracks; this.canRun = canRun; this.log = log;
+    this.tracks = tracks; this.slot = slot; this.log = log;
+    slot.work(this);
     setInterval(() => this.kick(), 20_000).unref();
   }
 
@@ -60,13 +63,20 @@ export class Prefetcher {
   /** Resolves when the queue has been worked through (or interrupted). For tests. */
   async idle() { while (this.running) await new Promise((r) => setTimeout(r, 50)); }
 
-  /** Stop now: a stream needs the provider connection. */
-  abort() { if (this.proc && this.proc.exitCode === null) this.proc.kill('SIGKILL'); }
+  /** Stop now (a stream needs the provider connection); resolves once it's closed. */
+  async stop() {
+    this.stopping = true;
+    if (this.proc && this.proc.exitCode === null) this.proc.kill('SIGKILL');
+    await this.loop;
+    this.stopping = false;
+  }
+  private stopping = false;
+  private canRun() { return !this.stopping && this.slot.mayRun(this); }
 
-  private kick() {
+  kick() {
     if (this.running || !this.queue.length || !this.canRun()) return;
     this.running = true;
-    this.work().catch((e) => this.log(`prefetch: ${(e as Error).message}`)).finally(() => { this.running = false; });
+    this.loop = this.work().catch((e) => this.log(`prefetch: ${(e as Error).message}`)).finally(() => { this.running = false; });
   }
 
   private async work() {

@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import type { DatabaseSync } from 'node:sqlite';
 import { USER_AGENT, type Provider } from './xtream.ts';
+import type { ProviderSlot, Worker } from './slot.ts';
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Probe } from './quality.ts';
@@ -15,10 +16,10 @@ const TTL_S = 60 * 60;            // re-check after an hour
 const MAX_PER_HOUR = 240;         // be gentle with the provider
 const SAMPLES_MAX = 40;           // RELAY_SAMPLES=1 keeps the captured bytes for the quality bench (data/samples)
 
-export class Prober {
+export class Prober implements Worker {
   private db: DatabaseSync;
   private provider: Provider;
-  private canRun: () => boolean;
+  private slot: ProviderSlot;
   private urgent: number[] = [];   // user asked (event opened)
   private background: () => number[];
   private ctl: AbortController | null = null;
@@ -30,12 +31,13 @@ export class Prober {
   active: number | null = null;
   private vodQueue: { id: string; url: string }[] = [];
 
-  constructor(db: DatabaseSync, provider: Provider, opts: { canRun: () => boolean; background: () => number[]; log?: (m: string) => void }) {
-    this.db = db; this.provider = provider; this.canRun = opts.canRun; this.background = opts.background; this.log = opts.log ?? (() => {});
+  constructor(db: DatabaseSync, provider: Provider, slot: ProviderSlot, opts: { background: () => number[]; log?: (m: string) => void }) {
+    this.db = db; this.provider = provider; this.slot = slot; this.background = opts.background; this.log = opts.log ?? (() => {});
+    slot.work(this);
     this.get = db.prepare('SELECT * FROM probes WHERE sid = ?');
     this.put = db.prepare(`INSERT OR REPLACE INTO probes (sid, at, ok, width, height, fps, vcodec, acodec, kbps, ttfb_ms, backlog_s, err, interlaced, bitdepth, hdr, channels)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    setInterval(() => this.tick(), 1500).unref();
+    setInterval(() => this.kick(), 1500).unref();
   }
 
   results(sids: number[]): Map<number, Probe> {
@@ -74,13 +76,14 @@ export class Prober {
   /** Is a probe holding the provider connection right now? */
   get busy() { return !!this.running; }
 
-  /** Stop probing now; resolves when the provider connection is closed. Returns true if a probe was running. */
-  async abort(): Promise<boolean> {
-    const was = !!this.ctl;
+  /** Stop probing now; resolves when the provider connection is closed. */
+  async stop() {
+    this.stopping = true;
     this.ctl?.abort();
     await this.running?.catch(() => {});
-    return was;
+    this.stopping = false;
   }
+  private stopping = false;
 
   /** Movie/series files: read the header for real resolution, HDR, audio format and languages. */
   requestVod(list: { id: string; url: string }[]) {
@@ -90,8 +93,8 @@ export class Prober {
     this.vodQueue = this.vodQueue.slice(0, 40);
   }
 
-  private tick() {
-    if (this.running || !this.canRun()) return;
+  kick() {
+    if (this.running || !this.slot.mayRun(this)) return;
     const vod = this.vodQueue.shift();
     if (vod) {
       this.running = this.probeVod(vod.id, vod.url).finally(() => { this.running = null; this.ctl = null; });
@@ -160,7 +163,7 @@ export class Prober {
     } catch (e) {
       if (ctl.signal.aborted && !(size > 50_000) && performance.now() - t0 < CAPTURE_MS + 5900) {
         // aborted because someone pressed play: don't record a failure
-        if (!this.canRun()) { this.urgent.unshift(sid); return; }
+        if (this.stopping || !this.slot.mayRun(this)) { this.urgent.unshift(sid); return; }
       }
       const msg = (e as Error).message;
       if (!ctl.signal.aborted || msg !== 'This operation was aborted') {

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { markersFrom, TrackStore } from '../src/tracks.ts';
 import { Prefetcher } from '../src/prefetch.ts';
+import { ProviderSlot } from '../src/slot.ts';
 
 let ok = true;
 try { execFileSync('ffmpeg', ['-version']); } catch { ok = false; }
@@ -31,7 +32,9 @@ test('prefetch: tracks, chapters and a 10x10 thumbnail sprite, idle only', { ski
     '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '25', f]);
   let idle = false;
   const store = new TrackStore({}, () => {});
-  const pf = new Prefetcher(dir, store, () => idle, () => {}, 0);
+  const slot = new ProviderSlot();
+  slot.hold({ active: () => !idle }); // a stream holds the connection until `idle`
+  const pf = new Prefetcher(dir, store, slot, () => {}, 0);
   pf.want('e1', async () => f);
   await pf.idle();
   assert.equal(pf.extras('e1'), null, 'nothing while a stream is active');
