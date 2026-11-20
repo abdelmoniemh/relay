@@ -1,5 +1,6 @@
 // Movie/series browsing on top of `titles` (one row per film/show) and its versions (provider copies).
 import type { UserData } from './userdata.ts';
+import { LANG_BITS } from './vod.ts';
 import { encodeGenres, genreLike } from './genres.ts';
 import type { ProviderDetails } from './details.ts';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
@@ -8,7 +9,6 @@ import type { Tmdb } from './tmdb.ts';
 import { kvGet, kvSet } from './db.ts';
 import type { Letterboxd } from './letterboxd.ts';
 
-export const LANG_BITS: Record<string, number> = { en: 1, ar: 2, 'ar-sub': 4, other: 8 };
 const GENRE_ROWS = ['Action', 'Comedy', 'Drama', 'Thriller', 'Crime', 'Horror', 'Science Fiction', 'Animation', 'Family', 'Adventure', 'Mystery', 'Romance', 'Documentary', 'Fantasy', 'War', 'Reality', 'Kids'];
 
 export interface TitleCard {
@@ -41,19 +41,19 @@ export class Library {
   private rowCache = new Map<string, { at: number; rows: Row[] }>();
   langs: string[];
 
-  lb: Letterboxd | null = null;
+  private lb: Letterboxd;
   private wlCache: { at: number; tids: number[]; missing: { name: string; year: number | null }[]; total: number } | null = null;
   /** Provider per-film info (plot, cast, genre...) — used when TMDB has nothing yet. */
 
   private userData: UserData;
   private details: ProviderDetails;
 
-  constructor(db: DatabaseSync, tmdb: Tmdb, userData: UserData, details: ProviderDetails) {
-    this.db = db; this.tmdb = tmdb; this.userData = userData; this.details = details;
+  constructor(db: DatabaseSync, tmdb: Tmdb, userData: UserData, details: ProviderDetails, lb: Letterboxd) {
+    this.db = db; this.tmdb = tmdb; this.userData = userData; this.details = details; this.lb = lb;
     this.langs = JSON.parse(kvGet(db, 'vod_langs') ?? '["en","ar"]');
   }
 
-  get mask() { return this.langs.reduce((m, l) => m | (LANG_BITS[l] ?? 0), 0) || 1; }
+  get mask() { return this.langs.reduce((m, l) => m | (LANG_BITS[l as keyof typeof LANG_BITS] ?? 0), 0) || 1; }
   setLangs(langs: string[]) { this.langs = langs.filter((l) => l in LANG_BITS); kvSet(this.db, 'vod_langs', JSON.stringify(this.langs)); this.invalidate(); }
   invalidate() { this.rowCache.clear(); this.wlCache = null; }
 
@@ -62,7 +62,7 @@ export class Library {
   /** Watchlist films that are available here, in Letterboxd order (+ the ones that aren't). */
   private watchlistResolved() {
     if (this.wlCache && Date.now() - this.wlCache.at < 60_000) return this.wlCache;
-    const wl = this.lb?.user ? this.lb.watchlist() : [];
+    const wl = this.lb.user ? this.lb.watchlist() : [];
     const byTmdb = this.st(`SELECT tid FROM titles WHERE kind = ? AND tmdb = ? AND (lmask & ?) != 0`);
     const byName = this.st(`SELECT tid FROM titles WHERE kind = 'movie' AND year = ? AND name = ? COLLATE NOCASE AND (lmask & ?) != 0 LIMIT 1`);
     const tids: number[] = [], missing: { name: string; year: number | null }[] = [];
@@ -77,7 +77,7 @@ export class Library {
 
   /** Add watchlist/watched/new flags; watchlist titles first (stable) when `prioritize`. */
   decorate(cards: TitleCard[], prioritize = true): TitleCard[] {
-    if (!this.lb?.user) return cards;
+    if (!this.lb.user) return cards;
     const wl = new Set(this.watchlistResolved().tids);
     const watched = this.lb.watched();
     const twoWeeks = Date.now() / 1000 - 14 * 86400;
@@ -156,7 +156,8 @@ export class Library {
     const year = new Date().getFullYear();
     const add = (id: string, title: string, items: TitleCard[], more?: Record<string, string>) => { if (items.length >= 4) rows.push({ id, title, items, more }); };
     if (this.tmdb.enabled) {
-      const safe = async (w: Parameters<Tmdb['list']>[1]) => { try { return await this.tmdb.list(kind, w); } catch { return []; } };
+      // a failed list leaves its row out; Settings shows why (TMDB status)
+      const safe = async (w: Parameters<Tmdb['list']>[1]) => { try { return await this.tmdb.list(kind, w); } catch (e) { this.tmdb.lastError = (e as Error).message; return []; } };
       add('trending', 'Trending this week', this.byTmdb(kind, await safe('trending')), { sort: 'popular' });
       add('popular', 'Popular', this.byTmdb(kind, await safe('popular')), { sort: 'popular' });
       if (kind === 'movie') add('now', 'In cinemas & just released', this.byTmdb(kind, await safe('now_playing')));
@@ -185,7 +186,7 @@ export class Library {
   grid(kind: string, f: Record<string, string>, offset: number, limit: number): { items: TitleCard[]; total: number } {
     const where: string[] = [], args: unknown[] = [];
     if (f.genre) { where.push('genres LIKE ?'); args.push(genreLike(f.genre)); }
-    if (f.lang && LANG_BITS[f.lang]) { where.push('(lmask & ?) != 0'); args.push(LANG_BITS[f.lang]); }
+    if (f.lang && LANG_BITS[f.lang as keyof typeof LANG_BITS]) { where.push('(lmask & ?) != 0'); args.push(LANG_BITS[f.lang as keyof typeof LANG_BITS]); }
     if (f.year_from) { where.push('year >= ?'); args.push(Number(f.year_from)); }
     if (f.year_to) { where.push('year <= ?'); args.push(Number(f.year_to)); }
     if (f.min_rating) { where.push('rating >= ?'); args.push(Number(f.min_rating) / 2); }

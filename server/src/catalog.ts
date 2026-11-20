@@ -50,8 +50,6 @@ export class Catalog {
     return s;
   }
 
-  /** Adult content isn't stored at all; this stays as a second line of defence for old rows. */
-  private adult(alias = '') { return ` AND ${alias}adult = 0`; }
   /** SQL fragment restricting live rows to the chosen regions (values are sanitized, so they can be inlined). Empty = everything. */
   regionSql(kind: Kind | null, alias = '') {
     if (!this.regions.length || (kind && kind !== 'live')) return '';
@@ -60,11 +58,11 @@ export class Catalog {
   }
 
   categories(kind: Kind): Category[] {
-    return this.st(`SELECT id, name, count FROM categories WHERE kind = ? AND count > 0${this.adult()}${this.regionSql(kind)} ORDER BY sort`).all(kind) as unknown as Category[];
+    return this.st(`SELECT id, name, count FROM categories WHERE kind = ? AND count > 0${this.regionSql(kind)} ORDER BY sort`).all(kind) as unknown as Category[];
   }
 
   items(kind: Kind, cat: string | null, sort: Sort, offset: number, limit: number): { items: Item[]; total: number } {
-    const where = `kind = ? AND sep = 0${cat ? ' AND cat = ?' : ''}${this.adult()}${this.regionSql(kind)}`;
+    const where = `kind = ? AND sep = 0${cat ? ' AND cat = ?' : ''}${this.regionSql(kind)}`;
     const args: (string | number)[] = cat ? [kind, cat] : [kind];
     const rows = this.st(`SELECT ${COLS} FROM items WHERE ${where} ORDER BY ${ORDER[sort] ?? 'sort'} LIMIT ? OFFSET ?`).all(...args, limit, offset) as unknown as Row[];
     const total = offset === 0 && rows.length < limit ? rows.length
@@ -85,7 +83,7 @@ export class Catalog {
     if (!cur || cur.kind !== 'live') return null;
     const s = (this.st(`SELECT sort FROM items WHERE kind='live' AND sid = ?`).get(parseId(id).sid) as { sort: number }).sort;
     const cmp = dir > 0 ? '>' : '<', ord = dir > 0 ? 'ASC' : 'DESC';
-    const base = `SELECT ${COLS} FROM items WHERE kind='live' AND cat = ? AND sep = 0${this.adult()}`;
+    const base = `SELECT ${COLS} FROM items WHERE kind='live' AND cat = ? AND sep = 0${this.regionSql('live')}`;
     const r = (this.st(`${base} AND sort ${cmp} ? ORDER BY sort ${ord} LIMIT 1`).get(cur.cat ?? null, s)
       ?? this.st(`${base} ORDER BY sort ${ord} LIMIT 1`).get(cur.cat ?? null)) as Row | undefined;
     return r ? toItem(r) : null;
@@ -96,7 +94,7 @@ export class Catalog {
     if (!terms.length || terms.join('').length < 2) return [];
     const match = terms.map((t) => `"${t}"*`).join(' ');
     const sql = `SELECT ${COLS.split(', ').map((c) => 'i.' + c).join(', ')} FROM items_fts f JOIN items i ON i.rid = f.rowid
-      WHERE items_fts MATCH ? AND i.sep = 0${kind ? ' AND i.kind = ?' : ''}${this.adult('i.')}${this.regionSql(kind, 'i.')} ORDER BY rank LIMIT ?`;
+      WHERE items_fts MATCH ? AND i.sep = 0${kind ? ' AND i.kind = ?' : ''}${this.regionSql(kind, 'i.')} ORDER BY rank LIMIT ?`;
     const rows = (kind ? this.st(sql).all(match, kind, limit) : this.st(sql).all(match, limit)) as unknown as Row[];
     return rows.map(toItem);
   }
@@ -126,11 +124,11 @@ export class Catalog {
     const { sid } = parseId(id);
     const r = this.st(`SELECT fam FROM items WHERE kind = 'live' AND sid = ?`).get(sid) as { fam: number | null } | undefined;
     if (!r?.fam) { const it = this.get(id); return it ? [{ item: it, fam: -sid }] : []; }
-    const rows = this.st(`SELECT ${COLS}, fam FROM items WHERE kind = 'live' AND fam = ? AND sep = 0${this.adult()}${this.regionSql('live')} LIMIT 100`).all(r.fam) as unknown as (Row & { fam: number })[];
+    const rows = this.st(`SELECT ${COLS}, fam FROM items WHERE kind = 'live' AND fam = ? AND sep = 0${this.regionSql('live')} LIMIT 100`).all(r.fam) as unknown as (Row & { fam: number })[];
     return rows.map((x) => ({ item: toItem(x), fam: x.fam }));
   }
 
-  /** Can this item be played? Live/movies must be in the (adult-free) catalog; episodes must belong to a known series. */
+  /** Can this item be played? Live/movies must be in the catalog; episodes must belong to a known series. */
   playable(item: { id: string; kind: string; seriesId?: string | null }): boolean {
     if (item.kind === 'live' || item.kind === 'movie') return this.get(item.id) !== null;
     if (item.kind === 'episode') return !item.seriesId || this.get(item.seriesId) !== null;

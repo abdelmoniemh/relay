@@ -92,3 +92,6 @@ export const parseTmdb = (v: unknown): number | null => {
   const n = Number(String(v ?? '').trim());
   return Number.isInteger(n) && n > 0 ? n : null;
 };
+
+/** Language groups of the movie/series catalogue as bits of titles.lmask. */
+export const LANG_BITS: Record<Lang, number> = { en: 1, ar: 2, 'ar-sub': 4, other: 8 };

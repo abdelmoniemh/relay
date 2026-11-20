@@ -1,4 +1,5 @@
 // Text normalization for messy IPTV names: regions, duplicate-channel families, and sports match parsing.
+import type { Sport } from '../../shared/protocol.ts';
 
 /** "UK| SPORT ᴴᴰ" -> "UK"; "4K| ..." -> "4K"; no prefix -> null */
 export function regionOf(categoryName: string): string | null {
@@ -25,9 +26,6 @@ export function channelKey(name: string): string {
 
 // ---------------- sports ----------------
 
-export type Sport =
-  | 'football' | 'basketball' | 'american-football' | 'hockey' | 'baseball' | 'tennis' | 'darts' | 'cricket'
-  | 'rugby' | 'fighting' | 'motorsport' | 'golf' | 'snooker' | 'other';
 
 const SPORT_WORDS: [Sport, RegExp][] = [
   ['other', /\b(HANDBALL|STARLIGUE|EHF|VOLLEYBALL|VOLLEY|FUTSAL|WATER POLO|NETBALL|PADEL|BADMINTON|TABLE TENNIS|CYCLING|SKIING|ATHLETICS|SWIMMING)\b/i],

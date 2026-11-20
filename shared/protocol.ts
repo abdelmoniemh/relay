@@ -107,9 +107,10 @@ export interface RankedSource {
   fam: number;
   score: number;
   verified: boolean;
-  label: string;
+  label: string;  // "1080p50 · 8.1 Mb/s" / "HD (unverified)" / "Offline"
   dead?: boolean;
   height?: number; fps?: number; kbps?: number; hevc?: boolean; ttfb?: number; checkedAt?: number;
+  /** Interlaced source: browsers need the server's deinterlacing conversion. */
   interlaced?: boolean;
 }
 

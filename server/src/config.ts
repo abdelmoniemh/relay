@@ -26,6 +26,8 @@ export const config = {
   dbPath: resolve(dataDir, 'relay.db'),
   webDir: resolve(import.meta.dirname, '../../web/dist'),
   epgUrl: process.env.EPG_URL || null,
+  /** Letterboxd username fixed on the server (else the one set in the app). */
+  letterboxdUser: process.env.LETTERBOXD_USER || '',
   catalogRefreshHours: 12,
   epgRefreshHours: 6,
 };

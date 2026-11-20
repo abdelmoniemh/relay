@@ -85,8 +85,9 @@ export class Tmdb {
     }
   }
 
-  /** TMDB ids of a list (trending / popular / top rated / now playing), first `pages` pages. */
-  list(kind: string, which: 'trending' | 'popular' | 'top_rated' | 'now_playing' | 'on_the_air', pages = 3): Promise<number[]> {
+  /** TMDB ids of a list (first 3 pages). */
+  list(kind: string, which: 'trending' | 'popular' | 'now_playing'): Promise<number[]> {
+    const pages = 3;
     const t = tk(kind);
     return this.cached(`list:${which}:${t}`, 6 * 3600, async () => {
       const ids: number[] = [];
@@ -178,4 +179,3 @@ export class Tmdb {
   }
 }
 
-export const tmdbImg = (path: string | null, size = 'w342') => (path ? `${IMG}${size}${path}` : null);

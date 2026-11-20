@@ -57,10 +57,9 @@ const trackStore = new TrackStore(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}'), (
 const events = new EventsIndex(db, catalog);
 const tmdb = new Tmdb(db, process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || null, (m) => app.log.warn(m));
 const details = new ProviderDetails(db, provider, catalog);
-const library = new Library(db, tmdb, userData, details);
-const tmdbTick = tmdb.start(() => library.mask, () => library.invalidate());
 const letterboxd = new Letterboxd(db, () => library.invalidate());
-library.lb = letterboxd;
+const library = new Library(db, tmdb, userData, details, letterboxd);
+const tmdbTick = tmdb.start(() => library.mask, () => library.invalidate());
 const lbTick = letterboxd.start();
 // Background quality checks: sources of live/soon events first, football first.
 const prober = new Prober(db, provider, slot, {

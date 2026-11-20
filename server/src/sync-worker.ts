@@ -6,7 +6,7 @@ import { Provider, type ProviderCreds } from './xtream.ts';
 import { encodeGenres } from './genres.ts';
 import { parseXmltv } from './epg.ts';
 import { channelKey, isAdultCategory, isAdultChannel, regionOf } from './normalize.ts';
-import { classify, parseTmdb, titleKey, type Lang } from './vod.ts';
+import { classify, parseTmdb, titleKey, LANG_BITS } from './vod.ts';
 
 const { dbPath, provider: creds, epgUrl, what } = workerData as {
   dbPath: string; provider: ProviderCreds; epgUrl: string | null; what: Array<'catalog' | 'live' | 'epg'>;
@@ -38,6 +38,10 @@ async function syncCatalog(only?: 'live') {
     const t1 = performance.now();
     db.exec('BEGIN');
     try {
+      // A provider hiccup can return a fraction of the catalogue: keep what we have rather than lose it (and with it
+      // the favourites and progress of everything "missing").
+      const had = (db.prepare('SELECT count(*) AS n FROM items WHERE kind = ?').get(k.kind) as { n: number }).n;
+      if (had > 1000 && items.length < had / 2) throw new Error(`${k.kind}: the provider sent ${items.length} items (had ${had}); keeping the current catalogue`);
       db.prepare('DELETE FROM categories WHERE kind = ?').run(k.kind);
       db.prepare('DELETE FROM items WHERE kind = ?').run(k.kind);
       // Adult content is never stored: flagged items, adult categories, and known adult live channels.
@@ -58,8 +62,7 @@ async function syncCatalog(only?: 'live') {
           k.kind === 'series' ? seriesMeta(x) : k.kind === 'movie' && x.trailer ? JSON.stringify({ trailer: x.trailer }) : null,
         );
       }
-      db.prepare(`UPDATE categories SET count = (SELECT count(*) FROM items i WHERE i.kind = categories.kind AND i.cat = categories.id AND i.sep = 0),
-        adult = EXISTS (SELECT 1 FROM items i WHERE i.kind = categories.kind AND i.cat = categories.id AND i.adult = 1)
+      db.prepare(`UPDATE categories SET count = (SELECT count(*) FROM items i WHERE i.kind = categories.kind AND i.cat = categories.id AND i.sep = 0)
         WHERE kind = ?`).run(k.kind);
       assignRegions(k.kind);
       purgeLibrary();
@@ -91,7 +94,6 @@ function seriesMeta(x: any): string | null {
   return Object.keys(m).length ? JSON.stringify(m) : null;
 }
 
-const LANG_BIT: Record<Lang, number> = { en: 1, ar: 2, 'ar-sub': 4, other: 8 };
 
 /** Classify every movie/series copy and merge copies into titles (by TMDB id, else name + year). */
 function buildTitles(kind: string) {
@@ -116,7 +118,7 @@ function buildTitles(kind: string) {
     if (!g.year && v.year) g.year = v.year;
     if (r.rating > g.rating) g.rating = r.rating;
     if (r.added > g.added) g.added = r.added;
-    g.lmask |= LANG_BIT[v.lang];
+    g.lmask |= LANG_BITS[v.lang];
     if (v.uhd && (v.lang === 'en' || v.lang === 'ar')) g.uhd = 1;
     g.nver++;
     if (v.top250 && (!g.top250 || v.top250 < g.top250)) g.top250 = v.top250;
@@ -189,7 +191,8 @@ function assignFamilies() {
 
 async function syncEpg() {
   const t0 = performance.now();
-  const used = new Set((db.prepare(`SELECT DISTINCT epg FROM items WHERE kind = 'live' AND epg IS NOT NULL`).all() as { epg: string }[]).map((r) => r.epg));
+  // guide channel ids match case-insensitively (providers mix "BBC1.uk" and "bbc1.uk")
+  const used = new Set((db.prepare(`SELECT DISTINCT epg FROM items WHERE kind = 'live' AND epg IS NOT NULL`).all() as { epg: string }[]).map((r) => r.epg.toLowerCase()));
   const now = Math.floor(Date.now() / 1000);
   const ins = db.prepare('INSERT OR REPLACE INTO epg (ch, start, stop, title, descr) VALUES (?, ?, ?, ?, ?)');
   const body = await provider.download(epgUrl || provider.xmltv());
@@ -197,7 +200,7 @@ async function syncEpg() {
   try {
     db.exec('DELETE FROM epg');
     const n = await parseXmltv(body, (r) => ins.run(r.ch, r.start, r.stop, r.title, r.desc ?? null), {
-      from: now - 36 * 3600, to: now + 3 * 86400, keep: used.size ? (ch) => used.has(ch) : undefined,
+      from: now - 36 * 3600, to: now + 3 * 86400, keep: used.size ? (ch) => used.has(ch.toLowerCase()) : undefined,
     });
     db.exec('COMMIT');
     log(`epg: ${n} programmes for ${used.size} channels in ${((performance.now() - t0) / 1000).toFixed(1)}s`);

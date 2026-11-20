@@ -2,6 +2,7 @@
 //  - watchlist: the member's public watchlist pages (28 films/page), each film's TMDB id looked up once and cached
 //  - watched + ratings: the member's public diary RSS (includes TMDB ids)
 // Requests are slow and sparse (≈1 every 1.5s, hourly), and only happen when a username is set.
+import { config } from './config.ts';
 import type { DatabaseSync } from 'node:sqlite';
 import { kvGet, kvSet } from './db.ts';
 
@@ -58,8 +59,8 @@ export class Letterboxd {
   }
 
   /** Username from config (LETTERBOXD_USER in server/.env) wins; otherwise the one set in the app's Settings. */
-  get user() { return Letterboxd.clean(process.env.LETTERBOXD_USER ?? '') || kvGet(this.db, 'lb_user') || ''; }
-  get fromConfig() { return !!Letterboxd.clean(process.env.LETTERBOXD_USER ?? ''); }
+  get user() { return Letterboxd.clean(config.letterboxdUser) || kvGet(this.db, 'lb_user') || ''; }
+  get fromConfig() { return !!Letterboxd.clean(config.letterboxdUser); }
   static clean(u: string) { return u.trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?letterboxd\.com\//, '').replace(/\/.*$/, '').toLowerCase(); }
   setUser(u: string | null) {
     if (this.fromConfig) return this.user; // configured in server/.env: change it there

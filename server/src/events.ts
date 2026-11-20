@@ -5,23 +5,14 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Item } from '../../shared/protocol.ts';
-import { EURO_FOOTBALL, implausibleKickoff, matchKey, parseMatch, sportOf, zonedToUnix, type Sport } from './normalize.ts';
+import { EURO_FOOTBALL, implausibleKickoff, matchKey, parseMatch, sportOf, zonedToUnix } from './normalize.ts';
 import { toItem, type Catalog } from './catalog.ts';
-import { rankSources, type Probe, type RankedSource } from './quality.ts';
+import { rankSources, type Probe } from './quality.ts';
+import type * as Shared from '../../shared/protocol.ts';
+import type { Sport } from '../../shared/protocol.ts';
 
-export interface SportEvent {
-  id: string;
-  title: string;
-  home: string;
-  away: string;
-  competition: string | null;
-  sport: Sport;
-  start: number | null; // unix seconds; null = unknown (event channel without a time)
-  stop: number | null;
-  status: 'live' | 'upcoming' | 'unknown';
-  offline?: boolean; // every verified source is dead/placeholder
-  sources: RankedSource[];
-}
+/** An event as the index builds it (the API adds the source count). */
+export type SportEvent = Omit<Shared.SportEvent, 'sourceCount'>;
 
 interface Row { sid: number; name: string; icon: string | null; cat: string | null; epg: string | null; ext: string | null; rating: number | null; archive: number; fam: number | null; region: string | null; catname: string | null }
 interface Airing { implausible?: boolean; key: string; home: string; away: string; competition: string | null; sport: Sport; start: number | null; stop: number | null; live: boolean; famIds: Set<number>; sids: Set<number> }
@@ -55,7 +46,7 @@ export class EventsIndex {
     const db = this.db;
     const rows = db.prepare(`SELECT i.sid, i.name, i.icon, i.cat, i.epg, i.ext, i.rating, i.archive, i.fam, i.region, c.name AS catname
       FROM items i LEFT JOIN categories c ON c.kind = 'live' AND c.id = i.cat
-      WHERE i.kind = 'live' AND i.sep = 0 AND i.adult = 0${this.catalog.regionSql('live', 'i.')}`).all() as unknown as Row[];
+      WHERE i.kind = 'live' AND i.sep = 0${this.catalog.regionSql('live', 'i.')}`).all() as unknown as Row[];
 
     // family -> members, family -> dominant EPG id (majority vote; providers mislabel single copies)
     const fams = new Map<number, Row[]>();

@@ -1,5 +1,5 @@
 // Ranking stream copies by *measured* quality (falls back to what the name claims, marked unverified).
-import type { Item } from '../../shared/protocol.ts';
+import type { Item, RankedSource } from '../../shared/protocol.ts';
 
 export interface Probe {
   sid: number; at: number; ok: number; width: number | null; height: number | null; fps: number | null;
@@ -7,17 +7,6 @@ export interface Probe {
   interlaced?: number | null; bitdepth?: number | null; hdr?: string | null; channels?: number | null;
 }
 
-export interface RankedSource {
-  item: Item;
-  fam: number;
-  score: number;
-  verified: boolean;
-  label: string;  // "1080p50 · 8.1 Mb/s" / "HD (unverified)" / "Offline"
-  dead?: boolean;
-  height?: number; fps?: number; kbps?: number; hevc?: boolean; ttfb?: number; checkedAt?: number;
-  /** Interlaced source: browsers need the server's deinterlacing conversion. */
-  interlaced?: boolean;
-}
 
 const FRESH_S = 3 * 3600;
 /** A "live" stream replaying minutes of backlog is a looping slate ("no event", "coming soon"), not a broadcast. */
