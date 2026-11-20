@@ -98,7 +98,7 @@ export class Transcoder {
    * HLS (fMP4 segments) for Safari. H.264/HEVC video is copied untouched; anything else is encoded to H.264.
    * Audio always becomes stereo AAC (AC3/DTS/… in MKV are the usual reason a file won't play).
    */
-  private hlsArgs(src: string, startAt: number, vcodec: string | null, gpu: boolean, dir: string, live: boolean, layout: VodLayout | null = null): string[] {
+  private hlsArgs(src: string, startAt: number, vcodec: string | null, gpu: boolean, dir: string, live: boolean, layout: VodLayout | null = null, skip = 0): string[] {
     const video = vcodec === 'h264' ? ['-c:v', 'copy']
       : vcodec === 'hevc' ? ['-c:v', 'copy', '-tag:v', 'hvc1']
       : gpu ? [...encoderArgs({ ...VOD, gopSec: 4 }, true, 24), '-pix_fmt', 'yuv420p']
@@ -110,7 +110,7 @@ export class Transcoder {
       '-fflags', '+genpts+discardcorrupt', ...(net ? ['-user_agent', 'Relay/1.0 (like VLC/3.0.20)'] : []),
       // Live arrives in real time by itself (after the provider's backlog burst, which makes it start fast).
       ...(live ? ['-probesize', '5M', '-analyzeduration', '2000000'] : [
-        '-readrate', '1', '-readrate_initial_burst', '45',
+        '-readrate', '1', '-readrate_initial_burst', String(45 + skip),
         // From the start nothing needs to jump around the file, so read it straight through. Otherwise ffmpeg
         // peeks at the end (MKV cues, AVI index): every jump is a new provider request, and the provider is slow
         // to answer one that follows a closed one. Measured: opening 1.5–9s → 0.5–0.8s.
@@ -118,6 +118,7 @@ export class Transcoder {
         ...(net ? ['-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4'] : []),
       ]),
       '-i', src,
+      ...(skip > 0 ? ['-ss', String(skip)] : []), // catch-up: from a whole minute to the second asked for
       ...(layout ? this.vodOutputs(layout, video, dir) : this.singleOutput(video, live, dir)),
     ];
   }
@@ -159,7 +160,7 @@ export class Transcoder {
    * That's much faster than a separate ffprobe, which costs an extra provider connection that the provider
    * keeps counting for a moment (so the real one then fails and has to retry).
    */
-  async startHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false, layout: VodLayout | null = null): Promise<{ sid: string; vcodec: string | null; entry: string }> {
+  async startHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false, layout: VodLayout | null = null, skip = 0): Promise<{ sid: string; vcodec: string | null; entry: string }> {
     const entry = layout ? 'master.m3u8' : 'index.m3u8';
     const videoPl = layout ? 'idx_v.m3u8' : 'index.m3u8';
     await this.stop();
@@ -172,7 +173,7 @@ export class Transcoder {
       const dir = join(HLS_ROOT, sid);
       mkdirSync(dir, { recursive: true });
       const gpu = this.gpu && attempt < 2;
-      const proc = spawn('ffmpeg', this.hlsArgs(src, live ? 0 : startAt, vcodec, gpu, dir, live, layout), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
+      const proc = spawn('ffmpeg', this.hlsArgs(src, live ? 0 : startAt, vcodec, gpu, dir, live, layout, skip), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
       this.current = proc; this.owner = owner;
       this.hls = { sid, dir, proc, lastHit: Date.now(), pruned: 0, layout };
       let stderr = '', head = '', detected: string | null | undefined;
@@ -244,8 +245,8 @@ export class Transcoder {
   /** Ends the HLS session if it's this one (the player stopped). */
   stopHls(sid: string) { return this.hls?.sid === sid ? this.stop() : Promise.resolve(); }
 
-  private args(src: string, gpu: boolean, startAt: number, vod: boolean, mode: TxMode, info: SourceInfo | null, audio?: number): string[] {
-    return transcodeArgs(src, { gpu, startAt, vod, mode, info, audio });
+  private args(src: string, gpu: boolean, startAt: number, vod: boolean, mode: TxMode, info: SourceInfo | null, audio?: number, skip?: number): string[] {
+    return transcodeArgs(src, { gpu, startAt, vod, mode, info, audio, skip });
   }
 
   /** Kills the running transcode; resolves once the process (and its provider connection) is really gone. */
@@ -276,7 +277,7 @@ export class Transcoder {
    * Starts a transcode and resolves once ffmpeg produced its first bytes (or rejects).
    * Retries briefly: right after a handoff the provider may still count the previous connection.
    */
-  async start(src: string, startAt = 0, log: (m: string) => void = () => {}, owner: string | null = null, opts: { vod?: boolean; mode?: TxMode; info?: SourceInfo | null; signal?: AbortSignal; audio?: number } = {}): Promise<{ proc: Proc; first: Buffer }> {
+  async start(src: string, startAt = 0, log: (m: string) => void = () => {}, owner: string | null = null, opts: { vod?: boolean; mode?: TxMode; info?: SourceInfo | null; signal?: AbortSignal; audio?: number; skip?: number } = {}): Promise<{ proc: Proc; first: Buffer }> {
     const my = ++this.startGen;
     const gone = () => my !== this.startGen || !!opts.signal?.aborted;
     await this.stop();
@@ -287,7 +288,7 @@ export class Transcoder {
       if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
       if (gone()) throw new Error('superseded');
       const gpu = this.gpu && attempt < 3; // last resort: software path
-      const proc = spawn('ffmpeg', this.args(src, gpu, startAt, !!opts.vod, opts.mode ?? 'full', opts.info ?? null, opts.audio), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
+      const proc = spawn('ffmpeg', this.args(src, gpu, startAt, !!opts.vod, opts.mode ?? 'full', opts.info ?? null, opts.audio, opts.skip), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
       this.current = proc;
       this.owner = owner;
       let stderr = '';

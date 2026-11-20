@@ -18,6 +18,8 @@ export interface Item {
   season?: number | null;
   episode?: number | null;
   duration?: number | null; // seconds (movies/episodes), when known
+  /** Live channel played from its archive: this programme (unix seconds), from its start. */
+  catchup?: { start: number; stop: number; title?: string } | null;
 }
 
 export interface Category {

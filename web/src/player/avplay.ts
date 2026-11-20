@@ -18,11 +18,17 @@ export class AvPlayer implements Player {
 
   private state(): string { try { return this.av.getState(); } catch { return 'NONE'; } }
 
+  /** Catch-up: the archive stream can't seek, so seeking reopens it from that point; positions count from `base`. */
+  private catchup: { urls: string[]; opts: LoadOpts } | null = null;
+  private base = 0;
+
   async load(urls: string[], o: LoadOpts) {
     this.stop();
     const gen = ++this.gen;
+    this.catchup = o.catchupUrl ? { urls, opts: o } : null;
+    this.base = o.catchupUrl ? Math.max(0, Math.floor(o.startAt)) : 0;
     // TS for live: the hardware demuxer starts instantly without waiting for an HLS segment.
-    const url = o.live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
+    const url = o.catchupUrl ? `${o.catchupUrl}&start=${this.base}` : o.live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
     const av = this.av;
     av.open(url);
     av.setListener({
@@ -39,7 +45,7 @@ export class AvPlayer implements Player {
     await new Promise<void>((resolve, reject) => av.prepareAsync(resolve, reject)).catch((e) => { if (gen === this.gen) this.cb('error', String(e)); throw e; });
     if (gen !== this.gen) return;
     if (!o.live && o.alang) this.pickAudio(o.alang);
-    if (o.startAt > 0) await new Promise<void>((r) => av.seekTo(o.startAt * 1000, r, r));
+    if (o.startAt > 0 && !o.catchupUrl) await new Promise<void>((r) => av.seekTo(o.startAt * 1000, r, r));
     av.play();
     this.isPaused = false;
     this.cb('playing');
@@ -69,13 +75,19 @@ export class AvPlayer implements Player {
 
   play() { try { this.av.play(); this.isPaused = false; this.cb('playing'); } catch {} }
   pause() { try { this.av.pause(); this.isPaused = true; this.cb('paused'); } catch {} }
-  seek(t: number) { try { this.av.seekTo(Math.max(0, t) * 1000, () => this.cb('time'), () => {}); } catch {} }
+  seek(t: number) {
+    if (this.catchup) { const c = this.catchup; this.cb('waiting'); this.load(c.urls, { ...c.opts, startAt: Math.max(0, t) }).catch(() => {}); return; }
+    try { this.av.seekTo(Math.max(0, t) * 1000, () => this.cb('time'), () => {}); } catch {}
+  }
   stop() {
     this.gen++;
     try { const s = this.state(); if (s !== 'NONE' && s !== 'IDLE') this.av.stop(); this.av.close(); } catch {}
   }
-  position() { try { return this.av.getCurrentTime() / 1000; } catch { return 0; } }
-  duration() { try { const d = this.av.getDuration() / 1000; return d > 0 && d < 1e6 ? d : 0; } catch { return 0; } }
+  position() { try { return this.base + this.av.getCurrentTime() / 1000; } catch { return this.base; } }
+  duration() {
+    if (this.catchup?.opts.duration) return this.catchup.opts.duration;
+    try { const d = this.av.getDuration() / 1000; return d > 0 && d < 1e6 ? d : 0; } catch { return 0; }
+  }
   paused() { return this.isPaused; }
   setVolume(d: number | 'mute') {
     const a = window.tizen?.tvaudiocontrol;

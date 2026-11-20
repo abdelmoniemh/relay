@@ -14,7 +14,7 @@ import { Auth } from './auth.ts';
 import { Hub } from './hub.ts';
 import { registerApi } from './api.ts';
 import { scheduleSync } from './sync.ts';
-import { apiUrl, getJson, streamUrls } from './xtream.ts';
+import { apiUrl, getJson, streamUrls, setProviderTz } from './xtream.ts';
 import { Transcoder, HevcRegistry } from './transcode.ts';
 import { kvGet, kvSet } from './db.ts';
 import { EventsIndex } from './events.ts';
@@ -36,6 +36,13 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { transc
 const upsertProgress = db.prepare(`INSERT INTO progress (item, json, position, duration, updated, series) VALUES (?, ?, ?, ?, ?, ?)
   ON CONFLICT(item) DO UPDATE SET json = excluded.json, position = excluded.position, duration = excluded.duration, updated = excluded.updated`);
 const getProgress = db.prepare('SELECT position, duration FROM progress WHERE item = ?');
+
+// Catch-up URLs take the provider's local time: learn its timezone (kept for offline starts; refreshed daily).
+setProviderTz(kvGet(db, 'provider_tz') ?? 'UTC');
+const loadTz = () => getJson(apiUrl(provider), 15_000)
+  .then((j: any) => { const tz = j?.server_info?.timezone; if (typeof tz === 'string' && tz) { setProviderTz(tz); kvSet(db, 'provider_tz', tz); } })
+  .catch(() => {});
+loadTz(); setInterval(loadTz, 24 * 3600_000).unref();
 
 const events = new EventsIndex(db);
 const tmdb = new Tmdb(db, () => process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || kvGet(db, 'tmdb_key'), (m) => app.log.warn(m));

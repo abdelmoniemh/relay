@@ -5,7 +5,7 @@ import { Catalog, itemId, parseId, type Sort } from './catalog.ts';
 import type { Auth } from './auth.ts';
 import type { Hub } from './hub.ts';
 import type { Provider } from './config.ts';
-import { apiUrl, getJson, streamUrls } from './xtream.ts';
+import { apiUrl, getJson, streamUrls, catchupSource } from './xtream.ts';
 import { kvGet, kvSet } from './db.ts';
 import { isSyncing, runSync } from './sync.ts';
 import type { Transcoder, HevcRegistry } from './transcode.ts';
@@ -221,6 +221,25 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
       return t;
     } catch (e) { app.log.warn(`tracks ${id}: ${(e as Error).message.split('\n')[0]}`); return null; }
   };
+  // Catch-up: a programme from a channel's archive (?cs=<start>&ce=<stop>, unix seconds; ?start= seconds into it).
+  const archiveDays = db.prepare("SELECT archive FROM items WHERE kind = 'live' AND sid = ?");
+  const catchupOf = (sid: number, q: Record<string, string>) => {
+    const cs = Number(q.cs), ce = Number(q.ce);
+    if (!cs || !ce) return null;
+    const days = (archiveDays.get(sid) as { archive: number } | undefined)?.archive ?? 0;
+    const now = Date.now() / 1000;
+    if (!days || ce <= cs || cs > now || cs < now - days * 86400 - 600) throw new Error(days ? 'That programme is outside this channel\'s archive' : 'This channel has no catch-up');
+    return catchupSource(provider, sid, { start: cs, stop: ce }, Number(q.start) || 0, now);
+  };
+  // For the TV, which plays the archive stream itself (whole minutes).
+  app.get('/api/catchup/:id', async (req, reply) => {
+    const id = String((req.params as any).id).replace(/\.ts$/, '');
+    const { kind, sid } = parseId(id);
+    if (kind !== 'live') return reply.code(400).send({ error: 'bad id' });
+    try { const c = catchupOf(sid, req.query as Record<string, string>); return c ? reply.redirect(c.url) : reply.code(400).send({ error: 'cs/ce required' }); }
+    catch (e) { return reply.code(404).send({ error: (e as Error).message }); }
+  });
+
   // HEVC -> H.264 stream for browsers without an HEVC decoder. Raw MPEG-TS, consumed by mpegts.js.
   app.get('/api/transcode/:id', async (req, reply) => {
     const id = String((req.params as any).id).replace(/\.ts$/, '');
@@ -232,8 +251,10 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const mode = q.mode === 'audio' ? 'audio' : 'full';
     hevc.add(id, mode);
     const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
+    let cu: ReturnType<typeof catchupOf> = null;
+    try { cu = kind === 'live' ? catchupOf(parseId(id).sid, q) : null; } catch (e) { return reply.code(404).send({ error: (e as Error).message }); }
     // Movies go through the local range proxy: seeks restart ffmpeg, and it makes them ~1 provider request.
-    const src = kind === 'live' ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : await vodProxy.url(urls[0]);
+    const src = cu ? cu.url : kind === 'live' ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : await vodProxy.url(urls[0]);
     let started;
     // The player gave up on this request (seeked, switched, closed): don't keep starting ffmpeg for it.
     const ac = new AbortController();
@@ -241,7 +262,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     // Movies: the preferred audio language when the file's track list is known (from an earlier play).
     const known = kind !== 'live' ? trackCache.get(id) : undefined;
     const audio = known && q.alang ? pickAudio(known, q.alang) : undefined;
-    try { started = await transcoder.start(src, Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live', mode, info: sourceInfo(id, kind), signal: ac.signal, audio }); }
+    try { started = await transcoder.start(src, cu ? 0 : Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live' || !!cu, mode, info: sourceInfo(id, kind), signal: ac.signal, audio, skip: cu?.skip }); }
     catch (e) {
       if ((e as Error).message === 'superseded') return reply.code(409).send({ error: 'superseded by a newer request' });
       return reply.code(502).send({ error: `Transcode failed: ${(e as Error).message}` });
@@ -281,20 +302,22 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     if (kind !== 'movie' && kind !== 'episode' && kind !== 'live') return reply.code(400).send({ error: 'bad id' });
     if (kind !== 'episode' && !catalog.playable({ id, kind })) return reply.code(404).send({ error: 'not found' });
     if (!transcoder.available) return reply.code(501).send({ error: 'ffmpeg is not installed on the server' });
-    const live = kind === 'live';
+    let cu: ReturnType<typeof catchupOf> = null;
+    try { cu = kind === 'live' ? catchupOf(sid, q) : null; } catch (e) { return reply.code(404).send({ error: (e as Error).message }); }
+    const live = kind === 'live' && !cu; // a catch-up programme plays like a movie: from the start, seekable
     const urls = streamUrls(provider, { id, kind, name: '', ext: q.ext });
     // Live: one continuous MPEG-TS connection rather than the provider's HLS (a request per segment).
-    const src = live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : await vodProxy.url(urls[0]);
+    const src = cu ? cu.url : live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : await vodProxy.url(urls[0]);
     // Live: the iPhone only asks for channels that didn't play directly, which are almost always HEVC.
-    const guess = live ? (vcodecs.get(id) ?? sourceInfo(id, kind)?.vcodec ?? 'hevc') : guessCodec(id, kind, sid, q.ext);
+    const guess = cu ? (sourceInfo(id, kind)?.vcodec ?? 'h264') : live ? (vcodecs.get(id) ?? sourceInfo(id, kind)?.vcodec ?? 'hevc') : guessCodec(id, kind, sid, q.ext);
     await prober.abort(); // a background probe may hold the provider connection
     // Movies: every audio language (iOS lists them in its menu), subtitles, the preferred ones selected.
-    const tracks = live ? null : await tracksOf(id, src);
+    const tracks = kind === 'live' ? null : await tracksOf(id, src);
     const defAudio = tracks ? pickAudio(tracks, q.alang || null) : -1;
     const layout = tracks?.vcodec ? vodLayout(tracks, defAudio) : null;
     const defSub = tracks ? pickSub(tracks, q.slang || null, tracks.audio.find((a) => a.n === defAudio)?.lang ?? null) : -1;
     try {
-      const r = await transcoder.startHls(src, Number(q.start) || 0, tracks?.vcodec ?? guess, req.deviceId, (m) => app.log.warn(m), live, layout);
+      const r = await transcoder.startHls(src, cu ? 0 : Number(q.start) || 0, tracks?.vcodec ?? guess, req.deviceId, (m) => app.log.warn(m), live, layout, cu?.skip ?? 0);
       // Really HEVC: every device now skips the failing direct attempt. (Not on a mere failure: the first try
       // often fails only because the provider still counts the previous connection.)
       if (live && r.vcodec === 'hevc') hevc.add(id, 'full');

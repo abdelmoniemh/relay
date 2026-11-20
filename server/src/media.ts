@@ -67,6 +67,8 @@ export interface TxOpts {
   output?: string;
   /** Audio track (0-based among audio streams) to keep; default the first. */
   audio?: number;
+  /** Seconds to drop from the start of the output (catch-up: the provider only starts on whole minutes). */
+  skip?: number;
 }
 
 const UA = 'Relay/1.0 (like VLC/3.0.20)';
@@ -152,7 +154,7 @@ export function transcodeArgs(src: string, o: TxOpts): string[] {
     '-fflags', '+genpts+discardcorrupt',
     ...(net ? ['-user_agent', o.userAgent ?? UA] : []),
     ...(!vod ? ['-probesize', '2M', '-analyzeduration', '1500000'] : []), // live: start fast
-    ...(vod && !o.bench ? ['-readrate', '1', '-readrate_initial_burst', '30'] : []), // movies: real-time after a 30s head start
+    ...(vod && !o.bench ? ['-readrate', '1', '-readrate_initial_burst', String(30 + (o.skip ?? 0))] : []), // movies: real-time after a 30s head start
     ...(o.startAt && o.startAt > 0 ? ['-ss', String(o.startAt)] : []),
     ...(net && vod ? ['-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4'] : []),
   ];
@@ -161,8 +163,9 @@ export function transcodeArgs(src: string, o: TxOpts): string[] {
     '-map', '0:v:0', '-map', `0:a:${o.audio && o.audio > 0 ? o.audio : 0}?`, ...audioArgs(info, vod),
     '-f', 'mpegts', '-muxdelay', p.bf ? '0.2' : '0', '-muxpreload', '0', o.output ?? 'pipe:1',
   ];
-  if (mode === 'audio') return [...input, '-i', src, '-c:v', 'copy', ...out];
+  const skip = o.skip && o.skip > 0 ? ['-ss', String(o.skip)] : [];
+  if (mode === 'audio') return [...input, '-i', src, ...skip, '-c:v', 'copy', ...out];
   const fps = outFps(info, o);
   const hw = o.gpu ? ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'] : [];
-  return [...input, ...hw, '-i', src, '-vf', videoFilter(info, o), ...encoderArgs(p, o.gpu, fps), ...out];
+  return [...input, ...hw, '-i', src, ...skip, '-vf', videoFilter(info, o), ...encoderArgs(p, o.gpu, fps), ...out];
 }

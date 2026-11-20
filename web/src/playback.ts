@@ -89,7 +89,7 @@ export function attachPlayer(p: Player) {
       status.value = 'playing'; errorMsg.value = null; retried = false;
       // Passive verification: tell the server what this stream really is (resolution/fps/codec), once it has settled.
       const item = current.value;
-      if (item?.kind === 'live') setTimeout(() => {
+      if (item && isLiveNow(item)) setTimeout(() => {
         const i = current.value === item ? p.info?.() : null;
         if (i && i.height) api.observed({ id: item.id, ...i }).catch(() => {});
       }, 5000);
@@ -98,7 +98,7 @@ export function attachPlayer(p: Player) {
     else if (e === 'waiting') { if (status.value === 'playing') status.value = 'buffering'; }
     else if (e === 'ended') {
       if (current.value?.kind === 'episode' && scheduleNextEpisode()) { beat(); return; }
-      if (current.value?.kind !== 'live') stop();
+      if (!isLiveNow(current.value)) stop();
     }
     else if (e === 'error') {
       // Most common cause: provider hasn't released our previous connection yet (1-connection limit). Retry once.
@@ -109,22 +109,28 @@ export function attachPlayer(p: Player) {
         return;
       }
       // Still failing: fail over to the next working copy of the same channel / match.
-      if (current.value?.kind === 'live' && nextSource(1, true)) return;
+      if (isLiveNow(current.value) && nextSource(1, true)) return;
       status.value = 'error'; errorMsg.value = detail ?? 'Playback failed';
     }
   });
 }
 
+/** Live right now (not a programme from a channel's archive). */
+export const isLiveNow = (item: Item | null | undefined) => item?.kind === 'live' && !item.catchup;
+
 function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
-  const q = new URLSearchParams({ token: token.value ?? '', ...(item.ext ? { ext: item.ext } : {}) });
+  const cu = item.kind === 'live' ? item.catchup : null;
+  const q = new URLSearchParams({ token: token.value ?? '', ...(item.ext ? { ext: item.ext } : {}), ...(cu ? { cs: String(cu.start), ce: String(cu.stop) } : {}) });
   const src = sources.value.find((s) => s.item.id === item.id);
   return {
     // 4K by measurement, not just by name (the TV needs SET_MODE_4K for a 4K stream)
-    startAt, live: item.kind === 'live', uhd: /4K|UHD|2160/i.test(item.name) || (src?.height ?? 0) >= 2000, id: item.id,
+    startAt, live: isLiveNow(item), uhd: /4K|UHD|2160/i.test(item.name) || (src?.height ?? 0) >= 2000, id: item.id,
     transcodeUrl: `${server.value}/api/transcode/${item.id}.ts?${q}`, hlsUrl: `${server.value}/api/hls/${item.id}?${q}`, hevc: hevc || !!src?.hevc,
-    lowLatency: item.kind === 'live' && !!sourceEvent.value && lowLatencySports.value,
-    duration: item.duration ?? undefined,
-    tx: lastTx,
+    lowLatency: isLiveNow(item) && !!sourceEvent.value && lowLatencySports.value,
+    duration: cu ? cu.stop - cu.start : item.duration ?? undefined,
+    // Catch-up in a browser: always the server's conversion (raw MPEG-TS, and it seeks by restarting)
+    tx: cu ? ((hevc || src?.hevc) ? 'full' as const : 'audio' as const) : lastTx,
+    catchupUrl: cu ? `${server.value}/api/catchup/${item.id}.ts?${q}` : undefined,
     interlaced: item.kind === 'live' && (lastInterlaced || !!src?.interlaced),
     alang: audioLang.value, slang: subLang.value,
   };
@@ -171,7 +177,7 @@ export function play(item: Item, opts: { startAt?: number; mode?: Mode; sources?
     sources.value = opts.sources ?? [];
     sourceEvent.value = opts.eventId ?? null;
     failed.clear();
-    if (!opts.sources && item.kind === 'live') loadFamily(item);
+    if (!opts.sources && isLiveNow(item)) loadFamily(item);
   }
   if (current.value && player) {
     // Same device switching items: report final position, then free the connection before the next one opens.
@@ -222,8 +228,29 @@ export async function playEvent(eventId: string, opts: { mode?: Mode; sourceId?:
 }
 
 export const togglePause = () => { if (!player || !current.value) return; player.paused() ? player.play() : player.pause(); };
-export const seekBy = (d: number) => { if (player && current.value?.kind !== 'live') { player.seek(player.position() + d); position.value = player.position() + d; } };
-export const seekTo = (t: number) => { if (player && current.value?.kind !== 'live') { player.seek(t); position.value = t; } };
+export const seekBy = (d: number) => { if (player && current.value && !isLiveNow(current.value)) { player.seek(player.position() + d); position.value = player.position() + d; } };
+export const seekTo = (t: number) => { if (player && current.value && !isLiveNow(current.value)) { player.seek(t); position.value = t; } };
+
+/** Watch a past programme of a catch-up channel from its start (or `at` seconds in). */
+export function playCatchup(channel: Item, prog: { start: number; stop: number; title?: string }, opts: { at?: number; mode?: Mode } = {}) {
+  const item: Item = { ...channel, catchup: { start: prog.start, stop: prog.stop, title: prog.title } };
+  play(item, { mode: opts.mode ?? 'full', startAt: opts.at ?? 0 });
+}
+/** Is `prog` in this channel's archive (finished or on air, within its catch-up days)? */
+export function canCatchup(channel: Item, prog: { start: number; stop: number }, now = Date.now() / 1000) {
+  return channel.kind === 'live' && !!channel.archive && prog.start < now && prog.start > now - channel.archive * 86400;
+}
+/** "Start over": the programme on air now, from its beginning. */
+export async function startOver(channel: Item = current.value!) {
+  if (!channel?.epg || !channel.archive) return false;
+  try {
+    const now = Date.now() / 1000;
+    const p = (await api.nowNext([channel.epg]))[channel.epg]?.find((x) => x.start <= now && x.stop > now);
+    if (!p || !canCatchup(channel, p)) return false;
+    playCatchup({ ...channel, catchup: null }, p, { mode: mode.value === 'off' ? 'full' : mode.value });
+    return true;
+  } catch { return false; }
+}
 export const volume = (d: number | 'mute') => player?.setVolume(d);
 export const setMode = (m: Mode) => { if (current.value) mode.value = m; };
 
@@ -293,7 +320,7 @@ onServer((m: ServerMsg) => {
 document.addEventListener('visibilitychange', () => {
   const hidden = document.visibilityState === 'hidden';
   if (hidden && current.value && player && (status.value === 'playing' || status.value === 'paused' || status.value === 'buffering')) {
-    if (!isTizen && current.value.kind !== 'live' && document.pictureInPictureElement) return; // PiP keeps playing
+    if (!isTizen && !isLiveNow(current.value) && document.pictureInPictureElement) return; // PiP keeps playing
     const pos = player.position();
     send({ t: 'heartbeat', position: pos, duration: player.duration(), paused: true });
     player.stop();
@@ -319,10 +346,10 @@ if (ms) {
     if (!it) { if (shownId) { ms.metadata = null; ms.playbackState = 'none'; shownId = null; } return; }
     if (it.id === shownId) return;
     shownId = it.id;
-    const live = it.kind === 'live';
+    const live = isLiveNow(it);
     ms.metadata = new MediaMetadata({
-      title: tidy(it.name),
-      artist: live ? 'Live TV' : it.kind === 'episode' && it.season ? `S${it.season} · E${it.episode}` : 'Relay',
+      title: it.catchup?.title ? `${it.catchup.title}` : tidy(it.name),
+      artist: it.catchup ? `${tidy(it.name)} · catch-up` : live ? 'Live TV' : it.kind === 'episode' && it.season ? `S${it.season} · E${it.episode}` : 'Relay',
       album: 'Relay',
       artwork: it.icon ? [{ src: it.icon, sizes: '512x512' }] : [],
     });
@@ -340,7 +367,7 @@ if (ms) {
   // Keep the lock screen's progress bar right (movies/episodes only).
   effect(() => {
     const d = duration.value, p = position.value;
-    if (!current.value || current.value.kind === 'live' || !d || !('setPositionState' in ms)) return;
+    if (!current.value || isLiveNow(current.value) || !d || !('setPositionState' in ms)) return;
     try { ms.setPositionState({ duration: d, position: Math.min(Math.max(0, p), d), playbackRate: 1 }); } catch {}
   });
   on('play', () => { if (player?.paused()) togglePause(); });

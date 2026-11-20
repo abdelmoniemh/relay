@@ -21,6 +21,8 @@ export interface LoadOpts {
   /** Preferred audio language (ISO code) and subtitle language ('off' = none), for movies/episodes. */
   alang?: string | null;
   slang?: string;
+  /** Catch-up programme (TV plays the archive itself): this URL + `&start=<seconds into the programme>`. */
+  catchupUrl?: string;
 }
 
 /** Audio / subtitle tracks of what's playing (movies through the server's HLS). */
