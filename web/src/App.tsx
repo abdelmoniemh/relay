@@ -17,7 +17,7 @@ import { Browse, Grid } from './screens/Browse.tsx';
 import { TitleScreen } from './screens/Title.tsx';
 import { Pair } from './screens/Pair.tsx';
 import { Icon, type IconName } from './ui/Icon.tsx';
-import { MiniPlayer } from './ui/kit.tsx';
+import { MiniPlayer } from './player/mini.tsx';
 import { isMobile, isTizen } from './env.ts';
 import { t, lang } from './i18n.ts';
 

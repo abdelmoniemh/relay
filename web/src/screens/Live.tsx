@@ -10,7 +10,7 @@ import { displayName } from '@shared/domain.ts';
 import { clock, isMobile } from '../env.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { t } from '../i18n.ts';
-import { previewBox } from '../player/host.tsx';
+import { previewBox } from '../player/placement.ts';
 import { ProgrammesSheet } from '../ui/programmes.tsx';
 
 const FAV: Category = { id: '__fav', name: 'Favourites', count: 0 };

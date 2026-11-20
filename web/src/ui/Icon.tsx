@@ -56,3 +56,6 @@ export function Icon({ n, filled, size, class: cls }: { n: IconName; filled?: bo
     </svg>
   );
 }
+
+/** Icon for a kind of device. */
+export const deviceIcon = (kind: string): IconName => (kind === 'tv' ? 'tv' : kind === 'phone' ? 'phone' : 'desktop');

@@ -5,11 +5,11 @@ import type { Item, Programme } from '@shared/protocol.ts';
 import { api, myDeviceId } from '../api.ts';
 import { canCatchup, playCatchup } from '../playback.ts';
 import { reminders, loadReminders, remind, unremind } from '../notify.ts';
-import { devices } from '../ws.ts';
+import { devices, deviceName } from '../ws.ts';
 import { clock, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
 import { Sheet, Btn } from './kit.tsx';
-import { Icon } from './Icon.tsx';
+import { Icon, deviceIcon } from './Icon.tsx';
 
 import { displayName } from '@shared/domain.ts';
 
@@ -66,7 +66,7 @@ export function ProgrammesSheet({ channel, onClose }: { channel: Item; onClose: 
               return (
                 <button key={p.start} class="list-row tappable" aria-pressed={!!r} onClick={() => (r ? unremind(r.id) : setAsk(p))}>
                   <span class="lr-main"><b>{p.title}</b><span class="lr-sub tnum">{day(p.start)} · {clock(p.start)}–{clock(p.stop)}</span></span>
-                  <span class="lr-value">{r ? <><Icon n="check" />{r.autoplay ? t('Starts on {name}', { name: devices.value.find((d) => d.id === r.autoplay)?.name ?? '…' }) : t('Reminder set')}</> : <><Icon n="plus" />{t('Remind me')}</>}</span>
+                  <span class="lr-value">{r ? <><Icon n="check" />{r.autoplay ? t('Starts on {name}', { name: deviceName(r.autoplay) }) : t('Reminder set')}</> : <><Icon n="plus" />{t('Remind me')}</>}</span>
                 </button>
               );
             })}
@@ -105,7 +105,7 @@ export function RemindSheet({ channel, prog, eventId, onClose }: { channel: Item
         </button>
         {targets.filter((d) => !(isTizen && d.id === myDeviceId.value)).map((d) => (
           <button key={d.id} class="list-row tappable" onClick={() => set(d.id)}>
-            <Icon n={d.kind === 'tv' ? 'tv' : d.kind === 'phone' ? 'phone' : 'desktop'} class="lr-icon" />
+            <Icon n={deviceIcon(d.kind)} class="lr-icon" />
             <span class="lr-main"><b>{t('Start on {name}', { name: d.name })}</b><span class="lr-sub">{d.online ? t('Online') : t('Must be open at the time')}</span></span>
           </button>
         ))}

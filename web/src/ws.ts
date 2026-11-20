@@ -1,10 +1,13 @@
 import { signal } from '@preact/signals';
 import type { ClientMsg, DeviceInfo, Lease, ServerMsg } from '@shared/protocol.ts';
 import { server, token, myDeviceId, setCredentials } from './api.ts';
+import { t } from './i18n.ts';
 
 export const connected = signal(false);
 export const devices = signal<DeviceInfo[]>([]);
 export const lease = signal<Lease | null>(null);
+/** A device's name for people ("another device" if it's gone). */
+export const deviceName = (id?: string | null) => devices.value.find((d) => d.id === id)?.name ?? t('another device');
 
 type Handler = (m: ServerMsg) => void;
 const handlers = new Set<Handler>();

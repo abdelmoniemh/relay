@@ -11,7 +11,7 @@ import { Logo, ProgBar } from '../ui/common.tsx';
 import { displayName } from '@shared/domain.ts';
 import { fmtTime, img } from '../env.ts';
 import { Btn, IconBtn, LivePill, Segmented } from '../ui/kit.tsx';
-import { Icon, type IconName } from '../ui/Icon.tsx';
+import { Icon, type IconName, deviceIcon } from '../ui/Icon.tsx';
 import { t } from '../i18n.ts';
 import { versionItem } from '../catalogue.ts';
 import { parseTitleId } from '@shared/domain.ts';
@@ -46,7 +46,6 @@ export function Remote() {
   const key = (n: IconName, c: RemoteCmd, label: string, arg?: number) => (
     <button class="rkey" aria-label={label} title={label} onClick={() => cmd(c, arg)}><Icon n={n} /></button>
   );
-  const DEV: Record<string, IconName> = { tv: 'tv', phone: 'phone', desktop: 'desktop' };
 
   return (
     <div class="remote page">
@@ -55,7 +54,7 @@ export function Remote() {
         <div class="targets" role="radiogroup" aria-label={t('Control which device')}>
           {others.map((d) => (
             <button key={d.id} role="radio" aria-checked={d.id === target} class={`target ${d.id === target ? 'sel' : ''} ${d.online ? '' : 'off'}`} onClick={() => setTarget(d.id)}>
-              <Icon n={DEV[d.kind] ?? 'desktop'} /><span>{d.name}</span>{!d.online && <small>{t('Offline')}</small>}
+              <Icon n={deviceIcon(d.kind)} /><span>{d.name}</span>{!d.online && <small>{t('Offline')}</small>}
             </button>
           ))}
         </div>

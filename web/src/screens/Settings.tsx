@@ -4,11 +4,11 @@ import { lowLatencySports, setLowLatency, audioLang, setAudioLang, subLang, setS
 import { reminders, loadReminders, unremind, notificationsOn, notificationsBlocker, enableNotifications, disableNotifications } from '../notify.ts';
 import { PREFERRED_LANGS } from '@shared/domain.ts';
 import { api, server, setServer, myDeviceId, setCredentials, clearCache } from '../api.ts';
-import { devices, connected } from '../ws.ts';
+import { devices, connected, deviceName } from '../ws.ts';
 import { navFocused, back, compact, stack } from '../router.ts';
 import { useAsync, useKeys } from '../ui/hooks.ts';
 import { EditSheet, IconBtn, Sheet, Btn } from '../ui/kit.tsx';
-import { Icon, type IconName } from '../ui/Icon.tsx';
+import { Icon, type IconName, deviceIcon } from '../ui/Icon.tsx';
 import { isTizen, clock } from '../env.ts';
 import { t, lang, setLang } from '../i18n.ts';
 
@@ -18,7 +18,6 @@ const ago = (ms: number) => {
   return m < 1 ? t('just now') : m < 60 ? t('{n} min ago', { n: m }) : t('{n} h ago', { n: Math.round(m / 60) });
 };
 const REGION: Record<string, string> = { UK: 'United Kingdom', US: 'United States', CA: 'Canada', AR: 'Arabic', '4K': '4K (mixed, mostly UK sport)', IE: 'Ireland', AU: 'Australia', ES: 'Spain', FR: 'France', DE: 'Germany', NL: 'Netherlands', IT: 'Italy', TR: 'Turkey', IN: 'India', PT: 'Portugal' };
-const DEVICE_ICON: Record<string, IconName> = { tv: 'tv', phone: 'phone', desktop: 'desktop' };
 
 /** One row: label at the start, value / switch / chevron at the end. */
 interface R { id: string; label: string; sub?: ComponentChildren; value?: ComponentChildren; act?: () => void; toggle?: boolean; icon?: IconName; danger?: boolean }
@@ -55,7 +54,7 @@ export function Settings() {
   groups.push({ title: t('Devices'), foot: t('Use this code to pair a new phone, TV or computer.'), rows: [
     { id: 'code', label: t('Pairing code'), value: <b class="code tnum">{s?.pairingCode ?? '…'}</b> },
     ...devices.value.filter((d) => d.id !== myDeviceId.value).map((d): R => ({
-      id: `dev${d.id}`, label: d.name, icon: DEVICE_ICON[d.kind] ?? 'desktop', sub: d.online ? t('Online') : t('Offline'), value: t('Remove'),
+      id: `dev${d.id}`, label: d.name, icon: deviceIcon(d.kind), sub: d.online ? t('Online') : t('Offline'), value: t('Remove'),
       act: () => setConfirm({ title: t('Remove {name}?', { name: d.name }), body: t('It will need the pairing code to connect again.'), ok: t('Remove'), act: () => api.removeDevice(d.id) }),
     })),
   ] });
@@ -82,7 +81,7 @@ export function Settings() {
     ...(!isTizen ? [{ id: 'notif', label: t('Notifications on this device'), toggle: notificationsOn.value, sub: blocker ? t('Not available here') : undefined,
       act: blocker ? undefined : () => { (notificationsOn.value ? disableNotifications() : enableNotifications()).catch(() => {}); } } as R] : []),
     ...reminders.value.filter((r) => r.start > Date.now() / 1000 - 600).map((r): R => ({
-      id: `rem${r.id}`, label: r.title, sub: `${new Date(r.start * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} · ${clock(r.start)}${r.autoplay ? ` · ${t('Starts on {name}', { name: devices.value.find((d) => d.id === r.autoplay)?.name ?? '…' })}` : ''}`,
+      id: `rem${r.id}`, label: r.title, sub: `${new Date(r.start * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} · ${clock(r.start)}${r.autoplay ? ` · ${t('Starts on {name}', { name: deviceName(r.autoplay) })}` : ''}`,
       value: t('Remove'), act: () => unremind(r.id),
     })),
     ...(reminders.value.length ? [] : [{ id: 'remnone', label: t('No reminders'), sub: t('Set one from a channel’s programmes or a sports event.') } as R]),

@@ -2,7 +2,7 @@
 // when another device takes over, and reports position so any device can resume.
 import { signal, effect } from '@preact/signals';
 import type { Item, RankedSource, ServerMsg } from '@shared/protocol.ts';
-import { send, onServer, devices, lease } from './ws.ts';
+import { send, onServer, lease, deviceName } from './ws.ts';
 import { api, myDeviceId, server, token, type Extras } from './api.ts';
 import { dispatchKey, type Key } from './keys.ts';
 import type { Player } from './player/types.ts';
@@ -107,7 +107,6 @@ export function showToast(msg: string, ms = 3500) {
   setTimeout(() => { if (toast.value === msg) toast.value = null; }, ms);
 }
 
-const deviceName = (id?: string) => devices.value.find((d) => d.id === id)?.name ?? 'another device';
 
 export function attachPlayer(p: Player) {
   player = p;

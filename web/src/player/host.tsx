@@ -18,10 +18,9 @@ import { api, myDeviceId, toggleFavorite, favorites } from '../api.ts';
 import { devices, send } from '../ws.ts';
 import { route, go } from '../router.ts';
 import { Icon } from '../ui/Icon.tsx';
+import { previewBox } from './placement.ts';
 import { t } from '../i18n.ts';
 
-/** Element the Live screen offers as the preview area. */
-export const previewBox = signal<HTMLElement | null>(null);
 
 /** Hardware player only when Samsung's webapis actually loaded. */
 const hw = isTizen && !!window.webapis?.avplay;

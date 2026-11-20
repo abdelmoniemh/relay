@@ -6,9 +6,6 @@ import { Logo, NowLine } from './common.tsx';
 import { displayName } from '@shared/domain.ts';
 import { img } from '../env.ts';
 import { t } from '../i18n.ts';
-import { lease, devices } from '../ws.ts';
-import { myDeviceId } from '../api.ts';
-import { current, takeover } from '../playback.ts';
 import { nowNext } from './hooks.ts';
 import { useKeys } from './hooks.ts';
 
@@ -188,26 +185,5 @@ export function EditSheet({ title, hint, initial, onSave, onClose }: {
         <Btn a={{ label: t('Save'), primary: true, act: () => { onSave(v.trim()); onClose(); } }} />
       </div>
     </Sheet>
-  );
-}
-
-// ---------------- mini-player (hand-off) ----------------
-
-/** Something is playing on another device: show it, offer "Watch here". DESIGN.md › Mini-player. */
-export function MiniPlayer() {
-  const l = lease.value;
-  if (!l || l.deviceId === myDeviceId.value || current.value) return null;
-  const dev = devices.value.find((d) => d.id === l.deviceId)?.name ?? t('another device');
-  const pct = l.duration > 0 ? (l.position / l.duration) * 100 : 0;
-  return (
-    <div class="miniplayer" role="status">
-      <div class="mp-art">{l.item.kind === 'live' ? <Logo src={l.item.icon} name={l.item.name} size={40} /> : <img src={img(l.item.icon, 92)} alt="" />}</div>
-      <div class="mp-txt">
-        <b>{displayName(l.item.name)}</b>
-        <span>{t('Playing on {name}', { name: dev })}</span>
-      </div>
-      <button class="btn primary small" onClick={() => takeover()}><span class="keydot green" />{t('Watch here')}</button>
-      {pct > 0 && <div class="mp-bar"><i style={{ width: `${pct}%` }} /></div>}
-    </div>
   );
 }
