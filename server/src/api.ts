@@ -13,6 +13,9 @@ import type { EventsIndex } from './events.ts';
 import type { Prober } from './prober.ts';
 import { readFile } from 'node:fs/promises';
 import { VodProxy } from './vodproxy.ts';
+import { probeTracks, pickAudio, pickSub, trackName, type Tracks } from './tracks.ts';
+import { vodLayout } from './transcode.ts';
+import { subtitlePlaylist, subtitleSegment, masterPlaylist } from './subs.ts';
 import { rankSources } from './quality.ts';
 import { probeToSource } from './prober.ts';
 import type { SourceInfo } from './media.ts';
@@ -206,6 +209,18 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     return { vcodec: r.vcodec, width: r.width, height: r.height, hdr, bitDepth: hdr ? 10 : null, interlaced: false, acodec: r.acodec, channels: r.channels };
   };
 
+  // Audio/subtitle tracks per title (read once; through the proxy it's the cached file header).
+  const trackCache = new Map<string, Tracks>(Object.entries(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}')));
+  const tracksOf = async (id: string, src: string): Promise<Tracks | null> => {
+    if (trackCache.has(id)) return trackCache.get(id)!;
+    await transcoder.stop(); // one provider connection: the previous session must let go before we read the header
+    try {
+      const t = await probeTracks(src);
+      trackCache.set(id, t);
+      kvSet(db, 'vod_tracks', JSON.stringify(Object.fromEntries([...trackCache].slice(-3000))));
+      return t;
+    } catch (e) { app.log.warn(`tracks ${id}: ${(e as Error).message.split('\n')[0]}`); return null; }
+  };
   // HEVC -> H.264 stream for browsers without an HEVC decoder. Raw MPEG-TS, consumed by mpegts.js.
   app.get('/api/transcode/:id', async (req, reply) => {
     const id = String((req.params as any).id).replace(/\.ts$/, '');
@@ -223,7 +238,10 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     // The player gave up on this request (seeked, switched, closed): don't keep starting ffmpeg for it.
     const ac = new AbortController();
     req.raw.socket?.once('close', () => ac.abort());
-    try { started = await transcoder.start(src, Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live', mode, info: sourceInfo(id, kind), signal: ac.signal }); }
+    // Movies: the preferred audio language when the file's track list is known (from an earlier play).
+    const known = kind !== 'live' ? trackCache.get(id) : undefined;
+    const audio = known && q.alang ? pickAudio(known, q.alang) : undefined;
+    try { started = await transcoder.start(src, Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: kind !== 'live', mode, info: sourceInfo(id, kind), signal: ac.signal, audio }); }
     catch (e) {
       if ((e as Error).message === 'superseded') return reply.code(409).send({ error: 'superseded by a newer request' });
       return reply.code(502).send({ error: `Transcode failed: ${(e as Error).message}` });
@@ -270,8 +288,13 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     // Live: the iPhone only asks for channels that didn't play directly, which are almost always HEVC.
     const guess = live ? (vcodecs.get(id) ?? sourceInfo(id, kind)?.vcodec ?? 'hevc') : guessCodec(id, kind, sid, q.ext);
     await prober.abort(); // a background probe may hold the provider connection
+    // Movies: every audio language (iOS lists them in its menu), subtitles, the preferred ones selected.
+    const tracks = live ? null : await tracksOf(id, src);
+    const defAudio = tracks ? pickAudio(tracks, q.alang || null) : -1;
+    const layout = tracks?.vcodec ? vodLayout(tracks, defAudio) : null;
+    const defSub = tracks ? pickSub(tracks, q.slang || null, tracks.audio.find((a) => a.n === defAudio)?.lang ?? null) : -1;
     try {
-      const r = await transcoder.startHls(src, Number(q.start) || 0, guess, req.deviceId, (m) => app.log.warn(m), live);
+      const r = await transcoder.startHls(src, Number(q.start) || 0, tracks?.vcodec ?? guess, req.deviceId, (m) => app.log.warn(m), live, layout);
       // Really HEVC: every device now skips the failing direct attempt. (Not on a mere failure: the first try
       // often fails only because the provider still counts the previous connection.)
       if (live && r.vcodec === 'hevc') hevc.add(id, 'full');
@@ -279,18 +302,39 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
         vcodecs.set(id, r.vcodec);
         kvSet(db, 'hls_vcodecs', JSON.stringify(Object.fromEntries([...vcodecs].slice(-5000))));
       }
-      return { url: `/api/hls/${r.sid}/index.m3u8?token=${encodeURIComponent(String(q.token ?? ''))}` };
+      const tok = encodeURIComponent(String(q.token ?? ''));
+      return {
+        url: `/api/hls/${r.sid}/${r.entry}?token=${tok}${layout && defSub >= 0 && layout.subs.includes(defSub) ? `&ds=${defSub}` : ''}`,
+        // What's in the stream, for the player's own menus.
+        audio: layout ? layout.audio.map((n) => { const a = tracks!.audio.find((x) => x.n === n)!; return { n, lang: a.lang, name: trackName(a) }; }) : [],
+        subs: layout ? layout.subs.map((n) => { const t = tracks!.subs.find((x) => x.n === n)!; return { n, lang: t.lang, name: trackName(t, t.forced ? ' (forced)' : t.sdh ? ' (SDH)' : ''), forced: t.forced }; }) : [],
+        defSub: layout && layout.subs.includes(defSub) ? defSub : -1,
+      };
     } catch (e) { return reply.code(502).send({ error: `Conversion failed: ${(e as Error).message}` }); }
   });
   app.get('/api/hls/:sid/:file', async (req, reply) => {
     const { sid, file } = req.params as { sid: string; file: string };
+    const tok = `?token=${encodeURIComponent(String((req.query as any).token ?? ''))}`;
+    // Subtitle playlists and segments: built from the session's growing .vtt files, cut to the video's segments.
+    const sub = /^sub_(\d+)(?:_(\d+))?\.(m3u8|vtt)$/.exec(file);
+    if (sub && (sub[2] !== undefined || sub[3] === 'm3u8')) {
+      const info = transcoder.hlsInfo(sid);
+      const vpl = transcoder.hlsFile(sid, 'idx_v.m3u8');
+      if (!info?.layout || !vpl || !info.layout.subs.includes(Number(sub[1]))) return reply.code(404).send({ error: 'gone' });
+      reply.header('cache-control', 'no-store').header('access-control-allow-origin', '*');
+      const video = await readFile(vpl, 'utf8');
+      if (sub[3] === 'm3u8') return reply.type('application/vnd.apple.mpegurl').send(subtitlePlaylist(video, Number(sub[1]), tok));
+      const vtt = transcoder.hlsFile(sid, `sub_${sub[1]}.vtt`);
+      return reply.type('text/vtt').send(subtitleSegment(video, vtt ? await readFile(vtt, 'utf8') : '', Number(sub[2])));
+    }
     const p = transcoder.hlsFile(sid, file);
     if (!p) return reply.code(404).send({ error: 'gone' });
     reply.header('cache-control', 'no-store').header('access-control-allow-origin', '*');
     if (file.endsWith('.m3u8')) {
       // Segment requests from Safari's player carry no auth header: put the token on every URI.
-      const tok = `?token=${encodeURIComponent(String((req.query as any).token ?? ''))}`;
-      const pl = (await readFile(p, 'utf8')).replace(/^(seg\d+\.m4s)$/gm, `$1${tok}`).replace(/URI="init\.mp4"/, `URI="init.mp4${tok}"`)
+      let pl = await readFile(p, 'utf8');
+      if (file === 'master.m3u8') pl = masterPlaylist(pl, transcoder.hlsInfo(sid)?.layout ?? null, Number((req.query as any).ds ?? -1), tok);
+      pl = pl.replace(/^(seg\w*\.m4s|idx_\w+\.m3u8)$/gm, `$1${tok}`).replace(/URI="(init\w*\.mp4|idx_\w+\.m3u8)"/g, `URI="$1${tok}"`)
         // The playlist grows while Safari watches, so it may treat it as live and start near the newest
         // segment (≈40s into the movie, thanks to ffmpeg's head start). Always start at the beginning.
         // (A live channel's sliding playlist has no #EXT-X-PLAYLIST-TYPE: Safari starts it near the live edge.)
@@ -299,6 +343,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     }
     return reply.type(file.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment').send(await readFile(p));
   });
+
   app.delete('/api/hls/:sid', async (req) => { await transcoder.stopHls((req.params as any).sid); return { ok: true }; });
 
   // ---- sports events & sources ----

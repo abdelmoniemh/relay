@@ -1,3 +1,4 @@
+import { sameLang } from './lang.ts';
 import type { LoadOpts, Player, PlayerEvent } from './types.ts';
 
 /** Samsung Tizen hardware player: decodes TS/HLS/MKV natively, 4K capable, renders on a plane behind the web layer. */
@@ -37,10 +38,21 @@ export class AvPlayer implements Player {
     av.setDisplayRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
     await new Promise<void>((resolve, reject) => av.prepareAsync(resolve, reject)).catch((e) => { if (gen === this.gen) this.cb('error', String(e)); throw e; });
     if (gen !== this.gen) return;
+    if (!o.live && o.alang) this.pickAudio(o.alang);
     if (o.startAt > 0) await new Promise<void>((r) => av.seekTo(o.startAt * 1000, r, r));
     av.play();
     this.isPaused = false;
     this.cb('playing');
+  }
+
+  /** MKVs carry several languages: start with the preferred one (the TV otherwise takes the file's first). */
+  private pickAudio(pref: string) {
+    try {
+      const audio = (this.av.getTotalTrackInfo() as any[]).filter((t) => t.type === 'AUDIO');
+      const lang = (t: any) => { try { const e = JSON.parse(t.extra_info ?? '{}'); return e.language ?? e.track_lang ?? null; } catch { return null; } };
+      const m = audio.find((t) => sameLang(lang(t), pref));
+      if (m && audio.length > 1) this.av.setSelectTrack('AUDIO', m.index);
+    } catch {}
   }
 
   info() {

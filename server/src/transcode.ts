@@ -4,6 +4,7 @@
 import { spawn, execFileSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { transcodeArgs, encoderArgs, VOD, type SourceInfo } from './media.ts';
+import type { Tracks } from './tracks.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -21,6 +22,21 @@ const HLS_KEEP_BEHIND = 300;
 const hlsVideoPlan = (c: string | null) => (c === 'h264' || c === 'hevc' ? c : 'encode');
 /** No playlist/segment request for this long (app closed, phone locked): free the provider connection. */
 const HLS_IDLE_MS = 45_000;
+/** Most audio / subtitle tracks put in one movie session (some files carry 20+ languages). */
+const MAX_AUDIO = 8, MAX_SUBS = 12;
+
+/**
+ * Movie session with all its languages: master.m3u8 → idx_v.m3u8 (video) + idx_a<i>.m3u8 per audio track
+ * (alternate renditions: iOS lists them in its audio menu), and sub_<n>.vtt per text subtitle track, which the
+ * API serves as HLS subtitle playlists cut to the video's segments.
+ */
+export interface VodLayout { tracks: Tracks; audio: number[]; subs: number[]; defAudio: number }
+export function vodLayout(tracks: Tracks, defAudio: number): VodLayout {
+  // The default track first, then the others in file order.
+  const audio = tracks.audio.map((a) => a.n).sort((x, y) => (x === defAudio ? -1 : y === defAudio ? 1 : x - y)).slice(0, MAX_AUDIO);
+  const subs = tracks.subs.filter((t) => t.text).map((t) => t.n).slice(0, MAX_SUBS);
+  return { tracks, audio, subs, defAudio };
+}
 
 type Proc = ChildProcessByStdio<null, Readable, Readable>;
 
@@ -64,7 +80,7 @@ export class Transcoder {
   private startGen = 0;
 
   /** Current HLS session (iPhone/iPad Safari can't play MKV/AVI, raw MPEG-TS or HEVC in TS-based HLS, but plays fMP4 HLS natively). */
-  private hls: { sid: string; dir: string; proc: Proc; lastHit: number; pruned: number } | null = null;
+  private hls: { sid: string; dir: string; proc: Proc; lastHit: number; pruned: number; layout: VodLayout | null } | null = null;
 
   constructor() {
     let ok = true;
@@ -82,15 +98,16 @@ export class Transcoder {
    * HLS (fMP4 segments) for Safari. H.264/HEVC video is copied untouched; anything else is encoded to H.264.
    * Audio always becomes stereo AAC (AC3/DTS/… in MKV are the usual reason a file won't play).
    */
-  private hlsArgs(src: string, startAt: number, vcodec: string | null, gpu: boolean, dir: string, live: boolean): string[] {
+  private hlsArgs(src: string, startAt: number, vcodec: string | null, gpu: boolean, dir: string, live: boolean, layout: VodLayout | null = null): string[] {
     const video = vcodec === 'h264' ? ['-c:v', 'copy']
       : vcodec === 'hevc' ? ['-c:v', 'copy', '-tag:v', 'hvc1']
       : gpu ? [...encoderArgs({ ...VOD, gopSec: 4 }, true, 24), '-pix_fmt', 'yuv420p']
       : ['-vf', 'scale=w=min(iw\\,1920):h=-2,format=yuv420p', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-maxrate', '12M', '-bufsize', '12M', '-g', '96'];
+    const net = /^https?:/.test(src);
     return [
       // 'info' so the input's codec shows up on stderr (startHls reads it instead of a separate ffprobe)
       '-hide_banner', '-loglevel', 'info', '-nostats', '-nostdin',
-      '-fflags', '+genpts+discardcorrupt', '-user_agent', 'Relay/1.0 (like VLC/3.0.20)',
+      '-fflags', '+genpts+discardcorrupt', ...(net ? ['-user_agent', 'Relay/1.0 (like VLC/3.0.20)'] : []),
       // Live arrives in real time by itself (after the provider's backlog burst, which makes it start fast).
       ...(live ? ['-probesize', '5M', '-analyzeduration', '2000000'] : [
         '-readrate', '1', '-readrate_initial_burst', '45',
@@ -98,9 +115,31 @@ export class Transcoder {
         // peeks at the end (MKV cues, AVI index): every jump is a new provider request, and the provider is slow
         // to answer one that follows a closed one. Measured: opening 1.5–9s → 0.5–0.8s.
         ...(startAt > 0 ? ['-ss', String(startAt)] : ['-seekable', '0']),
-        '-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4',
+        ...(net ? ['-reconnect', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '4'] : []),
       ]),
       '-i', src,
+      ...(layout ? this.vodOutputs(layout, video, dir) : this.singleOutput(video, live, dir)),
+    ];
+  }
+
+  /** Movie with every audio language as an alternate rendition, plus each text subtitle as a growing .vtt. */
+  private vodOutputs(l: VodLayout, video: string[], dir: string): string[] {
+    const streamMap = [l.audio.length ? 'v:0,agroup:aud,name:v' : 'v:0,name:v', ...l.audio.map((n, i) => `a:${i},agroup:aud,name:a${i}${i === 0 ? ',default:yes' : ''}`)];
+    return [
+      '-map', '0:v:0', ...l.audio.flatMap((n) => ['-map', `0:a:${n}`]), ...video,
+      '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-max_muxing_queue_size', '4096',
+      '-f', 'hls', '-hls_time', '4', '-hls_list_size', '0', '-hls_playlist_type', 'event',
+      '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
+      '-hls_segment_filename', join(dir, 'seg_%v_%05d.m4s'), '-hls_flags', 'independent_segments+temp_file',
+      '-master_pl_name', 'master.m3u8', '-var_stream_map', streamMap.join(' '),
+      join(dir, 'idx_%v.m3u8'),
+      // Subtitles: a second output per track, flushed cue by cue.
+      ...l.subs.flatMap((n) => ['-map', `0:s:${n}`, '-c:s', 'webvtt', '-flush_packets', '1', '-f', 'webvtt', join(dir, `sub_${n}.vtt`)]),
+    ];
+  }
+
+  private singleOutput(video: string[], live: boolean, dir: string): string[] {
+    return [
       '-map', '0:v:0', '-map', '0:a:0?', ...video,
       ...(live ? ['-af', 'aresample=async=1:first_pts=0'] : []), // live: absorb provider timestamp gaps
       '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-max_muxing_queue_size', '2048',
@@ -120,7 +159,9 @@ export class Transcoder {
    * That's much faster than a separate ffprobe, which costs an extra provider connection that the provider
    * keeps counting for a moment (so the real one then fails and has to retry).
    */
-  async startHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false): Promise<{ sid: string; vcodec: string | null }> {
+  async startHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false, layout: VodLayout | null = null): Promise<{ sid: string; vcodec: string | null; entry: string }> {
+    const entry = layout ? 'master.m3u8' : 'index.m3u8';
+    const videoPl = layout ? 'idx_v.m3u8' : 'index.m3u8';
     await this.stop();
     await Promise.all([...this.dying]);
     let vcodec = guess, lastErr = '', corrected = false;
@@ -131,9 +172,9 @@ export class Transcoder {
       const dir = join(HLS_ROOT, sid);
       mkdirSync(dir, { recursive: true });
       const gpu = this.gpu && attempt < 2;
-      const proc = spawn('ffmpeg', this.hlsArgs(src, live ? 0 : startAt, vcodec, gpu, dir, live), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
+      const proc = spawn('ffmpeg', this.hlsArgs(src, live ? 0 : startAt, vcodec, gpu, dir, live, layout), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
       this.current = proc; this.owner = owner;
-      this.hls = { sid, dir, proc, lastHit: Date.now(), pruned: 0 };
+      this.hls = { sid, dir, proc, lastHit: Date.now(), pruned: 0, layout };
       let stderr = '', head = '', detected: string | null | undefined;
       proc.stderr.on('data', (d) => {
         stderr = (stderr + d).slice(-2000);
@@ -151,15 +192,16 @@ export class Transcoder {
           const tick = setInterval(() => {
             if (wrong()) { clearInterval(tick); reject(new Error('codec')); return; }
             let pl = '';
-            try { pl = readFileSync(join(dir, 'index.m3u8'), 'utf8'); } catch {}
-            if (/^seg\d+\.m4s$/m.test(pl)) { clearInterval(tick); resolve(); }
+            try { pl = readFileSync(join(dir, videoPl), 'utf8'); } catch {}
+            if (/^seg(_v_)?\d+\.m4s$/m.test(pl)) { clearInterval(tick); resolve(); }
             else if (proc.exitCode !== null || proc.signalCode !== null) { clearInterval(tick); reject(new Error(wrong() ? 'codec' : `ffmpeg exited ${proc.exitCode ?? proc.signalCode}: ${stderr.trim().split('\n').pop() ?? ''}`)); }
             else if (Date.now() - t0 > 25_000) { clearInterval(tick); reject(new Error('no output after 25s')); }
           }, 100);
         });
         const how = hlsVideoPlan(vcodec) === 'encode' ? (gpu ? 'nvenc' : 'x264') : `copy ${vcodec}`;
-        log(`hls started in ${Date.now() - t0}ms (${live ? 'live, ' : ''}${how}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
-        return { sid, vcodec: detected ?? vcodec };
+        const langs = layout && (layout.audio.length > 1 || layout.subs.length) ? `, ${layout.audio.length} audio, ${layout.subs.length} subs` : '';
+        log(`hls started in ${Date.now() - t0}ms (${live ? 'live, ' : ''}${how}${langs}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
+        return { sid, vcodec: detected ?? vcodec, entry };
       } catch (e) {
         await this.stop();
         if ((e as Error).message === 'codec' && !corrected) {
@@ -179,23 +221,31 @@ export class Transcoder {
   /** Path of a file in the live HLS session, or null. Every hit keeps the session alive. */
   hlsFile(sid: string, name: string): string | null {
     const h = this.hls;
-    if (!h || h.sid !== sid || !/^(index\.m3u8|init\.mp4|seg\d+\.m4s)$/.test(name)) return null;
+    if (!h || h.sid !== sid || !/^((index|master|idx_(v|a\d+))\.m3u8|init(_\d+)?\.mp4|seg(_(v|a\d+)_)?\d+\.m4s|sub_\d+\.vtt)$/.test(name)) return null;
     const p = join(h.dir, name);
     if (!existsSync(p)) return null;
     h.lastHit = Date.now();
     // Keep disk use bounded: drop segments far behind what the player is fetching.
-    const n = /^seg(\d+)\.m4s$/.exec(name);
+    const n = /^seg(?:_v_)?(\d+)\.m4s$/.exec(name);
+    const variants = h.layout ? ['v', ...h.layout.audio.map((_, i) => `a${i}`)] : null;
     for (const upto = n ? Number(n[1]) - HLS_KEEP_BEHIND : 0; h.pruned < upto; h.pruned++) {
-      rm(join(h.dir, `seg${String(h.pruned).padStart(5, '0')}.m4s`), { force: true }).catch(() => {});
+      const k = String(h.pruned).padStart(5, '0');
+      for (const f of variants ? variants.map((v) => `seg_${v}_${k}.m4s`) : [`seg${k}.m4s`]) rm(join(h.dir, f), { force: true }).catch(() => {});
     }
     return p;
+  }
+
+  /** The running session's folder and languages (for the subtitle playlists the API builds). */
+  hlsInfo(sid: string): { dir: string; layout: VodLayout | null } | null {
+    const h = this.hls;
+    return h && h.sid === sid ? { dir: h.dir, layout: h.layout } : null;
   }
 
   /** Ends the HLS session if it's this one (the player stopped). */
   stopHls(sid: string) { return this.hls?.sid === sid ? this.stop() : Promise.resolve(); }
 
-  private args(src: string, gpu: boolean, startAt: number, vod: boolean, mode: TxMode, info: SourceInfo | null): string[] {
-    return transcodeArgs(src, { gpu, startAt, vod, mode, info });
+  private args(src: string, gpu: boolean, startAt: number, vod: boolean, mode: TxMode, info: SourceInfo | null, audio?: number): string[] {
+    return transcodeArgs(src, { gpu, startAt, vod, mode, info, audio });
   }
 
   /** Kills the running transcode; resolves once the process (and its provider connection) is really gone. */
@@ -226,7 +276,7 @@ export class Transcoder {
    * Starts a transcode and resolves once ffmpeg produced its first bytes (or rejects).
    * Retries briefly: right after a handoff the provider may still count the previous connection.
    */
-  async start(src: string, startAt = 0, log: (m: string) => void = () => {}, owner: string | null = null, opts: { vod?: boolean; mode?: TxMode; info?: SourceInfo | null; signal?: AbortSignal } = {}): Promise<{ proc: Proc; first: Buffer }> {
+  async start(src: string, startAt = 0, log: (m: string) => void = () => {}, owner: string | null = null, opts: { vod?: boolean; mode?: TxMode; info?: SourceInfo | null; signal?: AbortSignal; audio?: number } = {}): Promise<{ proc: Proc; first: Buffer }> {
     const my = ++this.startGen;
     const gone = () => my !== this.startGen || !!opts.signal?.aborted;
     await this.stop();
@@ -237,7 +287,7 @@ export class Transcoder {
       if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
       if (gone()) throw new Error('superseded');
       const gpu = this.gpu && attempt < 3; // last resort: software path
-      const proc = spawn('ffmpeg', this.args(src, gpu, startAt, !!opts.vod, opts.mode ?? 'full', opts.info ?? null), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
+      const proc = spawn('ffmpeg', this.args(src, gpu, startAt, !!opts.vod, opts.mode ?? 'full', opts.info ?? null, opts.audio), { stdio: ['ignore', 'pipe', 'pipe'] }) as Proc;
       this.current = proc;
       this.owner = owner;
       let stderr = '';

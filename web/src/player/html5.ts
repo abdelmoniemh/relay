@@ -1,4 +1,4 @@
-import type { LoadOpts, Player, PlayerEvent } from './types.ts';
+import type { LoadOpts, MediaTracks, Player, PlayerEvent } from './types.ts';
 import { isIOS } from '../env.ts';
 import { api } from '../api.ts';
 
@@ -33,6 +33,11 @@ export class Html5Player implements Player {
   private media: { fps?: number; vcodec?: string; transcoded: boolean } = { transcoded: false };
   /** iPhone/iPad: playlist URL of the server's HLS session for the converted movie. */
   private hlsSession: string | null = null;
+  /** Languages in that session (all of them are in the stream: iOS switches without restarting). */
+  private mtracks: { audio: MediaTracks['audio']; subs: MediaTracks['subs']; defSub: number } | null = null;
+  private langCb: (kind: 'audio' | 'sub', lang: string) => void = () => {};
+  /** Ignore the track changes Safari makes by itself while a stream starts; only the user's picks count. */
+  private langsSettled = 0;
   /** Seek waiting to restart the conversion (dragging the seek bar fires dozens of seeks: only the last one counts). */
   private pendingSeek: number | null = null;
   private seekTimer: ReturnType<typeof setTimeout> | undefined;
@@ -42,6 +47,9 @@ export class Html5Player implements Player {
     // iOS only lets a video start with sound right after a tap. Our streams start later (after the server's
     // answer, 1-3s for a conversion), so Safari refused and left a black, paused picture at 0:00. A media
     // element that was once started during a tap keeps the permission: do that on the first tap.
+    const at = video as HTMLVideoElement & { audioTracks?: any };
+    at.audioTracks?.addEventListener?.('change', () => this.trackChanged('audio'));
+    video.textTracks?.addEventListener?.('change', () => this.trackChanged('sub'));
     if (isIOS) {
       const unlock = () => {
         if (this.v.getAttribute('src') == null) { this.v.load(); this.v.play().catch(() => {}); }
@@ -191,7 +199,7 @@ export class Html5Player implements Player {
     this.txOffset = Math.max(0, Math.floor(at));
     this.parked = null;
     if (this.nativeHls) { this.releaseHls(); this.startHls(gen, this.txOffset); return; }
-    const url = `${this.opts!.transcodeUrl}&mode=${mode}&start=${this.txOffset}`;
+    const url = `${this.opts!.transcodeUrl}&mode=${mode}&start=${this.txOffset}${this.opts!.alang ? `&alang=${encodeURIComponent(this.opts!.alang)}` : ''}`;
     this.mpegts(url, gen);
   }
 
@@ -199,12 +207,16 @@ export class Html5Player implements Player {
   private async startHls(gen: number, start: number) {
     const base = this.opts!.hlsUrl!;
     try {
-      const r = await fetch(`${base}&start=${start}`, { method: 'POST' });
-      const j = await r.json().catch(() => ({})) as { url?: string; error?: string };
+      const o = this.opts!;
+      const prefs = o.live ? '' : `&alang=${encodeURIComponent(o.alang ?? '')}&slang=${encodeURIComponent(o.slang ?? 'off')}`;
+      const r = await fetch(`${base}&start=${start}${prefs}`, { method: 'POST' });
+      const j = await r.json().catch(() => ({})) as { url?: string; error?: string; audio?: MediaTracks['audio']; subs?: MediaTracks['subs']; defSub?: number };
       const url = j.url ? new URL(j.url, base).href : null;
       if (gen !== this.gen) { if (url) this.deleteHls(url); return; } // stopped/seeked meanwhile: don't hold the connection
       if (!r.ok || !url) { this.cb('error', j.error ?? `Conversion failed (HTTP ${r.status})`); return; }
       this.hlsSession = url;
+      this.mtracks = j.audio ? { audio: j.audio, subs: j.subs ?? [], defSub: j.defSub ?? -1 } : null;
+      this.langsSettled = Date.now() + 4000;
       this.v.src = url;
       this.startPlay();
     } catch {
@@ -212,9 +224,45 @@ export class Html5Player implements Player {
     }
   }
 
+  /** Tracks as Safari exposes them (audioTracks / textTracks), matched to the server's list by language and order. */
+  private nativeAudio(): any[] { return Array.from(((this.v as any).audioTracks ?? []) as ArrayLike<any>); }
+  private nativeSubs(): TextTrack[] { return Array.from(this.v.textTracks ?? []).filter((t) => t.kind === 'subtitles' || t.kind === 'captions' || (t.kind as string) === 'forced'); }
+
+  tracks(): MediaTracks | null {
+    const m = this.mtracks;
+    if (!m || !this.hlsSession) return null;
+    const audioSel = Math.max(0, this.nativeAudio().findIndex((t) => t.enabled));
+    const subSel = this.nativeSubs().findIndex((t) => t.mode === 'showing');
+    return { audio: m.audio, subs: m.subs, audioSel, subSel };
+  }
+  setAudio(i: number) {
+    const list = this.nativeAudio();
+    if (!list[i]) return;
+    list.forEach((t, k) => { t.enabled = k === i; });
+    if (this.mtracks?.audio[i]?.lang) this.langCb('audio', this.mtracks.audio[i].lang!);
+  }
+  setSub(i: number) {
+    this.nativeSubs().forEach((t, k) => { t.mode = k === i ? 'showing' : 'disabled'; });
+    this.langCb('sub', i >= 0 ? (this.mtracks?.subs[i]?.lang ?? 'off') : 'off');
+  }
+  onLangs(cb: (kind: 'audio' | 'sub', lang: string) => void) { this.langCb = cb; }
+
+  /** The user switched language in iOS's own menu: remember it (next movie, and after a seek restarts the stream). */
+  private trackChanged(kind: 'audio' | 'sub') {
+    if (!this.hlsSession || !this.mtracks || Date.now() < this.langsSettled) return;
+    if (kind === 'audio') {
+      const t = this.nativeAudio().find((x) => x.enabled);
+      if (t?.language) { this.langCb('audio', t.language); if (this.opts) this.opts.alang = t.language; }
+    } else {
+      const t = this.nativeSubs().find((x) => x.mode === 'showing');
+      const lang = t ? (t.language || 'off') : 'off';
+      this.langCb('sub', lang); if (this.opts) this.opts.slang = lang;
+    }
+  }
+
   private deleteHls(url: string) { fetch(url.replace('/index.m3u8?', '?'), { method: 'DELETE', keepalive: true }).catch(() => {}); }
   /** Tell the server to stop the HLS conversion (frees the provider connection right away). */
-  private releaseHls() { if (this.hlsSession) this.deleteHls(this.hlsSession); this.hlsSession = null; }
+  private releaseHls() { if (this.hlsSession) this.deleteHls(this.hlsSession); this.hlsSession = null; this.mtracks = null; }
 
   /** Paused for a while on a converted movie: stop the stream (frees the provider connection) and resume later. */
   private maybePark() {

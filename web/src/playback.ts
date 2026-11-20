@@ -47,6 +47,14 @@ function scheduleNextEpisode() {
   nextTimer = setTimeout(playNextEpisode, 10_000);
   return true;
 }
+/** Preferred audio language (null = the file's default) and subtitles ('off' or a language), per device. */
+const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k: string, v: string | null) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
+export const audioLang = signal<string | null>(lsGet('relay.alang'));
+export const subLang = signal<string>(lsGet('relay.slang') ?? 'off');
+export function setAudioLang(l: string | null) { audioLang.value = l; lsSet('relay.alang', l); }
+export function setSubLang(l: string) { subLang.value = l; lsSet('relay.slang', l); }
+
 /** Sports: chase the live edge (lowest delay) instead of playing the provider's backlog smoothly. */
 export const lowLatencySports = signal<boolean>((() => { try { return localStorage.getItem('relay.lowLatency') !== '0'; } catch { return true; } })());
 export function setLowLatency(v: boolean) { lowLatencySports.value = v; try { localStorage.setItem('relay.lowLatency', v ? '1' : '0'); } catch {} }
@@ -70,6 +78,7 @@ const deviceName = (id?: string) => devices.value.find((d) => d.id === id)?.name
 
 export function attachPlayer(p: Player) {
   player = p;
+  p.onLangs?.((kind, lang) => (kind === 'audio' ? setAudioLang(lang) : setSubLang(lang)));
   p.on((e, detail) => {
     if (e === 'time') {
       position.value = p.position(); duration.value = p.duration();
@@ -117,6 +126,7 @@ function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
     duration: item.duration ?? undefined,
     tx: lastTx,
     interlaced: item.kind === 'live' && (lastInterlaced || !!src?.interlaced),
+    alang: audioLang.value, slang: subLang.value,
   };
 }
 

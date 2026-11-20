@@ -18,6 +18,18 @@ export interface LoadOpts {
   tx?: 'full' | 'audio';
   /** Interlaced live source: browsers don't deinterlace, so take the server's deinterlaced (50p) conversion. */
   interlaced?: boolean;
+  /** Preferred audio language (ISO code) and subtitle language ('off' = none), for movies/episodes. */
+  alang?: string | null;
+  slang?: string;
+}
+
+/** Audio / subtitle tracks of what's playing (movies through the server's HLS). */
+export interface MediaTracks {
+  audio: { n: number; lang: string | null; name: string }[];
+  subs: { n: number; lang: string | null; name: string; forced?: boolean }[];
+  /** Index into `audio` / `subs` of the one playing / shown (-1 = subtitles off). */
+  audioSel: number;
+  subSel: number;
 }
 
 export interface Player {
@@ -36,4 +48,10 @@ export interface Player {
   on(cb: (e: PlayerEvent, detail?: string) => void): void;
   /** What is actually being decoded right now (for passive quality verification). */
   info?(): { width: number; height: number; fps?: number; vcodec?: string; kbps?: number } | null;
+  /** Tracks of the current item, and switching between them (also from the native iOS menu). */
+  tracks?(): MediaTracks | null;
+  setAudio?(i: number): void;
+  setSub?(i: number): void;
+  /** Called when the user picks a language (any menu): lets the app remember it. */
+  onLangs?(cb: (kind: 'audio' | 'sub', lang: string) => void): void;
 }

@@ -65,6 +65,8 @@ export interface TxOpts {
   deintFrame?: boolean;
   userAgent?: string;
   output?: string;
+  /** Audio track (0-based among audio streams) to keep; default the first. */
+  audio?: number;
 }
 
 const UA = 'Relay/1.0 (like VLC/3.0.20)';
@@ -156,7 +158,7 @@ export function transcodeArgs(src: string, o: TxOpts): string[] {
   ];
   // B-frames need a little mux delay or DTS can fall behind the PCR.
   const out = [
-    '-map', '0:v:0', '-map', '0:a:0?', ...audioArgs(info, vod),
+    '-map', '0:v:0', '-map', `0:a:${o.audio && o.audio > 0 ? o.audio : 0}?`, ...audioArgs(info, vod),
     '-f', 'mpegts', '-muxdelay', p.bf ? '0.2' : '0', '-muxpreload', '0', o.output ?? 'pipe:1',
   ];
   if (mode === 'audio') return [...input, '-i', src, '-c:v', 'copy', ...out];
