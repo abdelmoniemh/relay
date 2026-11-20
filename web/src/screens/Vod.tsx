@@ -1,13 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Category, Item } from '@shared/protocol.ts';
 import { api, favorites, toggleFavorite, type Sort } from '../api.ts';
-import { back, push, navFocused } from '../router.ts';
+import { back, navFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, usePaged } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
-import { Poster, Star, clean } from '../ui/common.tsx';
+
+import { displayName } from '@shared/domain.ts';
 import { isMobile } from '../env.ts';
 import { IconBtn, PosterTile } from '../ui/kit.tsx';
 import { t } from '../i18n.ts';
+import { openItem } from '../catalogue.ts';
 
 type VCat = Category & { sort?: Sort };
 const memory: Record<string, { ci: number; fi: number }> = {};
@@ -47,11 +49,7 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
   const colW = (gridRef.current?.clientWidth ?? 1200) / cols;
   const rowH = Math.round(colW * 1.5 + 64);
 
-  const open = (it?: Item) => {
-    if (!it) return;
-    api.titleOf(it.id).then((r) => push({ name: 'title', tid: r.tid }))
-      .catch(() => push(kind === 'movie' ? { name: 'movie', item: it } : { name: 'show', item: it }));
-  };
+  const open = (it?: Item) => { if (it) openItem(it); };
 
   useKeys((k) => {
     if (navFocused.value) return false;
@@ -92,7 +90,7 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
         <VList count={count} rowH={rowH} cols={cols} focus={zone === 'grid' ? fi : -1} onRange={(s, e) => paged.ensure(s, e)} render={(i, f) => {
           const it = get(i);
           if (!it) return <div class="tile poster skel" />;
-          return <PosterTile src={it.icon} title={clean(it.name)} sub={it.rating ? `★ ${it.rating.toFixed(1)}` : undefined} focused={f}
+          return <PosterTile src={it.icon} title={displayName(it.name)} sub={it.rating ? `★ ${it.rating.toFixed(1)}` : undefined} focused={f}
             onClick={() => { setZone('grid'); setFi(i); open(it); }} />;
         }} />
       </div>

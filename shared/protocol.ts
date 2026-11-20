@@ -1,9 +1,9 @@
-// Shared types between relay-server and clients. iOS mirrors these in Swift (ios/Relay/Protocol.swift).
+// Types shared by the server and the clients (the web app, also built for the TV). Rules about them: domain.ts.
 
 export type Kind = 'live' | 'movie' | 'series' | 'episode';
 export type DeviceKind = 'tv' | 'phone' | 'desktop';
 
-/** Item ids are prefixed by kind: l123 (live), m123 (movie), s123 (series), e123 (episode). */
+/** `id`: kind-prefixed, see itemId() in domain.ts. */
 export interface Item {
   id: string;
   kind: Kind;

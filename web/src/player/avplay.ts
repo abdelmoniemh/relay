@@ -1,4 +1,4 @@
-import { sameLang } from './lang.ts';
+import { sameLang } from '@shared/domain.ts';
 import type { LoadOpts, Player, PlayerEvent } from './types.ts';
 
 /** Samsung Tizen hardware player: decodes TS/HLS/MKV natively, 4K capable, renders on a plane behind the web layer. */

@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { isFinished } from '../../shared/domain.ts';
 import websocket from '@fastify/websocket';
 import compress from '@fastify/compress';
 import cors from '@fastify/cors';
@@ -82,7 +83,7 @@ const hub = new Hub({
   saveProgress: (item: Item, position, duration) => upsertProgress.run(item.id, JSON.stringify(item), position, duration, Date.now(), item.seriesId ?? null),
   resumePosition: (item) => {
     const r = getProgress.get(item.id) as { position: number; duration: number } | undefined;
-    return r && r.duration > 0 && r.position < r.duration * 0.95 ? r.position : 0;
+    return r && r.duration > 0 && !isFinished(r.position, r.duration) ? r.position : 0;
   },
   urls: (item) => streamUrls(provider, item),
   leaseMoved: async (deviceId) => {

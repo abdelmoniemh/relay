@@ -10,7 +10,8 @@ import { clock, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
 import { Sheet, Btn } from './kit.tsx';
 import { Icon } from './Icon.tsx';
-import { clean } from './common.tsx';
+
+import { displayName } from '@shared/domain.ts';
 
 const day = (unix: number) => {
   const d = new Date(unix * 1000), today = new Date();
@@ -42,7 +43,7 @@ export function ProgrammesSheet({ channel, onClose }: { channel: Item; onClose: 
   const watch = (p: Programme) => { onClose(); playCatchup(channel, p); };
 
   return (
-    <Sheet title={clean(channel.name)} onClose={onClose}>
+    <Sheet title={displayName(channel.name)} onClose={onClose}>
       {!list && <div class="spinner inline" />}
       {list && !list.length && <p class="sheet-hint">{t('No programme guide for this channel')}</p>}
       {onNow && (
@@ -97,7 +98,7 @@ export function RemindSheet({ channel, prog, eventId, onClose }: { channel: Item
   const targets = [...devices.value].sort((a, b) => Number(b.kind === 'tv') - Number(a.kind === 'tv'));
   return (
     <Sheet title={prog.title} onClose={onClose}>
-      <p class="sheet-hint tnum">{day(prog.start)} · {clock(prog.start)}{prog.stop ? `–${clock(prog.stop)}` : ''} · {clean(channel.name)}</p>
+      <p class="sheet-hint tnum">{day(prog.start)} · {clock(prog.start)}{prog.stop ? `–${clock(prog.stop)}` : ''} · {displayName(channel.name)}</p>
       <div class="list-group">
         <button class="list-row tappable" onClick={() => set(isTizen ? myDeviceId.value : null)}>
           <span class="lr-main"><b>{isTizen ? t('Start it here when it begins') : t('Just remind me')}</b><span class="lr-sub">{t('Every open Relay app shows it a minute before')}</span></span>

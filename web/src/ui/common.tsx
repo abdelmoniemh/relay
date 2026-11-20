@@ -1,23 +1,11 @@
-import type { Item, Programme } from '@shared/protocol.ts';
-import { clock, img } from '../env.ts';
-import { favorites } from '../api.ts';
-import { Icon } from './Icon.tsx';
+import type { Programme } from '@shared/protocol.ts';
+import { clock } from '../env.ts';
+import { displayName } from '@shared/domain.ts';
 
 export function Logo({ src, name, size = 40 }: { src?: string | null; name: string; size?: number }) {
   return src
     ? <img class="logo" src={src} width={size} height={size} loading="lazy" decoding="async" alt="" onError={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = 'hidden')} />
-    : <div class="logo ph" style={{ width: size, height: size }}>{name.replace(/^[A-Z]{2,3}\s*[|:-]\s*/, '').slice(0, 2)}</div>;
-}
-
-export function Poster({ item, w = 185 }: { item: Item; w?: 154 | 185 | 342 }) {
-  const src = img(item.icon, w);
-  return src
-    ? <img class="poster" src={src} loading="lazy" decoding="async" alt="" onError={(e) => ((e.currentTarget as HTMLImageElement).style.opacity = '0')} />
-    : <div class="poster ph">{item.name.slice(0, 1)}</div>;
-}
-
-export function Star({ id }: { id: string }) {
-  return favorites.value.has(id) ? <Icon n="star" filled class="fav-mark" /> : null;
+    : <div class="logo ph" style={{ width: size, height: size }}>{displayName(name).slice(0, 2)}</div>;
 }
 
 export function ProgBar({ p, d }: { p: number; d: number }) {
@@ -36,6 +24,3 @@ export function NowLine({ list }: { list?: Programme[] }) {
     </div>
   );
 }
-
-/** Strip provider prefixes like "UK| " or "NL - " for display. */
-export const clean = (s: string) => s.replace(/^([A-Z0-9]{2,4}|4K)\s*[|:]\s*/, '').replace(/^[A-Z]{2,3} - /, '');

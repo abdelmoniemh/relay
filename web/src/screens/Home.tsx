@@ -5,24 +5,20 @@ import { current, play, playEvent } from '../playback.ts';
 import { go, push, navFocused, compact } from '../router.ts';
 import { connected } from '../ws.ts';
 import { useAsync, useKeys, epgVersion } from '../ui/hooks.ts';
-import { clean } from '../ui/common.tsx';
+
+import { displayName } from '@shared/domain.ts';
 import { Billboard, ChannelTile, IconBtn, PosterTile, Row, SkeletonRow, LivePill, QualityChip, type Action } from '../ui/kit.tsx';
 import { Icon, type IconName } from '../ui/Icon.tsx';
 import { Card } from './Browse.tsx';
 import { fmtTime } from '../env.ts';
 import { t } from '../i18n.ts';
+import { openItem, versionItem } from '../catalogue.ts';
 
 interface Tile { key: string; render: (f: boolean) => any; act: () => void }
 interface HRow { title: string; tiles: Tile[]; wide?: boolean; more?: () => void }
 
 const kickoff = (e: SportEvent) => e.start ? new Date(e.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
-/** Open a VOD item on its title page (falls back to the raw provider detail). */
-function openVod(it: Item) {
-  if (it.id.startsWith('t')) { push({ name: 'title', tid: Number(it.id.slice(1)) }); return; }
-  api.titleOf(it.kind === 'episode' && it.seriesId ? it.seriesId : it.id).then((r) => push({ name: 'title', tid: r.tid }))
-    .catch(() => push(it.kind === 'series' || it.kind === 'episode' ? { name: 'show', item: it } : { name: 'movie', item: it }));
-}
 
 export function Home() {
   const cont = useAsync(() => api.continueWatching(), [current.value?.id]);
@@ -50,8 +46,8 @@ export function Home() {
       ? { label: bb.p.item.kind === 'episode' ? t('Resume S{s} E{e}', { s: bb.p.item.season ?? '', e: bb.p.item.episode ?? '' }) : t('Resume'), icon: 'play', primary: true,
           act: () => play(bb.p!.item, { startAt: bb.p!.position }) }
       : { label: t('Play'), icon: 'play', primary: true, act: () => {
-          const v = bb.d.versions[0];
-          if (bb.d.kind === 'movie' && v) play({ ...v.item, duration: (bb.d.runtime ?? 0) * 60 || null }, { startAt: 0 });
+          const v = versionItem(bb.d);
+          if (v) play(v, { startAt: 0 });
           else push({ name: 'title', tid: bb.d.tid });
         } },
     { label: t('More info'), icon: 'info', act: () => push({ name: 'title', tid: bb.d.tid }) },
@@ -64,7 +60,7 @@ export function Home() {
       render: (f) => {
         const show = p.item.kind === 'episode' ? favorites.value.get(p.item.seriesId ?? '') : null;
         return <PosterTile src={show?.icon ?? p.item.icon} focused={f} progress={p.duration ? p.position / p.duration : 0}
-          title={show ? clean(show.name) : clean(p.item.name)}
+          title={show ? displayName(show.name) : displayName(p.item.name)}
           sub={p.item.kind === 'episode' ? `S${p.item.season} E${p.item.episode} · ${t('{t} left', { t: fmtTime(Math.max(0, p.duration - p.position)) })}` : t('{t} left', { t: fmtTime(Math.max(0, p.duration - p.position)) })} />;
       },
     })) });
@@ -90,7 +86,7 @@ export function Home() {
     }) });
     const favVod = [...favorites.value.values()].filter((i) => i.kind === 'movie' || i.kind === 'series');
     if (favVod.length) out.push({ title: t('My list'), tiles: favVod.map((it) => ({
-      key: it.id, act: () => openVod(it), render: (f: boolean) => <PosterTile src={it.icon} title={clean(it.name)} focused={f} />,
+      key: it.id, act: () => openItem(it), render: (f: boolean) => <PosterTile src={it.icon} title={displayName(it.name)} focused={f} />,
     })) });
     const wlItems = wl.data?.items ?? [];
     if (wlItems.length) out.push({ title: t('From your Letterboxd watchlist'), more: () => push({ name: 'grid', kind: 'movie', filters: { wl: '1', sort: 'watchlist' }, title: t('Your Letterboxd watchlist') }),
@@ -136,7 +132,7 @@ export function Home() {
       )}
       {bb ? (
         <Billboard backdrop={bb.d.backdrop} poster={bb.d.poster} title={bb.d.name} meta={meta} plot={bb.d.plot}
-          eyebrow={bb.p ? (bb.p.item.kind === 'episode' ? `S${bb.p.item.season} E${bb.p.item.episode} · ${clean(bb.p.item.name)}` : t('Continue watching')) : t('From your watchlist')}
+          eyebrow={bb.p ? (bb.p.item.kind === 'episode' ? `S${bb.p.item.season} E${bb.p.item.episode} · ${displayName(bb.p.item.name)}` : t('Continue watching')) : t('From your watchlist')}
           actions={bbActions} focus={kb && ri === -1 ? col(-1) : -1} />
       ) : loading ? <div class="billboard skel" /> : null}
       <div class="rows">

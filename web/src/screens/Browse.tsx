@@ -8,6 +8,7 @@ import { Billboard, PosterTile, Row, Segmented, SkeletonRow, IconBtn, type Actio
 import { Icon } from '../ui/Icon.tsx';
 import { isMobile, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
+import { versionItem } from '../catalogue.ts';
 
 const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 export const openTitle = (tid: number) => push({ name: 'title', tid });
@@ -48,8 +49,8 @@ export function Browse({ kind }: { kind: 'movie' | 'series' }) {
   ];
   const bbActions: Action[] = !bb ? [] : [
     { label: t('Play'), icon: 'play', primary: true, act: () => {
-      const v = bb.versions[0];
-      if (bb.kind === 'movie' && v) play({ ...v.item, duration: (bb.runtime ?? 0) * 60 || null }, { startAt: 0 });
+      const v = versionItem(bb);
+      if (v) play(v, { startAt: 0 });
       else openTitle(bb.tid);
     } },
     { label: t('More info'), icon: 'info', act: () => openTitle(bb.tid) },

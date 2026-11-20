@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { isFinished, MIN_RESUME_S } from '@shared/domain.ts';
 import type { Item } from '@shared/protocol.ts';
-import { api, favorites, toggleFavorite, type TitleCard, type TitleDetail, type VersionInfo } from '../api.ts';
+import { api, favorites, toggleFavorite, type TitleCard, type VersionInfo } from '../api.ts';
 import { back, navFocused, compact } from '../router.ts';
 import { play } from '../playback.ts';
 import { useAsync, useKeys } from '../ui/hooks.ts';
@@ -11,6 +12,7 @@ import { Icon } from '../ui/Icon.tsx';
 import { fmtTime, img, isTizen } from '../env.ts';
 import { t as tr } from '../i18n.ts';
 import { Card, openTitle } from './Browse.tsx';
+import { versionItem } from '../catalogue.ts';
 
 type Ep = Item & { plot?: string; duration?: number };
 const LANG_NAME: Record<string, string> = { eng: 'English', en: 'English', ara: 'Arabic', ar: 'Arabic', fre: 'French', fra: 'French', ger: 'German', deu: 'German', spa: 'Spanish', ita: 'Italian', tur: 'Turkish', hin: 'Hindi', por: 'Portuguese', dut: 'Dutch', nld: 'Dutch', rus: 'Russian', pol: 'Polish', jpn: 'Japanese', kor: 'Korean', chi: 'Chinese', zho: 'Chinese', heb: 'Hebrew', per: 'Persian', fas: 'Persian' };
@@ -38,8 +40,8 @@ export function TitleScreen({ tid }: { tid: number }) {
   const prog = useAsync(() => (vIds.length && t?.kind === 'movie' ? api.progress(vIds) : Promise.resolve({} as Record<string, [number, number]>)), [vIds.join()]);
   const resumeAt = useMemo(() => {
     let best = 0, dur = 0;
-    for (const [p, du] of Object.values(prog.data ?? {})) if (p > best && du > 0 && p < du * 0.95) { best = p; dur = du; }
-    return best > 30 ? { p: best, d: dur } : null;
+    for (const [p, du] of Object.values(prog.data ?? {})) if (p > best && du > 0 && !isFinished(p, du)) { best = p; dur = du; }
+    return best > MIN_RESUME_S ? { p: best, d: dur } : null;
   }, [prog.data]);
 
   // ---- series: seasons of the chosen version ----
@@ -56,7 +58,7 @@ export function TitleScreen({ tid }: { tid: number }) {
     allEps.forEach((e, i) => { if (epProg.data?.[e.id]) idx = i; });
     if (idx < 0) return { ep: allEps[0], at: 0 };
     const [p, du] = epProg.data![allEps[idx].id];
-    if (du > 0 && p > du * 0.95) return { ep: allEps[idx + 1] ?? allEps[idx], at: 0 };
+    if (isFinished(p, du)) return { ep: allEps[idx + 1] ?? allEps[idx], at: 0 };
     return { ep: allEps[idx], at: p };
   }, [allEps, epProg.data]);
   useEffect(() => {
@@ -69,12 +71,13 @@ export function TitleScreen({ tid }: { tid: number }) {
 
   const playMovie = (v: VersionInfo | undefined, from: number) => {
     if (!v || !t) return;
-    play({ ...v.item, duration: (t.runtime ?? 0) * 60 || resumeAt?.d || null }, { startAt: from });
+    const it = versionItem({ ...t, versions: [v] }, 0, resumeAt?.d);
+    if (it) play(it, { startAt: from });
   };
   const playEp = (e: Ep | undefined, at?: number) => {
     if (!e) return;
     const pr = epProg.data?.[e.id];
-    const start = at ?? (pr && pr[0] < pr[1] * 0.95 ? pr[0] : 0);
+    const start = at ?? (pr && !isFinished(pr[0], pr[1]) ? pr[0] : 0);
     play({ ...e, duration: e.duration ?? (pr?.[1] || null) }, { startAt: start, episodes: allEps });
   };
   const isFav = t ? favorites.value.has(`t${t.tid}`) : false;
@@ -85,7 +88,7 @@ export function TitleScreen({ tid }: { tid: number }) {
       ? resumeAt ? [{ label: tr('Resume {t}', { t: fmtTime(resumeAt.p) }), icon: 'play' as const, primary: true, act: () => playMovie(ver, resumeAt.p) },
           { label: tr('Start over'), icon: 'restart' as const, act: () => playMovie(ver, 0) }]
         : [{ label: tr('Play'), icon: 'play' as const, primary: true, act: () => playMovie(ver, 0) }]
-      : resumeEp.ep ? [{ label: tr(resumeEp.at > 30 ? 'Resume S{s} E{e}' : 'Play S{s} E{e}', { s: resumeEp.ep.season ?? '', e: resumeEp.ep.episode ?? '' }), icon: 'play' as const, primary: true, act: () => playEp(resumeEp.ep, resumeEp.at) }] : []),
+      : resumeEp.ep ? [{ label: tr(resumeEp.at > MIN_RESUME_S ? 'Resume S{s} E{e}' : 'Play S{s} E{e}', { s: resumeEp.ep.season ?? '', e: resumeEp.ep.episode ?? '' }), icon: 'play' as const, primary: true, act: () => playEp(resumeEp.ep, resumeEp.at) }] : []),
     ...(t.trailer ? [{ label: tr('Trailer'), icon: 'trailer' as const, act: () => setPanel('trailer') }] : []),
     { label: isFav ? tr('In my list') : tr('My list'), icon: isFav ? 'check' as const : 'plus' as const, act: fav },
     ...(t.versions.length > 1 ? [{ label: tr('Versions ({n})', { n: t.versions.length }), icon: 'film' as const, act: () => { setPi(verIdx); setPanel('versions'); } }] : []),
@@ -214,7 +217,7 @@ export function TitleScreen({ tid }: { tid: number }) {
             <VList class="eps" count={eps.length} rowH={isTizen ? 168 : compact.value ? 116 : 132} focus={f('eps') ? ei : -1} render={(n, foc) => {
               const e = eps[n];
               const pr = epProg.data?.[e.id];
-              const done = pr && pr[0] > pr[1] * 0.95;
+              const done = pr && isFinished(pr[0], pr[1]);
               return (
                 <div class={`ep ${foc ? 'focus' : ''}`} onClick={() => { setEi(n); playEp(e); }} role="button">
                   <div class="ep-thumb">

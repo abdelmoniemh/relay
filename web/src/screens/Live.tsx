@@ -5,7 +5,8 @@ import { current, mode, play, setMode, status, errorMsg } from '../playback.ts';
 import { navFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, usePaged, nowNext, epgVersion } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
-import { Logo, NowLine, Star, clean } from '../ui/common.tsx';
+import { Logo, NowLine } from '../ui/common.tsx';
+import { displayName } from '@shared/domain.ts';
 import { clock, isMobile } from '../env.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { t } from '../i18n.ts';
@@ -105,7 +106,7 @@ export function Live() {
               <span class="num">{playing ? <Icon n="play" /> : i + 1}</span>
               <Logo src={it.icon} name={it.name} />
               <div class="meta">
-                <div class="name">{clean(it.name)}{it.archive ? <span class="badge-inline">{t('Catch-up')}</span> : null}</div>
+                <div class="name">{displayName(it.name)}{it.archive ? <span class="badge-inline">{t('Catch-up')}</span> : null}</div>
                 <NowLine list={nowNext(it.epg)} />
               </div>
               <button class={`fav-btn ${fav ? 'on' : ''}`} aria-label={fav ? t('Remove from favourites') : t('Add to favourites')} aria-pressed={fav}
@@ -122,7 +123,7 @@ export function Live() {
         </div>
         {focused && (
           <div class="info">
-            <div class="title"><Logo src={focused.icon} name={focused.name} size={56} /> <span>{clean(focused.name)}</span></div>
+            <div class="title"><Logo src={focused.icon} name={focused.name} size={56} /> <span>{displayName(focused.name)}</span></div>
             {epgNow?.length ? epgNow.slice(0, 2).map((p, n) => (
               <div class="prog" key={p.start}>
                 <div class="when">{n === 0 ? t('Now') : t('Next')} · <span class="tnum">{clock(p.start)}–{clock(p.stop)}</span></div>

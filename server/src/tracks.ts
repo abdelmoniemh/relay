@@ -1,5 +1,6 @@
 // Audio and subtitle tracks of a movie/episode file, and choosing between them.
 import { execFile } from 'node:child_process';
+import { lang2, sameLang } from '../../shared/domain.ts';
 
 export interface AudioTrack { n: number; lang: string | null; title: string | null; codec: string; channels: number | null; def: boolean }
 export interface SubTrack { n: number; lang: string | null; title: string | null; codec: string; forced: boolean; sdh: boolean; text: boolean }
@@ -88,26 +89,11 @@ export class TrackStore {
 
 // ---- choosing ----
 
-/** ISO 639-1/-2 codes for one language, e.g. 'ar' -> ['ar', 'ara']. */
-const ALIASES: Record<string, string[]> = {
-  en: ['en', 'eng'], ar: ['ar', 'ara'], fr: ['fr', 'fre', 'fra'], de: ['de', 'ger', 'deu'], es: ['es', 'spa'], it: ['it', 'ita'],
-  pt: ['pt', 'por'], tr: ['tr', 'tur'], hi: ['hi', 'hin'], ur: ['ur', 'urd'], ru: ['ru', 'rus'], ja: ['ja', 'jpn'], ko: ['ko', 'kor'],
-  zh: ['zh', 'chi', 'zho'], nl: ['nl', 'dut', 'nld'], fa: ['fa', 'per', 'fas'], he: ['he', 'heb'], el: ['el', 'gre', 'ell'],
-  pl: ['pl', 'pol'], sv: ['sv', 'swe'], no: ['no', 'nor', 'nob'], da: ['da', 'dan'], fi: ['fi', 'fin'], ta: ['ta', 'tam'], te: ['te', 'tel'],
-};
-/** Normalises any language code to its 2-letter form when known. */
-export function lang2(code: string | null | undefined): string | null {
-  const c = (code ?? '').toLowerCase().split(/[-_]/)[0];
-  if (!c) return null;
-  for (const [k, v] of Object.entries(ALIASES)) if (v.includes(c)) return k;
-  return c;
-}
-const same = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && lang2(a) === lang2(b);
 
 /** Audio to start with: the preferred language, else the file's default, else the first. */
 export function pickAudio(t: Tracks, pref: string | null): number {
   if (!t.audio.length) return -1;
-  const byLang = pref ? t.audio.find((a) => same(a.lang, pref)) : undefined;
+  const byLang = pref ? t.audio.find((a) => sameLang(a.lang, pref)) : undefined;
   return (byLang ?? t.audio.find((a) => a.def) ?? t.audio[0]).n;
 }
 
@@ -118,11 +104,11 @@ export function pickAudio(t: Tracks, pref: string | null): number {
 export function pickSub(t: Tracks, pref: string | null, audioLang: string | null): number {
   const text = t.subs.filter((s) => s.text);
   if (pref && pref !== 'off') {
-    const m = text.filter((s) => same(s.lang, pref));
+    const m = text.filter((s) => sameLang(s.lang, pref));
     const best = m.find((s) => !s.forced && !s.sdh) ?? m.find((s) => !s.forced) ?? m[0];
     if (best) return best.n;
   }
-  const forced = text.find((s) => s.forced && (same(s.lang, audioLang) || !s.lang));
+  const forced = text.find((s) => s.forced && (sameLang(s.lang, audioLang) || !s.lang));
   return forced ? forced.n : -1;
 }
 

@@ -7,11 +7,14 @@ import { myDeviceId } from '../api.ts';
 import { devices, lease, send } from '../ws.ts';
 import { current, takeover } from '../playback.ts';
 import { Search } from './Search.tsx';
-import { Logo, ProgBar, clean } from '../ui/common.tsx';
+import { Logo, ProgBar } from '../ui/common.tsx';
+import { displayName } from '@shared/domain.ts';
 import { fmtTime, img } from '../env.ts';
 import { Btn, IconBtn, LivePill, Segmented } from '../ui/kit.tsx';
 import { Icon, type IconName } from '../ui/Icon.tsx';
 import { t } from '../i18n.ts';
+import { versionItem } from '../catalogue.ts';
+import { parseTitleId } from '@shared/domain.ts';
 
 let lastTarget: string | null = null;
 
@@ -61,7 +64,7 @@ export function Remote() {
         <div class="np">
           <div class="np-art">{playingThere.item.kind === 'live' ? <Logo src={playingThere.item.icon} name={playingThere.item.name} size={48} /> : <img src={img(playingThere.item.icon, 92)} alt="" />}</div>
           <div class="np-txt">
-            <b>{clean(playingThere.item.name)}</b>
+            <b>{displayName(playingThere.item.name)}</b>
             {playingThere.duration > 0 ? <>
               <ProgBar p={playingThere.position} d={playingThere.duration} />
               <span class="tnum">{fmtTime(playingThere.position)} / {fmtTime(playingThere.duration)}{playingThere.paused ? ` · ${t('Paused')}` : ''}</span>
@@ -115,11 +118,12 @@ export function Remote() {
         </div>
       ) : (
         <Search onPick={async (it) => {
-          if (it.id.startsWith('t')) {
+          const tid = parseTitleId(it.id);
+          if (tid != null) {
             // A movie title: send its best version. (Series: pick the episode on the TV.)
-            const d = await api.title(Number(it.id.slice(1))).catch(() => null);
-            const v = d?.versions[0];
-            if (d?.kind === 'movie' && v) sendItem({ ...v.item, duration: (d.runtime ?? 0) * 60 || null });
+            const d = await api.title(tid).catch(() => null);
+            const v = d && versionItem(d);
+            if (v) sendItem(v);
             return;
           }
           if (it.kind === 'series') return;

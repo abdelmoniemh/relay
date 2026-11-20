@@ -13,7 +13,7 @@ self.addEventListener('push', (e) => {
     if (!Array.isArray(due) || !due.length) due = [{ id: 'relay', title: 'Starting soon', channel: 'Relay' }];
     // iOS requires every push to show a notification
     await Promise.all(due.map((r) => self.registration.showNotification(r.title, {
-      body: `Starting now on ${String(r.channel).replace(/^([A-Z0-9]{2,4}|4K)\s*[|:]\s*/, '')}`,
+      body: `Starting now on ${r.channel}`, // the server sends the display name
       tag: r.id, icon: r.icon || '/apple-touch-icon.png', data: { id: r.id },
     })));
   })());

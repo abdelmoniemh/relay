@@ -2,14 +2,14 @@ import { useEffect, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { lowLatencySports, setLowLatency, audioLang, setAudioLang, subLang, setSubLang, dataSaver, setDataSaver, isAway, type DataSaver } from '../playback.ts';
 import { reminders, loadReminders, unremind, notificationsOn, notificationsBlocker, enableNotifications, disableNotifications } from '../notify.ts';
-import { clock } from '../env.ts';
+import { PREFERRED_LANGS } from '@shared/domain.ts';
 import { api, server, setServer, myDeviceId, setCredentials, clearCache } from '../api.ts';
 import { devices, connected } from '../ws.ts';
 import { navFocused, back, compact, stack } from '../router.ts';
 import { useAsync, useKeys } from '../ui/hooks.ts';
 import { EditSheet, IconBtn, Sheet, Btn } from '../ui/kit.tsx';
 import { Icon, type IconName } from '../ui/Icon.tsx';
-import { isTizen } from '../env.ts';
+import { isTizen, clock } from '../env.ts';
 import { t, lang, setLang } from '../i18n.ts';
 
 const ago = (ms: number) => {
@@ -28,7 +28,6 @@ type Edit = { title: string; hint?: string; initial: string; save: (v: string) =
 type Pick = { title: string; hint?: string; options: { label: string; sel: boolean; act: () => void }[] } | null;
 
 /** Languages offered for audio / subtitles (others still play: these are just the preference). */
-const LANGS = ['en', 'ar', 'fr', 'es', 'de', 'it', 'pt', 'tr', 'hi', 'ur', 'ru', 'ja', 'ko', 'zh'];
 const langName = (code: string) => { try { return new Intl.DisplayNames([lang.value], { type: 'language' }).of(code) ?? code; } catch { return code; } };
 
 export function Settings() {
@@ -68,12 +67,12 @@ export function Settings() {
     { id: 'alang', label: t('Audio language'), value: audioLang.value ? langName(audioLang.value) : t('As the film comes'),
       act: () => setPick({ title: t('Audio language'), hint: t('When a film or episode has several, start with this one.'), options: [
         { label: t('As the film comes'), sel: !audioLang.value, act: () => setAudioLang(null) },
-        ...LANGS.map((c) => ({ label: langName(c), sel: audioLang.value === c, act: () => setAudioLang(c) })),
+        ...PREFERRED_LANGS.map((c) => ({ label: langName(c), sel: audioLang.value === c, act: () => setAudioLang(c) })),
       ] }) },
     { id: 'slang', label: t('Subtitles'), value: subLang.value === 'off' ? t('Off') : langName(subLang.value),
       act: () => setPick({ title: t('Subtitles'), hint: t('Shown when the film has them. Forced subtitles (signs, foreign dialogue) show either way.'), options: [
         { label: t('Off'), sel: subLang.value === 'off', act: () => setSubLang('off') },
-        ...LANGS.map((c) => ({ label: langName(c), sel: subLang.value === c, act: () => setSubLang(c) })),
+        ...PREFERRED_LANGS.map((c) => ({ label: langName(c), sel: subLang.value === c, act: () => setSubLang(c) })),
       ] }) },
     ...(!isTizen ? [{ id: 'saver', label: t('Data saver'), value: DS[dataSaver.value],
       sub: dataSaver.value === 'auto' ? (isAway() ? t('On now: Relay is reached through Tailscale') : t('Turns on away from home (through Tailscale)')) : dataSaver.value === 'on' ? t('720p, about 3 Mbps') : t('Full quality'),

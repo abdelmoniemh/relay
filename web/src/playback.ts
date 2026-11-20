@@ -8,6 +8,7 @@ import { dispatchKey, type Key } from './keys.ts';
 import type { Player } from './player/types.ts';
 import { isTizen } from './env.ts';
 import { t } from './i18n.ts';
+import { displayName } from '@shared/domain.ts';
 
 export type Mode = 'off' | 'mini' | 'full';
 export type Status = 'idle' | 'requesting' | 'loading' | 'playing' | 'paused' | 'buffering' | 'error';
@@ -391,7 +392,7 @@ onServer((m: ServerMsg) => {
       return;
     case 'reminder': {
       const r = m.reminder;
-      showToast(`${t('Starting now')}: ${r.title} · ${r.item.name.replace(/^([A-Z0-9]{2,4}|4K)\s*[|:]\s*/, '')}`, 8000);
+      showToast(`${t('Starting now')}: ${r.title} · ${displayName(r.item.name)}`, 8000);
       return;
     }
   }
@@ -420,7 +421,6 @@ window.addEventListener('pagehide', () => { if (current.value) stop(); });
 // Without this iOS shows nothing on the lock screen and the AirPods/headphone buttons do nothing.
 const ms = typeof navigator !== 'undefined' && 'mediaSession' in navigator && !isTizen ? navigator.mediaSession : null;
 if (ms) {
-  const tidy = (s: string) => s.replace(/^([A-Z0-9]{2,4}|4K)\s*[|:]\s*/, '').replace(/^[A-Z]{2,3} - /, '');
   const on = (a: MediaSessionAction, h: MediaSessionActionHandler | null) => { try { ms.setActionHandler(a, h); } catch {} };
   let shownId: string | null = null;
   effect(() => {
@@ -430,8 +430,8 @@ if (ms) {
     shownId = it.id;
     const live = isLiveNow(it);
     ms.metadata = new MediaMetadata({
-      title: it.catchup?.title ? `${it.catchup.title}` : tidy(it.name),
-      artist: it.catchup ? `${tidy(it.name)} · catch-up` : live ? 'Live TV' : it.kind === 'episode' && it.season ? `S${it.season} · E${it.episode}` : 'Relay',
+      title: it.catchup?.title ? `${it.catchup.title}` : displayName(it.name),
+      artist: it.catchup ? `${displayName(it.name)} · catch-up` : live ? 'Live TV' : it.kind === 'episode' && it.season ? `S${it.season} · E${it.episode}` : 'Relay',
       album: 'Relay',
       artwork: it.icon ? [{ src: it.icon, sizes: '512x512' }] : [],
     });

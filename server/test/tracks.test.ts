@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseTracks, pickAudio, pickSub, probeTracks, trackName, lang2, type Tracks } from '../src/tracks.ts';
+import { parseTracks, pickAudio, pickSub, probeTracks, trackName, type Tracks } from '../src/tracks.ts';
+import { lang2 } from '../../shared/domain.ts';
 import { subtitlePlaylist, subtitleSegment, masterPlaylist, parseVtt } from '../src/subs.ts';
 
 let ok = true;

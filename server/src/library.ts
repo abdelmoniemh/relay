@@ -1,4 +1,5 @@
 // Movie/series browsing on top of `titles` (one row per film/show) and its versions (provider copies).
+import { FINISHED, MIN_RESUME_S } from '../../shared/domain.ts';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Item } from '../../shared/protocol.ts';
 import type { Tmdb } from './tmdb.ts';
@@ -116,7 +117,7 @@ export class Library {
   /** Continue watching for this kind: latest unfinished movie, or latest episode per series, as title cards. */
   continueRow(kind: 'movie' | 'series'): TitleCard[] {
     const rows = this.db.prepare(`SELECT json, position, duration, updated, series FROM progress
-      WHERE json->>'kind' = ? AND duration > 0 AND position > 30 AND position < duration * 0.95 ORDER BY updated DESC LIMIT 60`)
+      WHERE json->>'kind' = ? AND duration > 0 AND position > ${MIN_RESUME_S} AND position < duration * ${FINISHED} ORDER BY updated DESC LIMIT 60`)
       .all(kind === 'movie' ? 'movie' : 'episode') as any[];
     const out: TitleCard[] = [];
     const seen = new Set<number>();

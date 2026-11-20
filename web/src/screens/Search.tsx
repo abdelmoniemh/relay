@@ -1,27 +1,21 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Item } from '@shared/protocol.ts';
 import { api, favorites, type TitleCard } from '../api.ts';
-import { play } from '../playback.ts';
-import { push, navFocused } from '../router.ts';
+import { navFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
-import { Logo, NowLine, clean } from '../ui/common.tsx';
+import { Logo, NowLine } from '../ui/common.tsx';
+import { displayName } from '@shared/domain.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { img, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
 import { compact } from '../router.ts';
+import { openItem } from '../catalogue.ts';
 
 const GROUPS: { kind: 'live' | 'movie' | 'series'; label: string }[] = [
   { kind: 'live', label: 'Channels' }, { kind: 'movie', label: 'Movies' }, { kind: 'series', label: 'Series' },
 ];
 let lastQ = '';
 
-export function openItem(it: Item) {
-  if (it.id.startsWith('t')) { push({ name: 'title', tid: Number(it.id.slice(1)) }); return; }
-  if (it.kind === 'live') play(it, { mode: 'full' });
-  else if (it.kind === 'movie') push({ name: 'movie', item: it });
-  else if (it.kind === 'series') push({ name: 'show', item: it });
-  else play(it);
-}
 
 export function Search({ onPick, autoFocus = true }: { onPick?: (it: Item) => void; autoFocus?: boolean }) {
   const [q, setQ] = useState(lastQ);
@@ -98,7 +92,7 @@ export function Search({ onPick, autoFocus = true }: { onPick?: (it: Item) => vo
                     {it.kind === 'live' ? <Logo src={it.icon} name={it.name} size={48} />
                       : it.icon ? <img class="thumb-poster" src={img(it.icon, 92)} loading="lazy" alt="" /> : <span class="thumb-poster ph">{it.name.slice(0, 1)}</span>}
                     <span class="lr-main">
-                      <b>{clean(it.name)}{favorites.value.has(it.id) && <Icon n="star" filled class="fav-mark" />}</b>
+                      <b>{displayName(it.name)}{favorites.value.has(it.id) && <Icon n="star" filled class="fav-mark" />}</b>
                       {it.kind === 'live' ? <NowLine list={nowNext(it.epg)} /> : <span class="lr-sub">{it.rating ? `★ ${(it.rating * 2).toFixed(1)}` : ''}</span>}
                     </span>
                     <Icon n="chevron" class="lr-chev" />

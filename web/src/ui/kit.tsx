@@ -2,7 +2,8 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Item } from '@shared/protocol.ts';
 import { Icon, type IconName } from './Icon.tsx';
-import { Logo, NowLine, clean } from './common.tsx';
+import { Logo, NowLine } from './common.tsx';
+import { displayName } from '@shared/domain.ts';
 import { img } from '../env.ts';
 import { t } from '../i18n.ts';
 import { lease, devices } from '../ws.ts';
@@ -113,7 +114,7 @@ export function ChannelTile({ it, focused, onClick, playing }: { it: Item; focus
   return (
     <div class={`tile landscape chan ${focused ? 'focus' : ''} ${playing ? 'playing' : ''}`} onClick={onClick} role="button" tabIndex={-1}>
       <div class="art"><Logo src={it.icon} name={it.name} size={72} /></div>
-      <div class="cap">{clean(it.name)}</div>
+      <div class="cap">{displayName(it.name)}</div>
       <NowLine list={nowNext(it.epg)} />
     </div>
   );
@@ -202,7 +203,7 @@ export function MiniPlayer() {
     <div class="miniplayer" role="status">
       <div class="mp-art">{l.item.kind === 'live' ? <Logo src={l.item.icon} name={l.item.name} size={40} /> : <img src={img(l.item.icon, 92)} alt="" />}</div>
       <div class="mp-txt">
-        <b>{clean(l.item.name)}</b>
+        <b>{displayName(l.item.name)}</b>
         <span>{t('Playing on {name}', { name: dev })}</span>
       </div>
       <button class="btn primary small" onClick={() => takeover()}><span class="keydot green" />{t('Watch here')}</button>

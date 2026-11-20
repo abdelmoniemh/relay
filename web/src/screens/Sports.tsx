@@ -5,8 +5,9 @@ import { playEvent, play, current, sourceEvent } from '../playback.ts';
 import { navFocused } from '../router.ts';
 import { useKeys, useDebounced } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
-import { Logo, clean } from '../ui/common.tsx';
-import { isMobile, isTizen } from '../env.ts';
+import { Logo } from '../ui/common.tsx';
+import { displayName } from '@shared/domain.ts';
+import { isMobile } from '../env.ts';
 import { Btn, IconBtn, LivePill, QualityChip } from '../ui/kit.tsx';
 import { Icon } from '../ui/Icon.tsx';
 import { t, tn } from '../i18n.ts';
@@ -177,7 +178,7 @@ export function Sports() {
                 <div class={`row source ${f ? 'focus' : ''} ${s.dead ? 'offline' : ''}`} onClick={() => play(s.item, { sources, eventId: focused.id, mode: 'full' })}>
                   <span class="num tnum">{i + 1}</span>
                   <Logo src={s.item.icon} name={s.item.name} size={36} />
-                  <div class="meta"><div class="name">{clean(s.item.name)}</div></div>
+                  <div class="meta"><div class="name">{displayName(s.item.name)}</div></div>
                   <QualityChip label={s.label} verified={s.verified} dead={s.dead} />
                 </div>
               );

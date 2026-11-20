@@ -12,7 +12,8 @@ import {
 import { Sheet } from '../ui/kit.tsx';
 import { ProgrammesSheet } from '../ui/programmes.tsx';
 import { useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
-import { Logo, clean } from '../ui/common.tsx';
+import { Logo } from '../ui/common.tsx';
+import { displayName } from '@shared/domain.ts';
 import { api, myDeviceId, toggleFavorite, favorites } from '../api.ts';
 import { devices, send } from '../ws.ts';
 import { route, go } from '../router.ts';
@@ -159,7 +160,7 @@ export function PlayerHost() {
             onDblClick={() => m === 'full' && toggleFullscreen()} />}
       {m === 'mini' && rect && !hw && !onLive && (
         <div class="mini-ctl" style={{ left: rect.x, top: rect.y - 40, width: rect.w }}>
-          <span class="name">{current.value && clean(current.value.name)}</span>
+          <span class="name">{current.value && displayName(current.value.name)}</span>
           <button aria-label={t('Full screen')} onClick={() => setMode('full')}><Icon n="expand" /></button>
           <button aria-label={t('Stop')} onClick={() => stop()}><Icon n="close" /></button>
         </div>
@@ -280,9 +281,9 @@ function Overlay() {
         <button class="ico tool" aria-label={t('Back')} onClick={() => (live ? setMode('mini') : stop())}><Icon n="back" /></button>
         {it.kind === 'live' && <Logo src={it.icon} name={it.name} size={56} />}
         <div class="t">
-          <div class="name">{it.catchup?.title ?? clean(it.name)}{favorites.value.has(it.id) && !it.catchup && <Icon n="star" filled class="fav-mark" />}</div>
+          <div class="name">{it.catchup?.title ?? displayName(it.name)}{favorites.value.has(it.id) && !it.catchup && <Icon n="star" filled class="fav-mark" />}</div>
           {it.kind === 'episode' && <div class="sub">S{it.season} · E{it.episode}</div>}
-          {it.catchup && <div class="sub"><span class="badge-inline">{t('Catch-up')}</span> {clean(it.name)} · <span class="tnum">{clock(it.catchup.start)}</span></div>}
+          {it.catchup && <div class="sub"><span class="badge-inline">{t('Catch-up')}</span> {displayName(it.name)} · <span class="tnum">{clock(it.catchup.start)}</span></div>}
         </div>
         <div class="clock tnum">{clock(now)}</div>
         {airplay.value && <button class="ico tool" title="AirPlay" aria-label="AirPlay" onClick={() => { poke(); showAirplay(); }}><Icon n="airplay" /></button>}

@@ -5,7 +5,8 @@ import { back, navFocused } from '../router.ts';
 import { play } from '../playback.ts';
 import { useAsync, useKeys } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
-import { ProgBar, clean } from '../ui/common.tsx';
+import { ProgBar } from '../ui/common.tsx';
+import { displayName, isFinished, isResumable } from '@shared/domain.ts';
 import { fmtTime, img } from '../env.ts';
 import { Btn, IconBtn, type Action } from '../ui/kit.tsx';
 import { t } from '../i18n.ts';
@@ -21,7 +22,7 @@ export function MovieDetail({ item }: { item: Item }) {
   const info = useAsync(() => api.movie(item.id), [item.id]);
   const prog = useAsync(() => api.progress([item.id]), [item.id]);
   const [p, d] = prog.data?.[item.id] ?? [0, 0];
-  const resumable = p > 30 && d > 0 && p < d * 0.95;
+  const resumable = isResumable(p, d);
   const withDur = { ...item, duration: info.data?.duration ?? item.duration ?? (d || null) };
   const buttons: Action[] = [
     ...(resumable ? [{ label: t('Resume {t}', { t: fmtTime(p) }), icon: 'play' as const, primary: true, act: () => play(withDur, { startAt: p }) }] : []),
@@ -45,7 +46,7 @@ export function MovieDetail({ item }: { item: Item }) {
         <img class="poster big" src={img(item.icon, 342)} alt="" />
         <div class="txt">
           <IconBtn n="back" label={t('Back')} onClick={() => back()} />
-          <h1>{clean(item.name)}</h1>
+          <h1>{displayName(item.name)}</h1>
           <div class="facts muted">{[i?.year, i?.genre, i?.duration ? fmtTime(i.duration) : null, (i?.rating ?? item.rating) ? `★ ${(i?.rating ?? item.rating)!.toFixed(1)}` : null].filter(Boolean).join(' · ')}</div>
           {resumable && <ProgBar p={p} d={d} />}
           <div class="bb-actions">{buttons.map((b, n) => <Btn key={b.label} a={b} focused={n === bi && !navFocused.value} />)}</div>
@@ -74,12 +75,12 @@ export function SeriesDetail({ item }: { item: Item }) {
     let best: { s: number; e: number; t: number } | null = null;
     seasons.forEach((x, sIdx) => x.episodes.forEach((e, eIdx) => {
       const pr = prog.data![e.id];
-      if (pr && (!best || eIdx + sIdx * 1000 > best.t)) best = { s: sIdx, e: pr[0] > pr[1] * 0.95 ? Math.min(eIdx + 1, x.episodes.length - 1) : eIdx, t: eIdx + sIdx * 1000 };
+      if (pr && (!best || eIdx + sIdx * 1000 > best.t)) best = { s: sIdx, e: isFinished(pr[0], pr[1]) ? Math.min(eIdx + 1, x.episodes.length - 1) : eIdx, t: eIdx + sIdx * 1000 };
     }));
     if (best) { setSi((best as any).s); setEi((best as any).e); }
   }, [prog.data, seasons.length]);
 
-  const playEp = (e: Item & { duration?: number }) => { const pr = prog.data?.[e.id]; play({ ...e, duration: e.duration ?? (pr?.[1] || null) }, pr && pr[0] < pr[1] * 0.95 ? { startAt: pr[0] } : {}); };
+  const playEp = (e: Item & { duration?: number }) => { const pr = prog.data?.[e.id]; play({ ...e, duration: e.duration ?? (pr?.[1] || null) }, pr && !isFinished(pr[0], pr[1]) ? { startAt: pr[0] } : {}); };
 
   useBackKey((k) => {
     if (navFocused.value) return false;
@@ -105,7 +106,7 @@ export function SeriesDetail({ item }: { item: Item }) {
         <img class="poster" src={img(d?.cover ?? item.icon, 185)} alt="" />
         <div class="txt">
           <IconBtn n="back" label={t('Back')} onClick={() => back()} />
-          <h1>{clean(d?.name || item.name)}</h1>
+          <h1>{displayName(d?.name || item.name)}</h1>
           <div class="facts muted">{[d?.year, d?.genre, d?.rating ? `★ ${d.rating.toFixed(1)}` : null].filter(Boolean).join(' · ')}</div>
           {d?.plot && <p class="plot clamp">{d.plot}</p>}
         </div>
@@ -127,8 +128,8 @@ export function SeriesDetail({ item }: { item: Item }) {
           <div class={`row ep ${f ? 'focus' : ''}`} onClick={() => { setEi(n); playEp(e); }}>
             {e.icon ? <img class="thumb" src={img(e.icon, 185)} loading="lazy" alt="" /> : <div class="thumb ph">{e.episode}</div>}
             <div class="meta">
-              <div class="name">{e.episode}. {clean(e.name).replace(/^.* - S\d+E\d+$/, `Episode ${e.episode}`)}</div>
-              <div class="muted small">{e.duration ? fmtTime(e.duration) : ''}{pr && pr[0] > pr[1] * 0.95 ? ` · ${t('Watched')}` : ''}</div>
+              <div class="name">{e.episode}. {displayName(e.name).replace(/^.* - S\d+E\d+$/, `Episode ${e.episode}`)}</div>
+              <div class="muted small">{e.duration ? fmtTime(e.duration) : ''}{pr && isFinished(pr[0], pr[1]) ? ` · ${t('Watched')}` : ''}</div>
               {e.plot && <div class="desc clamp">{e.plot}</div>}
               {pr && <ProgBar p={pr[0]} d={pr[1]} />}
             </div>

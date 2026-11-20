@@ -1,11 +1,7 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Category, Item, Kind, Programme } from '../../shared/protocol.ts';
 
-const PREFIX: Record<string, string> = { live: 'l', movie: 'm', series: 's', episode: 'e' };
-const KIND_OF: Record<string, Kind> = { l: 'live', m: 'movie', s: 'series', e: 'episode' };
-
-export const itemId = (kind: Kind, sid: number | string) => PREFIX[kind] + sid;
-export const parseId = (id: string) => ({ kind: KIND_OF[id[0]], sid: Number(id.slice(1)) });
+import { itemId, parseId } from '../../shared/domain.ts';
 
 interface Row { kind: Kind; sid: number; name: string; icon: string | null; cat: string | null; epg: string | null; ext: string | null; rating: number | null; archive: number }
 

@@ -1,0 +1,5 @@
+{
+  "name": "@relay/shared",
+  "private": true,
+  "type": "module"
+}

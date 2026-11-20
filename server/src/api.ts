@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ClientMsg, DeviceKind, Item, Kind, Progress } from '../../shared/protocol.ts';
-import { Catalog, itemId, parseId, type Sort } from './catalog.ts';
+import { Catalog, type Sort } from './catalog.ts';
+import { itemId, parseId, isVodId, displayName, FINISHED, MIN_RESUME_S } from '../../shared/domain.ts';
 import type { Auth } from './auth.ts';
 import type { Hub } from './hub.ts';
 import type { Provider } from './config.ts';
@@ -195,12 +196,6 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     return reply.type('application/json').send(json);
   });
 
-  app.get('/api/stream/:id', async (req, reply) => {
-    const id = (req.params as any).id as string;
-    const { kind } = parseId(id);
-    if (kind !== 'episode' && !catalog.playable({ id, kind })) return reply.code(404).send({ error: 'not found' });
-    return { urls: streamUrls(provider, { id, kind, name: '', ext: (req.query as any).ext }) };
-  });
 
   /** What the prober / movie probe measured about a source: picks deinterlacing, dithering, tone mapping, audio layout. */
   const vodProbe = db.prepare('SELECT * FROM vod_probes WHERE id = ? AND ok = 1');
@@ -223,7 +218,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     catch (e) { app.log.warn(`tracks ${id}: ${(e as Error).message.split('\n')[0]}`); return null; }
   };
   /** A movie/episode's file through the proxy, for the background prefetcher. */
-  const vodSrc = (id: string, ext?: string) => () => { const { kind } = parseId(id); return vodProxy.url(streamUrls(provider, { id, kind, name: '', ext })[0]); };
+  const vodSrc = (id: string, ext?: string) => () => { const { kind } = parseId(id); return vodProxy.url(streamUrls(provider, { id, kind: kind ?? 'movie', name: '', ext })[0]); };
   // Catch-up: a programme from a channel's archive (?cs=<start>&ce=<stop>, unix seconds; ?start= seconds into it).
   const archiveDays = db.prepare("SELECT archive FROM items WHERE kind = 'live' AND sid = ?");
   const catchupOf = (sid: number, q: Record<string, string>) => {
@@ -423,7 +418,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   /** Prepare these titles while idle (the next episode, a title about to be played). */
   app.post('/api/prefetch', async (req) => {
     const list = (((req.body ?? {}) as any).items ?? []) as { id: string; ext?: string }[];
-    for (const it of list.slice(0, 5)) if (/^[me]\d+$/.test(String(it.id))) prefetcher.want(String(it.id), vodSrc(String(it.id), it.ext));
+    for (const it of list.slice(0, 5)) if (isVodId(String(it.id))) prefetcher.want(String(it.id), vodSrc(String(it.id), it.ext));
     return { ok: true };
   });
 
@@ -450,7 +445,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   app.post('/api/push/unsubscribe', async (req) => { reminders.unsubscribe(String(((req.body ?? {}) as any).endpoint ?? '')); return { ok: true }; });
   app.get('/api/push/due', async (req, reply) => {
     if (!reminders.validSecret(String((req.query as any).k ?? ''))) return reply.code(403).send({ error: 'unknown subscription' });
-    return reminders.recentlyFired().map((r) => ({ id: r.id, title: r.title, channel: r.item.name, start: r.start, icon: r.item.icon ?? null }));
+    return reminders.recentlyFired().map((r) => ({ id: r.id, title: r.title, channel: displayName(r.item.name), start: r.start, icon: r.item.icon ?? null }));
   });
 
   /** Player problems seen on a device (iPhone Safari has no console we can read): logged for debugging. */
@@ -483,6 +478,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   /** Which title does this provider copy belong to? (old favorites, category browsing) */
   app.get('/api/title-of/:id', async (req, reply) => {
     const { kind, sid } = parseId((req.params as any).id);
+    if (!kind) return reply.code(404).send({ error: 'not found' });
     const r = db.prepare('SELECT tid FROM items WHERE kind = ? AND sid = ?').get(kind, sid) as { tid: number | null } | undefined;
     return r?.tid ? { tid: r.tid } : reply.code(404).send({ error: 'not found' });
   });
@@ -512,7 +508,7 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
   app.get('/api/continue', async () => {
     // Latest unfinished movie/episode, one row per series.
     const rows = db.prepare(`SELECT json, position, duration, updated FROM progress p
-      WHERE json->>'kind' IN ('movie','episode') AND duration > 0 AND position > 30 AND position < duration * 0.95
+      WHERE json->>'kind' IN ('movie','episode') AND duration > 0 AND position > ${MIN_RESUME_S} AND position < duration * ${FINISHED}
         AND (series IS NULL OR updated = (SELECT max(updated) FROM progress q WHERE q.series = p.series))
       ORDER BY updated DESC LIMIT 30`).all() as any[];
     return rows.map((r): Progress => ({ item: JSON.parse(r.json), position: r.position, duration: r.duration, updated: r.updated }));
