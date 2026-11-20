@@ -36,7 +36,6 @@ export function Live() {
   const count = virtual ? virtual.length : paged.total;
   const get = (i: number): Item | undefined => (virtual ? virtual[i] : paged.get(i));
 
-  // first visit: if no favorites, start on the first real category
   useEffect(() => { if (cats.data && lastCat === 0 && favList.length === 0) { setCi(2); } }, [cats.data]);
   const firstCat = useRef(true);
   useEffect(() => { if (firstCat.current) { firstCat.current = false; return; } setFi(0); }, [cat.id]);

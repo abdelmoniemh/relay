@@ -37,7 +37,6 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
   const count = virtual ? virtual.length : paged.total;
   const get = (i: number) => (virtual ? virtual[i] : paged.get(i));
 
-  // responsive columns
   const gridRef = useRef<HTMLDivElement>(null);
   const [cols, setCols] = useState(6);
   useLayoutEffect(() => {

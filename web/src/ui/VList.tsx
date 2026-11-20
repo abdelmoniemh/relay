@@ -28,7 +28,6 @@ export function VList({ count, rowH, cols = 1, focus, render, onRange, class: cl
     return () => ro.disconnect();
   }, []);
 
-  // keep focused row in view, with a one-row margin
   useEffect(() => {
     const el = ref.current;
     if (!el || focus < 0) return;

@@ -65,7 +65,7 @@ export function App() {
 
   const open = (k: Tab) => {
     navFocused.value = false;
-    if (k === active && stack.value.length > 1) { go(stack.value[0]); return; } // re-select a section: back to its root
+    if (k === active && stack.value.length > 1) { go(stack.value[0]); return; }
     if (k === active) return;
     go({ name: k === 'vod' ? lastVod.value : k } as Route);
   };

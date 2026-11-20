@@ -27,7 +27,6 @@ export function Remote() {
   const events = useAsync(() => (tab === 'sports' ? api.events({ sport: 'football' }) : Promise.resolve([] as SportEvent[])), [tab]);
   const [pad, setPad] = useState(false);
   useEffect(() => {
-    // default: the device that's playing, else the TV, else first online
     if (target && others.some((d) => d.id === target)) return;
     const pick = (l && l.deviceId !== myDeviceId.value ? l.deviceId : null) ?? others.find((d) => d.online && d.kind === 'tv')?.id ?? others.find((d) => d.online)?.id ?? null;
     setTarget(pick);

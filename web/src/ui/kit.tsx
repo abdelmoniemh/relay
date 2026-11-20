@@ -9,8 +9,6 @@ import { t } from '../i18n.ts';
 import { nowNext } from './hooks.ts';
 import { useKeys } from './hooks.ts';
 
-// ---------------- buttons ----------------
-
 export interface Action { label: string; icon?: IconName; act: () => void; primary?: boolean }
 
 export function Btn({ a, focused }: { a: Action; focused?: boolean }) {
@@ -24,8 +22,6 @@ export function Btn({ a, focused }: { a: Action; focused?: boolean }) {
 export function IconBtn({ n, label, onClick, class: cls }: { n: IconName; label: string; onClick: () => void; class?: string }) {
   return <button class={`icon-btn ${cls ?? ''}`} aria-label={label} title={label} onClick={onClick}><Icon n={n} /></button>;
 }
-
-// ---------------- billboard ----------------
 
 export function Billboard({ backdrop, poster, title, meta, plot, actions, focus, eyebrow }: {
   backdrop?: string | null; poster?: string | null; title: string; meta?: string; plot?: string | null;
@@ -46,8 +42,6 @@ export function Billboard({ backdrop, poster, title, meta, plot, actions, focus,
     </section>
   );
 }
-
-// ---------------- rows ----------------
 
 /** A titled horizontal row. `focus` is the focused tile index (-1 = none); keeps it scrolled into view. */
 export function Row({ title, count, focus, children, wide, onMore }: {
@@ -87,8 +81,6 @@ export function SkeletonRow({ wide }: { wide?: boolean }) {
   );
 }
 
-// ---------------- tiles ----------------
-
 export function PosterTile({ src, title, sub, progress, focused, onClick, badges }: {
   src?: string | null; title: string; sub?: string; progress?: number; focused?: boolean; onClick?: () => void; badges?: ComponentChildren;
 }) {
@@ -124,8 +116,6 @@ export function QualityChip({ label, verified, dead }: { label: string; verified
   return <span class={`qchip ${dead ? 'bad' : verified ? 'ok' : 'unverified'}`}>{txt}{verified && !dead ? <Icon n="check" /> : null}</span>;
 }
 
-// ---------------- segmented control ----------------
-
 export function Segmented<T extends string>({ value, options, onChange, focus }: {
   value: T; options: { v: T; label: string }[]; onChange: (v: T) => void; focus?: number;
 }) {
@@ -138,8 +128,6 @@ export function Segmented<T extends string>({ value, options, onChange, focus }:
     </div>
   );
 }
-
-// ---------------- sheet (dialog) ----------------
 
 export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ComponentChildren }) {
   const ref = useRef<HTMLDivElement>(null);

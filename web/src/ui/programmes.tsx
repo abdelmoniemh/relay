@@ -23,7 +23,6 @@ const day = (unix: number) => {
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 };
 
-/** The reminder (if any) for this programme on this channel. */
 export const reminderFor = (channelId: string, start: number) => reminders.value.find((r) => r.item.id === channelId && r.start === start);
 
 export function ProgrammesSheet({ channel, onClose }: { channel: Item; onClose: () => void }) {

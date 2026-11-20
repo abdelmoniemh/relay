@@ -33,7 +33,6 @@ let nextTimer: ReturnType<typeof setTimeout> | undefined;
 export const extras = signal<Extras | null>(null);
 let creditsShown: string | null = null;
 
-/** Skip button to show at this position, if any. */
 export function skipAt(t: number): { kind: 'intro' | 'recap'; to: number } | null {
   const m = extras.value?.markers;
   if (m?.intro && t >= m.intro[0] && t < m.intro[1] - 1) return { kind: 'intro', to: m.intro[1] };
@@ -144,7 +143,6 @@ export function attachPlayer(p: Player) {
         setTimeout(() => { if (current.value === item) p.load(lastUrls, loadOpts(item, p.position() || lastStart)).catch(() => {}); }, 1200);
         return;
       }
-      // Still failing: fail over to the next working copy of the same channel / match.
       if (isLiveNow(current.value) && nextSource(1, true)) return;
       status.value = 'error'; errorMsg.value = friendlyError(detail as PlayError | undefined, raw);
       api.clientLog(`error shown: ${detail}${raw ? ` (${raw})` : ''} (${current.value?.id})`);

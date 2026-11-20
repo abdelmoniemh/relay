@@ -18,11 +18,9 @@ export async function remind(channel: Item, prog: { start: number; stop?: number
 export async function unremind(id: string) { await api.removeReminder(id); await loadReminders(); }
 export const isReminded = (channelId: string, start: number) => reminders.value.some((r) => r.item.id === channelId && r.start === start);
 
-/** Can this browser get notifications here (secure page + push support)? */
 export function notificationsSupported() {
   return typeof window !== 'undefined' && window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
-/** Why not, in words (for Settings). */
 export function notificationsBlocker(): string | null {
   if (typeof window === 'undefined') return t('Not available');
   if (!window.isSecureContext) return t('Notifications need Relay opened over https (e.g. through Tailscale), not a plain http address.');

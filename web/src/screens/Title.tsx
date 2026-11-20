@@ -19,7 +19,6 @@ const LANG_NAME: Record<string, string> = { eng: 'English', en: 'English', ara: 
 const langs = (s: string | null | undefined) => {
   if (!s) return '';
   const l = s.split(',').map((x) => LANG_NAME[x] ?? x.toUpperCase()).filter((v, i, a) => a.indexOf(v) === i);
-  // Your languages first, then a short tail
   l.sort((a, b) => Number(b === 'English' || b === 'Arabic') - Number(a === 'English' || a === 'Arabic'));
   return l.length > 8 ? `${l.slice(0, 8).join(', ')} +${l.length - 8}` : l.join(', ');
 };
@@ -35,7 +34,6 @@ export function TitleScreen({ tid }: { tid: number }) {
   const [panel, setPanel] = useState<'none' | 'versions' | 'trailer'>('none');
   const [pi, setPi] = useState(0);
 
-  // ---- movie progress (any version) ----
   const vIds = useMemo(() => (t?.versions ?? []).map((v) => v.item.id), [t]);
   const prog = useAsync(() => (vIds.length && t?.kind === 'movie' ? api.progress(vIds) : Promise.resolve({} as Record<string, [number, number]>)), [vIds.join()]);
   const resumeAt = useMemo(() => {
@@ -44,7 +42,6 @@ export function TitleScreen({ tid }: { tid: number }) {
     return best > MIN_RESUME_S ? { p: best, d: dur } : null;
   }, [prog.data]);
 
-  // ---- series: seasons of the chosen version ----
   const sid = t?.kind === 'series' ? ver?.item.id : null;
   const ser = useAsync(() => (sid ? api.series(sid) : Promise.resolve(null)), [sid]);
   const seasons = ser.data?.seasons ?? [];
@@ -98,7 +95,6 @@ export function TitleScreen({ tid }: { tid: number }) {
     ...(t.similar.length ? [{ title: tr('More like this'), items: t.similar }] : []),
   ];
 
-  // ---- focus ----
   type Zone = 'buttons' | 'seasons' | 'eps' | 'rows';
   const [zone, setZone] = useState<Zone>('buttons');
   const [bi, setBi] = useState(0);

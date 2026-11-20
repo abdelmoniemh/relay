@@ -115,8 +115,6 @@ export function Browse({ kind }: { kind: 'movie' | 'series' }) {
   );
 }
 
-// ---------------- filterable grid ----------------
-
 type Opt = { v: string; label: string };
 const SORTS: Opt[] = [{ v: 'watchlist', label: 'Watchlist order' }, { v: 'popular', label: 'Popular' }, { v: 'added', label: 'Recently added' }, { v: 'rating', label: 'Top rated' }, { v: 'year', label: 'Newest' }, { v: 'name', label: 'A–Z' }];
 const LANGS: Opt[] = [{ v: '', label: 'Any language' }, { v: 'en', label: 'English' }, { v: 'ar', label: 'Arabic' }];

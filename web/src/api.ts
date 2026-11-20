@@ -107,7 +107,6 @@ export const api = {
   removeDevice: (id: string) => req('DELETE', `/api/devices/${id}`),
 };
 
-// ---- favorites as a reactive set (used everywhere for the star) ----
 export const favorites = signal<Map<string, Item>>(new Map());
 export async function loadFavorites() {
   const list = await api.favorites();

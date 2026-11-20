@@ -22,10 +22,8 @@ import { previewBox } from './placement.ts';
 import { t } from '../i18n.ts';
 
 
-/** Hardware player only when Samsung's webapis actually loaded. */
 const hw = isTizen && !!window.webapis?.avplay;
 
-// ---- full screen / picture-in-picture / AirPlay ----
 // iPhone Safari can't put the page in full screen, only the <video> itself (Apple's player, native controls).
 // Everywhere else (desktop, iPad, Android) the whole page goes full screen so our own controls stay.
 type WkVideo = HTMLVideoElement & {
