@@ -104,7 +104,8 @@ export class Hub {
       if (prev) this.persist(this.lease ?? prev);
       const handedOver = this.lease ?? prev;
       let start = 0;
-      if (item.kind !== 'live') {
+      if (item.kind === 'live' && item.catchup) start = Math.max(0, startAt ?? 0); // archive programme: where asked
+      else if (item.kind !== 'live') {
         if (startAt != null) start = startAt;
         else if (handedOver && handedOver.item.id === item.id) start = handedOver.position;
         else start = this.deps.resumePosition(item);

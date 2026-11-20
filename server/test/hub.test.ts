@@ -113,3 +113,13 @@ test('items the catalog refuses are never granted', async () => {
   assert.equal(got.some((m) => m.t === 'granted'), false);
   assert.equal(hub.getLease(), null);
 });
+
+test('catch-up programmes start where asked; live channels always at the live edge', async () => {
+  const { hub, inbox } = setup();
+  await hub.handle('ph', { t: 'play', item: { ...live, catchup: { start: 1000, stop: 2800 } }, startAt: 300 });
+  const g = inbox.ph.find((m) => m.t === 'granted') as Extract<ServerMsg, { t: 'granted' }>;
+  assert.equal(g.startAt, 300);
+  await hub.handle('ph', { t: 'play', item: live, startAt: 300 });
+  const g2 = inbox.ph.filter((m) => m.t === 'granted').pop() as Extract<ServerMsg, { t: 'granted' }>;
+  assert.equal(g2.startAt, 0);
+});

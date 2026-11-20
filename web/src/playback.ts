@@ -270,11 +270,24 @@ export async function startOver(channel: Item = current.value!) {
 export const volume = (d: number | 'mute') => player?.setVolume(d);
 export const setMode = (m: Mode) => { if (current.value) mode.value = m; };
 
+/** Neighbouring channels of the one playing, fetched as soon as it starts: channel up/down needs no round trip. */
+const neighbours = new Map<string, Promise<Item>>();
+function prefetchNeighbours(c: Item) {
+  for (const dir of ['next', 'prev'] as const) {
+    const k = `${c.id}:${dir}`;
+    if (!neighbours.has(k)) neighbours.set(k, api.neighbor(c.id, dir).catch((e) => { neighbours.delete(k); throw e; }));
+  }
+  while (neighbours.size > 40) neighbours.delete(neighbours.keys().next().value!);
+}
+effect(() => { const c = current.value; if (c && isLiveNow(c)) prefetchNeighbours(c); });
+
 /** Channel up/down within the channel's category (server knows the order). */
 export async function zap(dir: 'next' | 'prev') {
   const c = current.value;
   if (!c || c.kind !== 'live') return;
-  try { play(await api.neighbor(c.id, dir), { mode: mode.value === 'off' ? 'full' : mode.value }); } catch {}
+  const k = `${c.id}:${dir}`;
+  try { play(await (neighbours.get(k) ?? api.neighbor(c.id, dir)), { mode: mode.value === 'off' ? 'full' : mode.value }); }
+  catch { neighbours.delete(k); }
 }
 
 export function preconnect(url: string) {
