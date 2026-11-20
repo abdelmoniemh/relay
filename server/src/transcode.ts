@@ -5,7 +5,7 @@ import { USER_AGENT } from './xtream.ts';
 import { spawn, execFileSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { transcodeArgs, encoderArgs, videoFilter, outFps, VOD, MOBILE, MOBILE_H, type SourceInfo } from './media.ts';
-import type { Tracks } from './tracks.ts';
+import { sessionFiles, isSessionFile, SEGMENT_S, type VodLayout } from './hls.ts';
 import { ProviderSlot } from './slot.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -24,22 +24,6 @@ const HLS_KEEP_BEHIND = 300;
 const hlsVideoPlan = (c: string | null) => (c === 'h264' || c === 'hevc' ? c : 'encode');
 /** No playlist/segment request for this long (app closed, phone locked): free the provider connection. */
 const HLS_IDLE_MS = 45_000;
-/** Most audio / subtitle tracks put in one movie session (some files carry 20+ languages). */
-const MAX_AUDIO = 8, MAX_SUBS = 12;
-
-/**
- * Movie session with all its languages: master.m3u8 → idx_v.m3u8 (video) + idx_a<i>.m3u8 per audio track
- * (alternate renditions: iOS lists them in its audio menu), and sub_<n>.vtt per text subtitle track, which the
- * API serves as HLS subtitle playlists cut to the video's segments.
- */
-export interface VodLayout { tracks: Tracks; audio: number[]; subs: number[]; defAudio: number }
-export function vodLayout(tracks: Tracks, defAudio: number): VodLayout {
-  // The default track first, then the others in file order.
-  const audio = tracks.audio.map((a) => a.n).sort((x, y) => (x === defAudio ? -1 : y === defAudio ? 1 : x - y)).slice(0, MAX_AUDIO);
-  const subs = tracks.subs.filter((t) => t.text).map((t) => t.n).slice(0, MAX_SUBS);
-  return { tracks, audio, subs, defAudio };
-}
-
 type Proc = ChildProcessByStdio<null, Readable, Readable>;
 
 function detectGpu(): boolean {
@@ -134,33 +118,34 @@ export class Transcoder {
   }
 
   /** Movie with every audio language as an alternate rendition, plus each text subtitle as a growing .vtt. */
-  private vodOutputs(l: VodLayout, video: string[], dir: string, abr = '192k'): string[] {
-    const streamMap = [l.audio.length ? 'v:0,agroup:aud,name:v' : 'v:0,name:v', ...l.audio.map((n, i) => `a:${i},agroup:aud,name:a${i}${i === 0 ? ',default:yes' : ''}`)];
+  private vodOutputs(l: VodLayout, video: string[], dir: string, abr: string): string[] {
+    const f = sessionFiles(l);
     return [
       '-map', '0:v:0', ...l.audio.flatMap((n) => ['-map', `0:a:${n}`]), ...video,
       '-c:a', 'aac', '-b:a', abr, '-ac', '2', '-max_muxing_queue_size', '4096',
-      '-f', 'hls', '-hls_time', '4', '-hls_list_size', '0', '-hls_playlist_type', 'event',
+      '-f', 'hls', '-hls_time', String(SEGMENT_S), '-hls_list_size', '0', '-hls_playlist_type', 'event',
       '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
-      '-hls_segment_filename', join(dir, 'seg_%v_%05d.m4s'), '-hls_flags', 'independent_segments+temp_file',
-      '-master_pl_name', 'master.m3u8', '-var_stream_map', streamMap.join(' '),
-      join(dir, 'idx_%v.m3u8'),
+      '-hls_segment_filename', join(dir, f.segmentPattern), '-hls_flags', 'independent_segments+temp_file',
+      '-master_pl_name', f.entry, '-var_stream_map', f.streamMap!.join(' '),
+      join(dir, f.playlistPattern),
       // Subtitles: a second output per track, flushed cue by cue.
-      ...l.subs.flatMap((n) => ['-map', `0:s:${n}`, '-c:s', 'webvtt', '-flush_packets', '1', '-f', 'webvtt', join(dir, `sub_${n}.vtt`)]),
+      ...l.subs.flatMap((n) => ['-map', `0:s:${n}`, '-c:s', 'webvtt', '-flush_packets', '1', '-f', 'webvtt', join(dir, f.subVtt(n))]),
     ];
   }
 
-  private singleOutput(video: string[], live: boolean, dir: string, abr = '192k'): string[] {
+  private singleOutput(video: string[], live: boolean, dir: string, abr: string): string[] {
+    const f = sessionFiles(null);
     return [
       // Live: video optional, so a radio station that ends up here still plays.
       '-map', live ? '0:v:0?' : '0:v:0', '-map', '0:a:0?', ...video,
       ...(live ? ['-af', 'aresample=async=1:first_pts=0'] : []), // live: absorb provider timestamp gaps
       '-c:a', 'aac', '-b:a', abr, '-ac', '2', '-max_muxing_queue_size', '2048',
-      '-f', 'hls', '-hls_time', '4',
+      '-f', 'hls', '-hls_time', String(SEGMENT_S),
       // Movies: every segment stays listed (seekable). Live: a sliding window; ffmpeg deletes what falls out.
       ...(live ? ['-hls_list_size', '8', '-hls_delete_threshold', '4'] : ['-hls_list_size', '0', '-hls_playlist_type', 'event']),
       '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
-      '-hls_segment_filename', join(dir, 'seg%05d.m4s'), '-hls_flags', `independent_segments+temp_file${live ? '+delete_segments' : ''}`,
-      join(dir, 'index.m3u8'),
+      '-hls_segment_filename', join(dir, f.segmentPattern), '-hls_flags', `independent_segments+temp_file${live ? '+delete_segments' : ''}`,
+      join(dir, f.entry),
     ];
   }
 
@@ -173,8 +158,7 @@ export class Transcoder {
    */
   startHls(...a: Parameters<Transcoder['doStartHls']>) { return this.claim(() => this.doStartHls(...a)); }
   private async doStartHls(src: string, startAt: number, guess: string | null, owner: string | null, log: (m: string) => void = () => {}, live = false, layout: VodLayout | null = null, skip = 0, low?: { info: SourceInfo | null }): Promise<{ sid: string; vcodec: string | null; entry: string }> {
-    const entry = layout ? 'master.m3u8' : 'index.m3u8';
-    const videoPl = layout ? 'idx_v.m3u8' : 'index.m3u8';
+    const files = sessionFiles(layout);
     await this.stop();
     await Promise.all([...this.dying]);
     await this.slot.clear();
@@ -206,8 +190,8 @@ export class Transcoder {
           const tick = setInterval(() => {
             if (wrong()) { clearInterval(tick); reject(new Error('codec')); return; }
             let pl = '';
-            try { pl = readFileSync(join(dir, videoPl), 'utf8'); } catch {}
-            if (/^seg(_v_)?\d+\.m4s$/m.test(pl)) { clearInterval(tick); resolve(); }
+            try { pl = readFileSync(join(dir, files.video), 'utf8'); } catch {}
+            if (pl.split('\n').some((l) => files.videoSegment(l) != null)) { clearInterval(tick); resolve(); }
             else if (proc.exitCode !== null || proc.signalCode !== null) { clearInterval(tick); reject(new Error(wrong() ? 'codec' : `ffmpeg exited ${proc.exitCode ?? proc.signalCode}: ${stderr.trim().split('\n').pop() ?? ''}`)); }
             else if (Date.now() - t0 > 25_000) { clearInterval(tick); reject(new Error('no output after 25s')); }
           }, 100);
@@ -215,7 +199,7 @@ export class Transcoder {
         const how = low ? `data saver ${gpu ? 'nvenc' : 'x264'}` : hlsVideoPlan(vcodec) === 'encode' ? (gpu ? 'nvenc' : 'x264') : `copy ${vcodec}`;
         const langs = layout && (layout.audio.length > 1 || layout.subs.length) ? `, ${layout.audio.length} audio, ${layout.subs.length} subs` : '';
         log(`hls started in ${Date.now() - t0}ms (${live ? 'live, ' : ''}${how}${langs}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
-        return { sid, vcodec: detected ?? vcodec, entry };
+        return { sid, vcodec: detected ?? vcodec, entry: files.entry };
       } catch (e) {
         await this.stop();
         if ((e as Error).message === 'codec' && !corrected) {
@@ -235,16 +219,14 @@ export class Transcoder {
   /** Path of a file in the live HLS session, or null. Every hit keeps the session alive. */
   hlsFile(sid: string, name: string): string | null {
     const h = this.hls;
-    if (!h || h.sid !== sid || !/^((index|master|idx_(v|a\d+))\.m3u8|init(_\d+)?\.mp4|seg(_(v|a\d+)_)?\d+\.m4s|sub_\d+\.vtt)$/.test(name)) return null;
+    if (!h || h.sid !== sid || !isSessionFile(name)) return null;
     const p = join(h.dir, name);
     if (!existsSync(p)) return null;
     h.lastHit = Date.now();
     // Keep disk use bounded: drop segments far behind what the player is fetching.
-    const n = /^seg(?:_v_)?(\d+)\.m4s$/.exec(name);
-    const variants = h.layout ? ['v', ...h.layout.audio.map((_, i) => `a${i}`)] : null;
-    for (const upto = n ? Number(n[1]) - HLS_KEEP_BEHIND : 0; h.pruned < upto; h.pruned++) {
-      const k = String(h.pruned).padStart(5, '0');
-      for (const f of variants ? variants.map((v) => `seg_${v}_${k}.m4s`) : [`seg${k}.m4s`]) rm(join(h.dir, f), { force: true }).catch(() => {});
+    const files = sessionFiles(h.layout), n = files.videoSegment(name);
+    for (const upto = n != null ? n - HLS_KEEP_BEHIND : 0; h.pruned < upto; h.pruned++) {
+      for (const f of files.segments(h.pruned)) rm(join(h.dir, f), { force: true }).catch(() => {});
     }
     return p;
   }

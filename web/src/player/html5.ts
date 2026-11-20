@@ -234,11 +234,13 @@ export class Html5Player implements Player {
       const o = this.opts!;
       const prefs = o.live ? '' : `&alang=${encodeURIComponent(o.alang ?? '')}&slang=${encodeURIComponent(o.slang ?? 'off')}`;
       const r = await fetch(`${base}&start=${start}${prefs}`, { method: 'POST' });
-      const j = await r.json().catch(() => ({})) as { url?: string; error?: string; audio?: MediaTracks['audio']; subs?: MediaTracks['subs']; defSub?: number; offset?: number };
+      const j = await r.json().catch(() => ({})) as { url?: string; error?: string; audio?: MediaTracks['audio']; subs?: MediaTracks['subs']; defSub?: number; offset?: number; stop?: string };
       const url = j.url ? new URL(j.url, base).href : null;
-      if (gen !== this.gen) { if (url) this.deleteHls(url); return; } // stopped/seeked meanwhile: don't hold the connection
+      const stopUrl = j.stop ? new URL(j.stop, base).href : null;
+      if (gen !== this.gen) { if (stopUrl) this.deleteHls(stopUrl); return; } // stopped/seeked meanwhile: don't hold the connection
       if (!r.ok || !url) { this.cb('error', j.error ?? `Conversion failed (HTTP ${r.status})`); return; }
       this.hlsSession = url;
+      this.hlsStop = stopUrl;
       this.mtracks = j.audio ? { audio: j.audio, subs: j.subs ?? [], defSub: j.defSub ?? -1 } : null;
       this.langsSettled = Date.now() + 4000;
       // The stream starts at a keyframe before what was asked for (the server says where): count from there and
@@ -297,9 +299,11 @@ export class Html5Player implements Player {
     }
   }
 
-  private deleteHls(url: string) { fetch(url.replace('/index.m3u8?', '?'), { method: 'DELETE', keepalive: true }).catch(() => {}); }
+  /** The session's own stop URL, as the server gave it. */
+  private hlsStop: string | null = null;
+  private deleteHls(stopUrl: string) { fetch(stopUrl, { method: 'DELETE', keepalive: true }).catch(() => {}); }
   /** Tell the server to stop the HLS conversion (frees the provider connection right away). */
-  private releaseHls() { if (this.hlsSession) this.deleteHls(this.hlsSession); this.hlsSession = null; this.mtracks = null; }
+  private releaseHls() { if (this.hlsStop) this.deleteHls(this.hlsStop); this.hlsSession = null; this.hlsStop = null; this.mtracks = null; }
 
   /** Paused for a while on a converted movie: stop the stream (frees the provider connection) and resume later. */
   private maybePark() {

@@ -17,8 +17,7 @@ import type { Prefetcher } from './prefetch.ts';
 import { existsSync } from 'node:fs';
 import type { Reminders } from './reminders.ts';
 import { pickAudio, pickSub, trackName, keyframeAt, type Tracks, type TrackStore } from './tracks.ts';
-import { vodLayout } from './transcode.ts';
-import { subtitlePlaylist, subtitleSegment, masterPlaylist } from './subs.ts';
+import { vodLayout, sessionFiles, parseSubName, subName, withToken, subtitlePlaylist, subtitleSegment, masterPlaylist } from './hls.ts';
 import { rankSources } from './quality.ts';
 import { probeToSource } from './prober.ts';
 import type { SourceInfo } from './media.ts';
@@ -331,9 +330,11 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
       const tok = encodeURIComponent(String(q.token ?? ''));
       return {
         url: `/api/hls/${r.sid}/${r.entry}?token=${tok}${layout && defSub >= 0 && layout.subs.includes(defSub) ? `&ds=${defSub}` : ''}`,
+        /** DELETE this to end the session (frees the provider connection right away). */
+        stop: `/api/hls/${r.sid}?token=${tok}`,
         // What's in the stream, for the player's own menus.
         audio: layout ? layout.audio.map((n) => { const a = tracks!.audio.find((x) => x.n === n)!; return { n, lang: a.lang, name: trackName(a) }; }) : [],
-        subs: layout ? layout.subs.map((n) => { const t = tracks!.subs.find((x) => x.n === n)!; return { n, lang: t.lang, name: trackName(t, t.forced ? ' (forced)' : t.sdh ? ' (SDH)' : ''), forced: t.forced }; }) : [],
+        subs: layout ? layout.subs.map((n) => { const t = tracks!.subs.find((x) => x.n === n)!; return { n, lang: t.lang, name: subName(t), forced: t.forced }; }) : [],
         defSub: layout && layout.subs.includes(defSub) ? defSub : -1,
         // Movie position at the stream's 0:00 (a keyframe at or before what was asked for).
         offset: from,
@@ -344,16 +345,17 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const { sid, file } = req.params as { sid: string; file: string };
     const tok = `?token=${encodeURIComponent(String((req.query as any).token ?? ''))}`;
     // Subtitle playlists and segments: built from the session's growing .vtt files, cut to the video's segments.
-    const sub = /^sub_(\d+)(?:_(\d+))?\.(m3u8|vtt)$/.exec(file);
-    if (sub && (sub[2] !== undefined || sub[3] === 'm3u8')) {
-      const info = transcoder.hlsInfo(sid);
-      const vpl = transcoder.hlsFile(sid, 'idx_v.m3u8');
-      if (!info?.layout || !vpl || !info.layout.subs.includes(Number(sub[1]))) return reply.code(404).send({ error: 'gone' });
+    const sub = parseSubName(file);
+    if (sub) {
+      const layout = transcoder.hlsInfo(sid)?.layout;
+      const files = sessionFiles(layout ?? null);
+      const vpl = transcoder.hlsFile(sid, files.video);
+      if (!layout || !vpl || !layout.subs.includes(sub.n)) return reply.code(404).send({ error: 'gone' });
       reply.header('cache-control', 'no-store').header('access-control-allow-origin', '*');
       const video = await readFile(vpl, 'utf8');
-      if (sub[3] === 'm3u8') return reply.type('application/vnd.apple.mpegurl').send(subtitlePlaylist(video, Number(sub[1]), tok));
-      const vtt = transcoder.hlsFile(sid, `sub_${sub[1]}.vtt`);
-      return reply.type('text/vtt').send(subtitleSegment(video, vtt ? await readFile(vtt, 'utf8') : '', Number(sub[2])));
+      if (sub.k == null) return reply.type('application/vnd.apple.mpegurl').send(subtitlePlaylist(video, sub.n, tok));
+      const vtt = transcoder.hlsFile(sid, files.subVtt(sub.n));
+      return reply.type('text/vtt').send(subtitleSegment(video, vtt ? await readFile(vtt, 'utf8') : '', sub.k));
     }
     const p = transcoder.hlsFile(sid, file);
     if (!p) return reply.code(404).send({ error: 'gone' });
@@ -361,8 +363,9 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     if (file.endsWith('.m3u8')) {
       // Segment requests from Safari's player carry no auth header: put the token on every URI.
       let pl = await readFile(p, 'utf8');
-      if (file === 'master.m3u8') pl = masterPlaylist(pl, transcoder.hlsInfo(sid)?.layout ?? null, Number((req.query as any).ds ?? -1), tok);
-      pl = pl.replace(/^(seg\w*\.m4s|idx_\w+\.m3u8)$/gm, `$1${tok}`).replace(/URI="(init\w*\.mp4|idx_\w+\.m3u8)"/g, `URI="$1${tok}"`)
+      const layout = transcoder.hlsInfo(sid)?.layout ?? null;
+      if (layout && file === sessionFiles(layout).entry) pl = masterPlaylist(pl, layout, Number((req.query as any).ds ?? -1), tok);
+      pl = withToken(pl, tok)
         // The playlist grows while Safari watches, so it may treat it as live and start near the newest
         // segment (≈40s into the movie, thanks to ffmpeg's head start). Always start at the beginning.
         // (A live channel's sliding playlist has no #EXT-X-PLAYLIST-TYPE: Safari starts it near the live edge.)

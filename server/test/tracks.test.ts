@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseTracks, pickAudio, pickSub, probeTracks, trackName, type Tracks } from '../src/tracks.ts';
 import { lang2 } from '../../shared/domain.ts';
-import { subtitlePlaylist, subtitleSegment, masterPlaylist, parseVtt } from '../src/subs.ts';
+import { subtitlePlaylist, subtitleSegment, masterPlaylist, parseVtt } from '../src/hls.ts';
 
 let ok = true;
 try { execFileSync('ffmpeg', ['-version']); } catch { ok = false; }
@@ -86,7 +86,8 @@ test('movie session end to end: all audio languages, subtitles in sync, readable
   const dir = mkdtempSync(join(tmpdir(), 'tracks-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   process.env.XDG_CACHE_HOME = dir; // the Transcoder clears its HLS folder on start: never the real one
-  const { Transcoder, vodLayout } = await import('../src/transcode.ts');
+  const { Transcoder } = await import('../src/transcode.ts');
+  const { vodLayout } = await import('../src/hls.ts');
   const srt = join(dir, 's.srt'), mkv = join(dir, 'm.mkv');
   writeFileSync(srt, '1\n00:00:01,000 --> 00:00:03,000\nHello from English\n\n2\n00:00:09,000 --> 00:00:11,000\nLater line\n');
   execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=25', '-f', 'lavfi', '-i', 'sine=f=440', '-f', 'lavfi', '-i', 'sine=f=880', '-i', srt,

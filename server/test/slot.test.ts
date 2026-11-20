@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ProviderSlot, type Worker } from '../src/slot.ts';
 
 function worker(slot: ProviderSlot) {
-  const w = { busy: false, kicks: 0, stops: 0, kick() { if (slot.mayRun(w)) { w.kicks++; w.busy = true; } }, async stop() { w.stops++; w.busy = false; } } satisfies Worker & Record<string, unknown>;
+  const w = { busy: false as boolean, kicks: 0, stops: 0, kick() { if (slot.mayRun(w)) { w.kicks++; w.busy = true; } }, async stop() { w.stops++; w.busy = false; } } satisfies Worker & Record<string, unknown>;
   slot.work(w);
   return w;
 }
