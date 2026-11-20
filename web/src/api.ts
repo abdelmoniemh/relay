@@ -1,6 +1,8 @@
 import type { Category, Item, Kind, Programme, Progress, RankedSource, SportEvent, ReminderInfo } from '@shared/protocol.ts';
 import { signal } from '@preact/signals';
 import { persisted } from './storage.ts';
+import type { Sort, SeriesInfo, MovieInfo, TitleCard, BrowseRow, VersionInfo, TitleDetail } from '@shared/protocol.ts';
+export type { Sort, SeriesInfo, MovieInfo, TitleCard, BrowseRow, VersionInfo, TitleDetail };
 
 const sameOrigin = location.protocol.startsWith('http') && !__TIZEN__ ? location.origin : '';
 // Only an address someone set is saved: the page's own origin must follow wherever it's opened from (LAN, Tailscale).
@@ -52,28 +54,7 @@ export interface Extras {
   thumbs: { interval: number; cols: number; rows: number; w: number; h: number } | null;
 }
 
-export type Sort = 'default' | 'added' | 'name' | 'rating';
-export interface SeriesInfo {
-  id: string; name: string; cover: string | null; backdrop: string | null; plot: string | null; genre: string | null; year: string | null; rating: number | null;
-  seasons: { season: number; episodes: (Item & { plot?: string; duration?: number })[] }[];
-}
-export interface MovieInfo { plot: string | null; genre: string | null; year: string | null; duration: number | null; backdrop: string | null; cast: string | null; director: string | null; rating: number | null }
-export interface TitleCard {
-  tid: number; kind: 'movie' | 'series'; name: string; year: number | null; poster: string | null; rating: number | null; uhd: boolean;
-  langs: string[]; progress?: { position: number; duration: number; label?: string };
-  tmdb?: number | null; wl?: boolean; watched?: number | true; fresh?: boolean;
-}
 export interface LbStatus { user: string | null; fromConfig: boolean; watchlist: number; resolved: number; watched: number; syncedAt: number | null; error: string | null; syncing: boolean }
-export interface BrowseRow { id: string; title: string; items: TitleCard[]; more?: Record<string, string> }
-export interface VersionInfo {
-  item: Item; lang: string; uhd: boolean; hdr: boolean; dv: boolean; dolby: boolean; src: string | null; score: number; label: string;
-  probe?: { width: number | null; height: number | null; hdr: string | null; vcodec: string | null; acodec: string | null; channels: number | null; alangs: string | null; slangs: string | null };
-}
-export interface TitleDetail extends TitleCard {
-  backdrop: string | null; plot: string | null; genres: string[]; cast: string | null; director: string | null; trailer: string | null;
-  runtime: number | null; votes: number | null; top250: number | null; origLang: string | null;
-  versions: VersionInfo[]; similar: TitleCard[]; collection: TitleCard[];
-}
 export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; pairingCode: string; regions: string[]; vodLangs: string[]; letterboxd: LbStatus; tmdb: { enabled: boolean; enriched: number; pending: number; lastError: string | null } }
 
 export const api = {

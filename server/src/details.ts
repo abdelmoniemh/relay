@@ -1,16 +1,11 @@
 // The provider's own detail pages: a movie's info, a series' seasons and episodes. Cached, since they rarely change.
 import type { DatabaseSync } from 'node:sqlite';
-import type { Item } from '../../shared/protocol.ts';
+import type { Item, MovieInfo } from '../../shared/protocol.ts';
 import { itemId } from '../../shared/domain.ts';
 import type { Provider } from './xtream.ts';
 import type { Catalog } from './catalog.ts';
 
 const FRESH_MS = 6 * 3600_000;
-
-export interface MovieInfo {
-  plot: string | null; genre: string | null; year: string | null; duration: number | null; backdrop: string | null;
-  cast: string | null; director: string | null; rating: number | null; trailer: string | null;
-}
 
 export class ProviderDetails {
   private provider: Provider;

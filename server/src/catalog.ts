@@ -1,5 +1,6 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import type { Category, Item, Kind, Programme } from '../../shared/protocol.ts';
+import type { Category, Item, Kind, Programme, Sort } from '../../shared/protocol.ts';
+export type { Sort };
 
 import { itemId, parseId } from '../../shared/domain.ts';
 import { kvGet, kvSet, syncedAt } from './db.ts';
@@ -17,7 +18,6 @@ export function toItem(r: Row): Item {
   return it;
 }
 
-export type Sort = 'default' | 'added' | 'name' | 'rating';
 const ORDER: Record<Sort, string> = { default: 'sort', added: 'added DESC', name: 'name COLLATE NOCASE', rating: 'rating DESC NULLS LAST' };
 
 /** All catalog reads go through prepared statements cached here. */

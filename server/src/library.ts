@@ -4,27 +4,13 @@ import { LANG_BITS } from './vod.ts';
 import { encodeGenres, genreLike } from './genres.ts';
 import type { ProviderDetails } from './details.ts';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import type { Item } from '../../shared/protocol.ts';
+import type { Item, TitleCard, BrowseRow, VersionInfo } from '../../shared/protocol.ts';
 import type { Tmdb } from './tmdb.ts';
 import { kvGet, kvSet } from './db.ts';
 import type { Letterboxd } from './letterboxd.ts';
 
 const GENRE_ROWS = ['Action', 'Comedy', 'Drama', 'Thriller', 'Crime', 'Horror', 'Science Fiction', 'Animation', 'Family', 'Adventure', 'Mystery', 'Romance', 'Documentary', 'Fantasy', 'War', 'Reality', 'Kids'];
 
-export interface TitleCard {
-  tid: number; kind: 'movie' | 'series'; name: string; year: number | null; poster: string | null; rating: number | null; uhd: boolean;
-  langs: string[]; progress?: { position: number; duration: number; label?: string };
-  tmdb?: number | null;
-  wl?: boolean;            // on the Letterboxd watchlist
-  watched?: number | true; // logged on Letterboxd (rating 0.5-5, or true if unrated)
-  fresh?: boolean;         // added by the provider in the last 2 weeks
-  added?: number | null;
-}
-export interface Row { id: string; title: string; items: TitleCard[]; more?: Record<string, string> }
-export interface VersionInfo {
-  item: Item; lang: string; uhd: boolean; hdr: boolean; dv: boolean; dolby: boolean; src: string | null; score: number; label: string;
-  probe?: { width: number | null; height: number | null; hdr: string | null; vcodec: string | null; acodec: string | null; channels: number | null; alangs: string | null; slangs: string | null };
-}
 export interface Device { tv: boolean; hevcOk: boolean }
 
 const CARD = `tid, kind, name, year, poster, rating, uhd, lmask, tmdb, added`;
@@ -38,7 +24,7 @@ export class Library {
   private db: DatabaseSync;
   private tmdb: Tmdb;
   private stmts = new Map<string, StatementSync>();
-  private rowCache = new Map<string, { at: number; rows: Row[] }>();
+  private rowCache = new Map<string, { at: number; rows: BrowseRow[] }>();
   langs: string[];
 
   private lb: Letterboxd;
@@ -137,13 +123,13 @@ export class Library {
     return out;
   }
 
-  async rows(kind: 'movie' | 'series'): Promise<Row[]> {
+  async rows(kind: 'movie' | 'series'): Promise<BrowseRow[]> {
     const key = `${kind}:${this.mask}`;
     const hit = this.rowCache.get(key);
-    const rows: Row[] = hit && Date.now() - hit.at < 5 * 60_000 ? hit.rows : await this.buildRows(kind);
+    const rows: BrowseRow[] = hit && Date.now() - hit.at < 5 * 60_000 ? hit.rows : await this.buildRows(kind);
     if (!hit || hit.rows !== rows) this.rowCache.set(key, { at: Date.now(), rows });
     const cont = this.continueRow(kind);
-    const out: Row[] = [];
+    const out: BrowseRow[] = [];
     if (cont.length) out.push({ id: 'continue', title: 'Continue watching', items: cont });
     const wl = this.watchlistRow();
     const wlItems = wl.items.filter((c) => c.kind === kind);
@@ -151,8 +137,8 @@ export class Library {
     return [...out, ...rows.map((r) => ({ ...r, items: this.decorate(r.items) }))];
   }
 
-  private async buildRows(kind: 'movie' | 'series'): Promise<Row[]> {
-    const rows: Row[] = [];
+  private async buildRows(kind: 'movie' | 'series'): Promise<BrowseRow[]> {
+    const rows: BrowseRow[] = [];
     const year = new Date().getFullYear();
     const add = (id: string, title: string, items: TitleCard[], more?: Record<string, string>) => { if (items.length >= 4) rows.push({ id, title, items, more }); };
     if (this.tmdb.enabled) {

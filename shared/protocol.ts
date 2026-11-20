@@ -128,3 +128,30 @@ export interface SportEvent {
   sourceCount: number;
   sources: RankedSource[];
 }
+
+// ---- movies & series (titles = one entry per film/show, versions = provider copies) ----
+export type Sort = 'default' | 'added' | 'name' | 'rating';
+export interface SeriesInfo {
+  id: string; name: string; cover: string | null; backdrop: string | null; plot: string | null; genre: string | null; year: string | null; rating: number | null;
+  seasons: { season: number; episodes: (Item & { plot?: string; duration?: number })[] }[];
+}
+export interface MovieInfo { plot: string | null; genre: string | null; year: string | null; duration: number | null; backdrop: string | null; cast: string | null; director: string | null; rating: number | null; trailer: string | null }
+export interface TitleCard {
+  tid: number; kind: 'movie' | 'series'; name: string; year: number | null; poster: string | null; rating: number | null; uhd: boolean;
+  langs: string[]; progress?: { position: number; duration: number; label?: string };
+  tmdb?: number | null;
+  wl?: boolean;            // on the Letterboxd watchlist
+  watched?: number | true; // logged on Letterboxd (rating 0.5-5, or true if unrated)
+  fresh?: boolean;         // added by the provider in the last 2 weeks
+  added?: number | null;
+}
+export interface BrowseRow { id: string; title: string; items: TitleCard[]; more?: Record<string, string> }
+export interface VersionInfo {
+  item: Item; lang: string; uhd: boolean; hdr: boolean; dv: boolean; dolby: boolean; src: string | null; score: number; label: string;
+  probe?: { width: number | null; height: number | null; hdr: string | null; vcodec: string | null; acodec: string | null; channels: number | null; alangs: string | null; slangs: string | null };
+}
+export interface TitleDetail extends TitleCard {
+  backdrop: string | null; plot: string | null; genres: string[]; cast: string | null; director: string | null; trailer: string | null;
+  runtime: number | null; votes: number | null; top250: number | null; origLang: string | null;
+  versions: VersionInfo[]; similar: TitleCard[]; collection: TitleCard[];
+}
