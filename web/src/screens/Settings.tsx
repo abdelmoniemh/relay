@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { lowLatencySports, setLowLatency } from '../playback.ts';
+import { lowLatencySports, setLowLatency, audioLang, setAudioLang, subLang, setSubLang, dataSaver, setDataSaver, isAway, type DataSaver } from '../playback.ts';
+import { reminders, loadReminders, unremind, notificationsOn, notificationsBlocker, enableNotifications, disableNotifications } from '../notify.ts';
+import { clock } from '../env.ts';
 import { api, server, setServer, myDeviceId, setCredentials, clearCache } from '../api.ts';
 import { devices, connected } from '../ws.ts';
 import { navFocused, back, compact, stack } from '../router.ts';
@@ -23,6 +25,11 @@ interface R { id: string; label: string; sub?: ComponentChildren; value?: Compon
 interface G { title: string; rows: R[]; foot?: string }
 
 type Edit = { title: string; hint?: string; initial: string; save: (v: string) => void } | null;
+type Pick = { title: string; hint?: string; options: { label: string; sel: boolean; act: () => void }[] } | null;
+
+/** Languages offered for audio / subtitles (others still play: these are just the preference). */
+const LANGS = ['en', 'ar', 'fr', 'es', 'de', 'it', 'pt', 'tr', 'hi', 'ur', 'ru', 'ja', 'ko', 'zh'];
+const langName = (code: string) => { try { return new Intl.DisplayNames([lang.value], { type: 'language' }).of(code) ?? code; } catch { return code; } };
 
 export function Settings() {
   const [tick, setTick] = useState(0);
@@ -30,6 +37,8 @@ export function Settings() {
   const regions = useAsync(() => api.regions(), [tick]);
   const [allRegions, setAllRegions] = useState(false);
   const [edit, setEdit] = useState<Edit>(null);
+  const [pick, setPick] = useState<Pick>(null);
+  useEffect(() => { loadReminders(); }, []);
   const [confirm, setConfirm] = useState<{ title: string; body: string; ok: string; act: () => void } | null>(null);
   const refresh = (ms = 0) => setTimeout(() => setTick((n) => n + 1), ms);
   const s = st.data;
@@ -51,9 +60,33 @@ export function Settings() {
       act: () => setConfirm({ title: t('Remove {name}?', { name: d.name }), body: t('It will need the pairing code to connect again.'), ok: t('Remove'), act: () => api.removeDevice(d.id) }),
     })),
   ] });
+  const DS: Record<DataSaver, string> = { auto: t('Automatic'), on: t('Always'), off: t('Off') };
+  const blocker = isTizen ? null : notificationsBlocker();
   groups.push({ title: t('Playback'), rows: [
     { id: 'lowlat', label: t('Lowest delay for live sport'), sub: lowLatencySports.value ? t('Jumps to the live edge') : t('Plays the provider’s buffer for smoother video'),
       toggle: lowLatencySports.value, act: () => setLowLatency(!lowLatencySports.value) },
+    { id: 'alang', label: t('Audio language'), value: audioLang.value ? langName(audioLang.value) : t('As the film comes'),
+      act: () => setPick({ title: t('Audio language'), hint: t('When a film or episode has several, start with this one.'), options: [
+        { label: t('As the film comes'), sel: !audioLang.value, act: () => setAudioLang(null) },
+        ...LANGS.map((c) => ({ label: langName(c), sel: audioLang.value === c, act: () => setAudioLang(c) })),
+      ] }) },
+    { id: 'slang', label: t('Subtitles'), value: subLang.value === 'off' ? t('Off') : langName(subLang.value),
+      act: () => setPick({ title: t('Subtitles'), hint: t('Shown when the film has them. Forced subtitles (signs, foreign dialogue) show either way.'), options: [
+        { label: t('Off'), sel: subLang.value === 'off', act: () => setSubLang('off') },
+        ...LANGS.map((c) => ({ label: langName(c), sel: subLang.value === c, act: () => setSubLang(c) })),
+      ] }) },
+    ...(!isTizen ? [{ id: 'saver', label: t('Data saver'), value: DS[dataSaver.value],
+      sub: dataSaver.value === 'auto' ? (isAway() ? t('On now: Relay is reached through Tailscale') : t('Turns on away from home (through Tailscale)')) : dataSaver.value === 'on' ? t('720p, about 3 Mbps') : t('Full quality'),
+      act: () => setPick({ title: t('Data saver'), hint: t('Streams go through the server at 720p, about 3 Mbps, instead of the provider’s full quality.'), options: (['auto', 'on', 'off'] as DataSaver[]).map((v) => ({ label: DS[v], sel: dataSaver.value === v, act: () => setDataSaver(v) })) }) } as R] : []),
+  ] });
+  groups.push({ title: t('Reminders'), foot: blocker ?? t('A minute before, every open Relay app shows it; with notifications on, this device gets one even when Relay is closed.'), rows: [
+    ...(!isTizen ? [{ id: 'notif', label: t('Notifications on this device'), toggle: notificationsOn.value, sub: blocker ? t('Not available here') : undefined,
+      act: blocker ? undefined : () => { (notificationsOn.value ? disableNotifications() : enableNotifications()).catch(() => {}); } } as R] : []),
+    ...reminders.value.filter((r) => r.start > Date.now() / 1000 - 600).map((r): R => ({
+      id: `rem${r.id}`, label: r.title, sub: `${new Date(r.start * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} · ${clock(r.start)}${r.autoplay ? ` · ${t('Starts on {name}', { name: devices.value.find((d) => d.id === r.autoplay)?.name ?? '…' })}` : ''}`,
+      value: t('Remove'), act: () => unremind(r.id),
+    })),
+    ...(reminders.value.length ? [] : [{ id: 'remnone', label: t('No reminders'), sub: t('Set one from a channel’s programmes or a sports event.') } as R]),
   ] });
   if (s) {
     const on = new Set(s.vodLangs);
@@ -105,7 +138,7 @@ export function Settings() {
   const flat = groups.flatMap((g) => g.rows);
   const [fi, setFi] = useState(0);
   useKeys((k) => {
-    if (navFocused.value || edit || confirm) return false;
+    if (navFocused.value || edit || confirm || pick) return false;
     if (k === 'up') { if (fi === 0) return false; setFi(fi - 1); return true; }
     if (k === 'down') { setFi(Math.min(flat.length - 1, fi + 1)); return true; }
     if (k === 'ok') { flat[fi]?.act?.(); return true; }
@@ -142,6 +175,18 @@ export function Settings() {
         </section>
       ))}
       {!compact.value && <p class="help">{t('Remote keys: red = favourite · green = watch here · blue = send to another device · CH± = next/previous channel')}</p>}
+      {pick && (
+        <Sheet title={pick.title} onClose={() => setPick(null)}>
+          {pick.hint && <p class="sheet-hint">{pick.hint}</p>}
+          <div class="list-group">
+            {pick.options.map((o) => (
+              <button key={o.label} class="list-row tappable" aria-pressed={o.sel} onClick={() => { o.act(); setPick(null); }}>
+                <span class="lr-main"><b>{o.label}</b></span>{o.sel && <Icon n="check" class="lr-chev" />}
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      )}
       {edit && <EditSheet title={edit.title} hint={edit.hint} initial={edit.initial} onSave={edit.save} onClose={() => setEdit(null)} />}
       {confirm && (
         <Sheet title={confirm.title} onClose={() => setConfirm(null)}>

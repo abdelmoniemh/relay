@@ -793,3 +793,17 @@ html.phone .btn.focus { box-shadow: none; transform: none; }
 .legacy .row-scroll > * + *, .legacy .chips > * + *, .legacy .bb-actions > * + *, .legacy .ev-actions > * + *, .legacy .targets > * + *,
 .legacy .overlay .ctl > * + *, .legacy .sheet-actions > * + * { margin-left: .5rem; }
 .legacy .bb-actions > * + * { margin-left: .75rem; }
+
+/* ---- playback additions: seek preview, skip intro ---- */
+.seek-track { flex: 1; position: relative; display: flex; align-items: center; direction: ltr; }
+.seek-track input { width: 100%; }
+.seek-preview { position: absolute; bottom: 2.25rem; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: .25rem; pointer-events: none; }
+.seek-preview .thumb { border-radius: 6px; background-repeat: no-repeat; border: 1px solid rgba(255, 255, 255, .25); box-shadow: 0 6px 18px rgba(0, 0, 0, .6); }
+.seek-preview span { font-size: .8125rem; background: rgba(0, 0, 0, .75); padding: .05rem .45rem; border-radius: 4px; }
+.skip-btn { position: fixed; right: 2rem; bottom: 8rem; z-index: 31; }
+[dir=rtl] .skip-btn { right: auto; left: 2rem; }
+@media (max-width: 760px) {
+  .skip-btn { right: 1rem; bottom: calc(9rem + env(safe-area-inset-bottom)); }
+  [dir=rtl] .skip-btn { left: 1rem; }
+}
+.offline-banner { position: fixed; top: calc(.75rem + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 65; background: #5c1f1f; color: #fff; padding: .6rem 1.1rem; border-radius: 12px; font-size: .9375rem; max-width: calc(100vw - 2rem); text-align: center; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }

@@ -3,6 +3,7 @@
 import { signal } from '@preact/signals';
 import type { Item, ReminderInfo } from '@shared/protocol.ts';
 import { api } from './api.ts';
+import { t } from './i18n.ts';
 
 export const reminders = signal<ReminderInfo[]>([]);
 
@@ -23,12 +24,12 @@ export function notificationsSupported() {
 }
 /** Why not, in words (for Settings). */
 export function notificationsBlocker(): string | null {
-  if (typeof window === 'undefined') return 'Not available';
-  if (!window.isSecureContext) return 'Notifications need Relay opened over https (e.g. through Tailscale), not a plain http address.';
+  if (typeof window === 'undefined') return t('Not available');
+  if (!window.isSecureContext) return t('Notifications need Relay opened over https (e.g. through Tailscale), not a plain http address.');
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    return /iPhone|iPad/.test(navigator.userAgent) ? 'On iPhone, add Relay to the Home Screen first (Share → Add to Home Screen) and open it from there.' : 'This browser does not support notifications.';
+    return /iPhone|iPad/.test(navigator.userAgent) ? t('On iPhone, add Relay to the Home Screen first (Share → Add to Home Screen) and open it from there.') : t('This browser does not support notifications.');
   }
-  if (Notification.permission === 'denied') return 'Notifications are blocked for Relay in this browser\'s settings.';
+  if (Notification.permission === 'denied') return t('Notifications are blocked for Relay in this browser\'s settings.');
   return null;
 }
 export const notificationsOn = signal(typeof Notification !== 'undefined' && Notification.permission === 'granted');

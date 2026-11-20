@@ -7,6 +7,7 @@ import { api, myDeviceId, server, token, type Extras } from './api.ts';
 import { dispatchKey, type Key } from './keys.ts';
 import type { Player } from './player/types.ts';
 import { isTizen } from './env.ts';
+import { t } from './i18n.ts';
 
 export type Mode = 'off' | 'mini' | 'full';
 export type Status = 'idle' | 'requesting' | 'loading' | 'playing' | 'paused' | 'buffering' | 'error';
@@ -158,15 +159,15 @@ export const isLiveNow = (item: Item | null | undefined) => item?.kind === 'live
 export function friendlyError(raw?: string | null): string {
   const s = String(raw ?? '');
   const live = isLiveNow(current.value);
-  if (!s) return 'Playback failed. Try again.';
-  if (/Could not reach the server|Failed to fetch|NetworkError when|Load failed/i.test(s)) return "Can't reach the Relay server. Check this device is on the same network (or Tailscale) and try again.";
-  if (/stalled/.test(s)) return live ? 'This channel isn\'t sending anything right now. Try another source or channel.' : 'The stream stopped. Try again.';
-  if (/(Conversion|Transcode) failed.*(HTTP 5|ffmpeg exited|no output)/i.test(s) || /HTTP 50[23]/.test(s)) return live ? 'The provider didn\'t send this channel. It may be offline or busy: try another source.' : 'The provider didn\'t send this title. It may be busy: try again in a moment.';
-  if (/HTTP 401|HTTP 403|unauthor/i.test(s)) return 'This device is no longer paired. Pair it again in Settings.';
+  if (!s) return t('Playback failed. Try again.');
+  if (/Could not reach the server|Failed to fetch|NetworkError when|Load failed/i.test(s)) return t("Can't reach the Relay server. Check this device is on the same network (or Tailscale) and try again.");
+  if (/stalled/.test(s)) return live ? t('This channel isn\'t sending anything right now. Try another source or channel.') : t('The stream stopped. Try again.');
+  if (/(Conversion|Transcode) failed.*(HTTP 5|ffmpeg exited|no output)/i.test(s) || /HTTP 50[23]/.test(s)) return live ? t('The provider didn\'t send this channel. It may be offline or busy: try another source.') : t('The provider didn\'t send this title. It may be busy: try again in a moment.');
+  if (/HTTP 401|HTTP 403|unauthor/i.test(s)) return t('This device is no longer paired. Pair it again in Settings.');
   if (/archive|catch-up|not found|can't decode|isn't|no longer/i.test(s)) return s; // already a sentence
-  if (/NetworkError|IOException|HttpStatusCodeInvalid|manifestLoadError|fragLoadError|levelLoadError|MEDIA_ERR_NETWORK/i.test(s)) return live ? 'Lost the connection to this channel. Try again or pick another source.' : 'Lost the connection to the stream. Try again.';
-  if (/MediaError|MEDIA_ERR_DECODE|MEDIA_ERR_SRC_NOT_SUPPORTED|bufferAppendError|FormatUnsupported|CodecUnsupported/i.test(s)) return 'This device can\'t play this stream\'s format. Try another source.';
-  return 'Playback failed. Try again.';
+  if (/NetworkError|IOException|HttpStatusCodeInvalid|manifestLoadError|fragLoadError|levelLoadError|MEDIA_ERR_NETWORK/i.test(s)) return live ? t('Lost the connection to this channel. Try again or pick another source.') : t('Lost the connection to the stream. Try again.');
+  if (/MediaError|MEDIA_ERR_DECODE|MEDIA_ERR_SRC_NOT_SUPPORTED|bufferAppendError|FormatUnsupported|CodecUnsupported/i.test(s)) return t('This device can\'t play this stream\'s format. Try another source.');
+  return t('Playback failed. Try again.');
 }
 
 function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
@@ -279,6 +280,11 @@ export async function playEvent(eventId: string, opts: { mode?: Mode; sourceId?:
   play(pick.item, { mode: opts.mode ?? 'full', sources: list, eventId });
 }
 
+/** Audio / subtitle tracks of what's playing (iPhone movies via the server; null when the player can't tell). */
+export const mediaTracks = () => player?.tracks?.() ?? null;
+export const selectAudio = (i: number) => player?.setAudio?.(i);
+export const selectSub = (i: number) => player?.setSub?.(i);
+
 export const togglePause = () => { if (!player || !current.value) return; player.paused() ? player.play() : player.pause(); };
 export const seekBy = (d: number) => { if (player && current.value && !isLiveNow(current.value)) { player.seek(player.position() + d); position.value = player.position() + d; } };
 export const seekTo = (t: number) => { if (player && current.value && !isLiveNow(current.value)) { player.seek(t); position.value = t; } };
@@ -385,8 +391,7 @@ onServer((m: ServerMsg) => {
       return;
     case 'reminder': {
       const r = m.reminder;
-      const here = r.autoplay === myDeviceId.value;
-      showToast(`${here ? 'Starting' : 'Starting now'}: ${r.title} · ${r.item.name.replace(/^([A-Z0-9]{2,4}|4K)\s*[|:]\s*/, '')}`, 8000);
+      showToast(`${t('Starting now')}: ${r.title} · ${r.item.name.replace(/^([A-Z0-9]{2,4}|4K)\s*[|:]\s*/, '')}`, 8000);
       return;
     }
   }

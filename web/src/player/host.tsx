@@ -7,7 +7,10 @@ import type { Player } from './types.ts';
 import {
   attachPlayer, current, mode, status, position, duration, errorMsg, play, stop, togglePause, seekBy, seekTo, zap, setMode, volume,
   sources, nextSource, sourceEvent, nextUp, nextEpisode, playNextEpisode, cancelNextUp, toast,
+  isLiveNow, skipAt, skipIntro, thumbAt, mediaTracks, selectAudio, selectSub, startOver, canCatchup,
 } from '../playback.ts';
+import { Sheet } from '../ui/kit.tsx';
+import { ProgrammesSheet } from '../ui/programmes.tsx';
 import { useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
 import { Logo, clean } from '../ui/common.tsx';
 import { api, myDeviceId, toggleFavorite, favorites } from '../api.ts';
@@ -152,7 +155,7 @@ export function PlayerHost() {
       {hw
         ? <object ref={obj} id="av-player" type="application/avplayer" class={`video ${m}`} style={style} />
         : <video ref={vid} class={`video ${m}`} style={style} playsInline autoplay
-            onClick={() => (m === 'mini' ? setMode('full') : current.value?.kind !== 'live' && togglePause())}
+            onClick={() => (m === 'mini' ? setMode('full') : !isLiveNow(current.value) && togglePause())}
             onDblClick={() => m === 'full' && toggleFullscreen()} />}
       {m === 'mini' && rect && !hw && !onLive && (
         <div class="mini-ctl" style={{ left: rect.x, top: rect.y - 40, width: rect.w }}>
@@ -162,6 +165,7 @@ export function PlayerHost() {
         </div>
       )}
       {m === 'full' && <Overlay />}
+      {m === 'full' && <SkipButton />}
     </>
   );
 }
@@ -170,11 +174,14 @@ function Overlay() {
   const [visible, setVisible] = useState(true);
   const [digits, setDigits] = useState('');
   const [sendMenu, setSendMenu] = useState(false);
+  const [sheet, setSheet] = useState<'tracks' | 'guide' | null>(null);
+  const [hover, setHover] = useState<number | null>(null); // seek-bar preview time
   const hideT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const digitT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastTap = useRef(0);
   const it = current.value!;
-  const live = it?.kind === 'live';
+  const live = isLiveNow(it); // a catch-up programme plays like a movie: seekable
+  const skip = it && !live ? skipAt(position.value) : null;
   epgVersion.value;
 
   const poke = () => {
@@ -187,6 +194,7 @@ function Overlay() {
   const others = devices.value.filter((d) => d.online && d.id !== myDeviceId.value);
 
   useKeys((k) => {
+    if (sheet) return false; // the open sheet handles the remote
     if (nextUp.value) {
       if (k === 'ok' || k === 'play' || k === 'playpause') { playNextEpisode(); return true; }
       if (k === 'back') { cancelNextUp(); stop(); return true; }
@@ -207,7 +215,7 @@ function Overlay() {
         if (live) { setMode('mini'); if (route().name !== 'live') go({ name: 'live' }); } else stop();
         return true;
       case 'stop': stop(); return true;
-      case 'ok': if (!live && visible) togglePause(); return true;
+      case 'ok': if (!live && skip) { skipIntro(); return true; } if (!live && visible) togglePause(); return true;
       case 'playpause': case 'play': case 'pause': if (!live) togglePause(); return true;
       case 'left': case 'rw': if (live) nextSource(-1); else seekBy(k === 'rw' ? -60 : -10); return true;
       case 'right': case 'ff': if (live) nextSource(1); else seekBy(k === 'ff' ? 60 : 10); return true;
@@ -236,6 +244,8 @@ function Overlay() {
   }, 2);
 
   if (!it) return null;
+  const tracks = !live ? mediaTracks() : null;
+  const hasTracks = !!tracks && (tracks.audio.length > 1 || tracks.subs.length > 0);
   const epg = live ? nowNext(it.epg) : undefined;
   const p = epg?.[0];
   const now = Date.now() / 1000;
@@ -268,10 +278,11 @@ function Overlay() {
       {digits && <div class="digits">{digits}</div>}
       <div class="top">
         <button class="ico tool" aria-label={t('Back')} onClick={() => (live ? setMode('mini') : stop())}><Icon n="back" /></button>
-        {live && <Logo src={it.icon} name={it.name} size={56} />}
+        {it.kind === 'live' && <Logo src={it.icon} name={it.name} size={56} />}
         <div class="t">
-          <div class="name">{clean(it.name)}{favorites.value.has(it.id) && <Icon n="star" filled class="fav-mark" />}</div>
+          <div class="name">{it.catchup?.title ?? clean(it.name)}{favorites.value.has(it.id) && !it.catchup && <Icon n="star" filled class="fav-mark" />}</div>
           {it.kind === 'episode' && <div class="sub">S{it.season} · E{it.episode}</div>}
+          {it.catchup && <div class="sub"><span class="badge-inline">{t('Catch-up')}</span> {clean(it.name)} · <span class="tnum">{clock(it.catchup.start)}</span></div>}
         </div>
         <div class="clock tnum">{clock(now)}</div>
         {airplay.value && <button class="ico tool" title="AirPlay" aria-label="AirPlay" onClick={() => { poke(); showAirplay(); }}><Icon n="airplay" /></button>}
@@ -290,7 +301,21 @@ function Overlay() {
         ) : (
           <div class="seek tnum">
             <span>{fmtTime(position.value)}</span>
-            <input type="range" min={0} max={duration.value || 1} step={1} value={position.value} onInput={(e) => seekTo(Number((e.target as HTMLInputElement).value))} />
+            <div class="seek-track">
+              {hover != null && duration.value > 0 && (() => {
+                const th = thumbAt(hover);
+                return (
+                  <div class="seek-preview" style={{ left: `${(hover / duration.value) * 100}%` }}>
+                    {th && <div class="thumb" style={{ width: th.w, height: th.h, backgroundImage: `url("${th.url}")`, backgroundPosition: `-${th.x}px -${th.y}px` }} />}
+                    <span>{fmtTime(hover)}</span>
+                  </div>
+                );
+              })()}
+              <input type="range" min={0} max={duration.value || 1} step={1} value={position.value}
+                onInput={(e) => { const v = Number((e.target as HTMLInputElement).value); setHover(v); seekTo(v); }}
+                onPointerMove={(e) => { if (!isMobile && duration.value) { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setHover(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * duration.value); } }}
+                onPointerLeave={() => setHover(null)} onPointerUp={() => setTimeout(() => setHover(null), 600)} />
+            </div>
             <span>{fmtTime(duration.value)}</span>
           </div>
         )}
@@ -312,11 +337,46 @@ function Overlay() {
             <button class="pill-btn" onClick={() => zap('next')}><Icon n="down" />{t('Next channel')}</button>
           </>}
           {it.kind === 'episode' && nextEpisode() && <button class="pill-btn" onClick={playNextEpisode}><Icon n="next" />{t('Next episode')}</button>}
+          {hasTracks && <button class="pill-btn" onClick={() => setSheet('tracks')}><Icon n="globe" />{t('Audio & subtitles')}</button>}
+          {live && p && canCatchup(it, p) && <button class="pill-btn" onClick={() => startOver(it)}><Icon n="restart" />{t('Start over')}</button>}
+          {it.kind === 'live' && it.epg && <button class="pill-btn" onClick={() => setSheet('guide')}><Icon n="info" />{t('Programmes')}</button>}
           {live && <button class="pill-btn" aria-pressed={favorites.value.has(it.id)} onClick={() => toggleFavorite(it)}><Icon n="star" filled={favorites.value.has(it.id)} />{favorites.value.has(it.id) ? t('Favourite') : t('Add to favourites')}</button>}
           {others.length > 0 && <button class="pill-btn" onClick={() => setSendMenu(true)}><Icon n="send" />{t('Send to…')}<span class="keydot blue" /></button>}
         </div>
       </div>
       {nextUp.value && <NextUp />}
+      {sheet === 'guide' && <ProgrammesSheet channel={{ ...it, catchup: null }} onClose={() => setSheet(null)} />}
+      {sheet === 'tracks' && tracks && (
+        <Sheet title={t('Audio & subtitles')} onClose={() => setSheet(null)}>
+          {tracks.audio.length > 1 && (
+            <section class="set-group">
+              <h2 class="list-head">{t('Audio')}</h2>
+              <div class="list-group">
+                {tracks.audio.map((a, i) => (
+                  <button key={a.n} class="list-row tappable" aria-pressed={i === tracks.audioSel} onClick={() => { selectAudio(i); setSheet(null); }}>
+                    <span class="lr-main"><b>{a.name}</b></span>{i === tracks.audioSel && <Icon n="check" class="lr-chev" />}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {tracks.subs.length > 0 && (
+            <section class="set-group">
+              <h2 class="list-head">{t('Subtitles')}</h2>
+              <div class="list-group">
+                <button class="list-row tappable" aria-pressed={tracks.subSel < 0} onClick={() => { selectSub(-1); setSheet(null); }}>
+                  <span class="lr-main"><b>{t('Off')}</b></span>{tracks.subSel < 0 && <Icon n="check" class="lr-chev" />}
+                </button>
+                {tracks.subs.map((sb, i) => (
+                  <button key={sb.n} class="list-row tappable" aria-pressed={i === tracks.subSel} onClick={() => { selectSub(i); setSheet(null); }}>
+                    <span class="lr-main"><b>{sb.name}</b></span>{i === tracks.subSel && <Icon n="check" class="lr-chev" />}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+        </Sheet>
+      )}
       {sendMenu && (
         <div class="dialog" onClick={(e) => e.stopPropagation()}>
           <h3>{t('Continue on…')}</h3>
@@ -328,6 +388,14 @@ function Overlay() {
       )}
     </div>
   );
+}
+
+/** Stays visible while the controls are hidden (outside the fading overlay). */
+function SkipButton() {
+  const it = current.value;
+  const skip = it && !isLiveNow(it) && (status.value === 'playing' || status.value === 'paused') ? skipAt(position.value) : null;
+  if (!skip) return null;
+  return <button class="btn primary skip-btn" onClick={() => skipIntro()}>{skip.kind === 'intro' ? t('Skip intro') : t('Skip recap')}</button>;
 }
 
 function NextUp() {

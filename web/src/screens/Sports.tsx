@@ -10,6 +10,8 @@ import { isMobile, isTizen } from '../env.ts';
 import { Btn, IconBtn, LivePill, QualityChip } from '../ui/kit.tsx';
 import { Icon } from '../ui/Icon.tsx';
 import { t, tn } from '../i18n.ts';
+import { RemindSheet } from '../ui/programmes.tsx';
+import { reminders, loadReminders, unremind } from '../notify.ts';
 
 const LABEL: Record<string, string> = {
   football: 'Football', all: 'All sports', basketball: 'Basketball', 'american-football': 'American football', hockey: 'Hockey',
@@ -32,6 +34,8 @@ const when = (e: SportEvent) => {
 };
 
 export function Sports() {
+  const [remindFor, setRemindFor] = useState<SportEvent | null>(null);
+  useEffect(() => { loadReminders(); }, []);
   const [all, setAll] = useState<SportEvent[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sport, setSport] = useState(lastSport);
@@ -79,7 +83,7 @@ export function Sports() {
   const sources = detail && detail.id === focusedId ? detail.sources : focused?.sources ?? [];
 
   useKeys((k) => {
-    if (navFocused.value) return false;
+    if (navFocused.value || remindFor) return false;
     if (zone === 'sports') {
       if (k === 'left') { const i = Math.max(0, si - 1); setSi(i); setSport(sportsList[i].key); setEi(0); return true; }
       if (k === 'right') { const i = Math.min(sportsList.length - 1, si + 1); setSi(i); setSport(sportsList[i].key); setEi(0); return true; }
@@ -160,6 +164,11 @@ export function Sports() {
             <div class="ev-actions">
               <Btn a={{ label: t('Watch best source'), icon: 'play', primary: true, act: () => playEvent(focused.id) }} />
               <Btn a={{ label: watching ? t('Checks pause while watching') : t('Check quality now'), icon: 'refresh', act: () => { if (!watching) requestChecks(); } }} />
+              {focused.status !== 'live' && focused.start && sources.length > 0 && (() => {
+                const r = reminders.value.find((x) => x.eventId === focused.id);
+                return r ? <Btn a={{ label: t('Reminder set'), icon: 'check', act: () => unremind(r.id) }} />
+                  : <Btn a={{ label: t('Remind me'), icon: 'plus', act: () => setRemindFor(focused) }} />;
+              })()}
             </div>
             <h3 class="list-head">{t('Sources')}</h3>
             <VList count={sources.length} rowH={60} focus={kb && zone === 'detail' ? di : -1} render={(i, f) => {
@@ -177,6 +186,11 @@ export function Sports() {
           </>
         ) : <div class="empty">{t('Select an event')}</div>}
       </div>
+      {remindFor && (() => {
+        const src = remindFor.sources.find((x) => !x.dead) ?? remindFor.sources[0];
+        return src ? <RemindSheet channel={src.item} prog={{ start: remindFor.start!, stop: remindFor.stop, title: `${remindFor.home} ${t('v')} ${remindFor.away}` }}
+          eventId={remindFor.id} onClose={() => setRemindFor(null)} /> : null;
+      })()}
     </div>
   );
 }

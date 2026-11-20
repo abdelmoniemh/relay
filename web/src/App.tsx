@@ -130,6 +130,19 @@ export function App() {
       {r.name !== 'remote' && <MiniPlayer />}
       <PlayerHost />
       {toast.value && <div class={`toast ${mode.value === 'full' ? 'over' : ''}`} role="status">{toast.value}</div>}
+      <OfflineBanner />
     </div>
   );
+}
+
+/** The server has been unreachable for a few seconds: say so plainly (a stuck spinner says nothing). */
+function OfflineBanner() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (connected.value) { setShow(false); return; }
+    const x = setTimeout(() => setShow(true), 4000);
+    return () => clearTimeout(x);
+  }, [connected.value]);
+  if (!show) return null;
+  return <div class="offline-banner" role="alert">{t("Can't reach the Relay server. Reconnecting… Check this device is on the home network (or Tailscale).")}</div>;
 }

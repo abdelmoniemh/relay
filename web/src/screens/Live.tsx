@@ -10,6 +10,7 @@ import { clock, isMobile } from '../env.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { t } from '../i18n.ts';
 import { previewBox } from '../player/host.tsx';
+import { ProgrammesSheet } from '../ui/programmes.tsx';
 
 const FAV: Category = { id: '__fav', name: 'Favourites', count: 0 };
 const RECENT: Category = { id: '__recent', name: 'Recently watched', count: 0 };
@@ -24,6 +25,7 @@ export function Live() {
   const [zone, setZone] = useState<'cats' | 'chans'>('chans');
   const [ci, setCi] = useState(lastCat);
   const [fi, setFi] = useState(lastChan);
+  const [guideFor, setGuideFor] = useState<Item | null>(null);
   const cat = allCats[useDebounced(ci, 180)] ?? FAV;
   epgVersion.value; // subscribe: re-render when EPG arrives
 
@@ -47,7 +49,7 @@ export function Live() {
   };
 
   useKeys((k) => {
-    if (navFocused.value) return false;
+    if (navFocused.value || guideFor) return false;
     if (zone === 'cats') {
       if (k === 'up') { if (ci === 0) return false; setCi((i) => Math.max(0, i - 1)); return true; }
       if (k === 'down') { setCi((i) => Math.min(allCats.length - 1, i + 1)); return true; }
@@ -128,10 +130,12 @@ export function Live() {
                 {n === 0 && p.desc && <div class="desc">{p.desc}</div>}
               </div>
             )) : <div class="desc">{t('No programme guide for this channel')}</div>}
+            {focused.epg && <button class="pill-btn" onClick={() => setGuideFor(focused)}><Icon n="info" />{focused.archive ? t('Programmes & catch-up') : t('Programmes')}</button>}
             <div class="keys"><span class="keydot red" />{favorites.value.has(focused.id) ? t('Remove from favourites') : t('Add to favourites')}</div>
           </div>
         )}
       </div>
+      {guideFor && <ProgrammesSheet channel={guideFor} onClose={() => setGuideFor(null)} />}
     </div>
   );
 }
