@@ -1,5 +1,6 @@
 // Movie/series browsing on top of `titles` (one row per film/show) and its versions (provider copies).
 import type { UserData } from './userdata.ts';
+import { encodeGenres, genreLike } from './genres.ts';
 import type { ProviderDetails } from './details.ts';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Item } from '../../shared/protocol.ts';
@@ -8,7 +9,7 @@ import { kvGet, kvSet } from './db.ts';
 import type { Letterboxd } from './letterboxd.ts';
 
 export const LANG_BITS: Record<string, number> = { en: 1, ar: 2, 'ar-sub': 4, other: 8 };
-const GENRE_ROWS = ['Action', 'Comedy', 'Drama', 'Thriller', 'Crime', 'Horror', 'Science Fiction', 'Sci-Fi', 'Animation', 'Family', 'Adventure', 'Mystery', 'Romance', 'Documentary', 'Fantasy', 'War', 'Reality', 'Kids'];
+const GENRE_ROWS = ['Action', 'Comedy', 'Drama', 'Thriller', 'Crime', 'Horror', 'Science Fiction', 'Animation', 'Family', 'Adventure', 'Mystery', 'Romance', 'Documentary', 'Fantasy', 'War', 'Reality', 'Kids'];
 
 export interface TitleCard {
   tid: number; kind: 'movie' | 'series'; name: string; year: number | null; poster: string | null; rating: number | null; uhd: boolean;
@@ -167,7 +168,7 @@ export class Library {
     add('uhd', 'In 4K', this.query(kind, 'AND uhd = 1', 'popularity DESC NULLS LAST, added DESC'), { uhd: '1' });
     if (this.langs.includes('ar')) add('arabic', kind === 'movie' ? 'Arabic movies' : 'Arabic series', this.query(kind, "AND (lmask & 2) != 0 AND (orig_lang = 'ar' OR orig_lang IS NULL)", 'added DESC'), { lang: 'ar', sort: 'added' });
     for (const g of this.genres(kind).slice(0, 14)) {
-      add(`g:${g.name}`, g.name, this.query(kind, 'AND genres LIKE ?', 'popularity DESC NULLS LAST, added DESC', [`%,${g.name},%`]), { genre: g.name });
+      add(`g:${g.name}`, g.name, this.query(kind, 'AND genres LIKE ?', 'popularity DESC NULLS LAST, added DESC', [genreLike(g.name)]), { genre: g.name });
     }
     return rows;
   }
@@ -175,7 +176,7 @@ export class Library {
   genres(kind: string): { name: string; count: number }[] {
     const counts = new Map<string, number>();
     for (const g of GENRE_ROWS) {
-      const n = (this.st(`SELECT count(*) AS n FROM titles WHERE kind = ? AND (lmask & ?) != 0 AND genres LIKE ?`).get(kind, this.mask, `%,${g},%`) as { n: number }).n;
+      const n = (this.st(`SELECT count(*) AS n FROM titles WHERE kind = ? AND (lmask & ?) != 0 AND genres LIKE ?`).get(kind, this.mask, genreLike(g)) as { n: number }).n;
       if (n >= 8) counts.set(g, n);
     }
     return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => GENRE_ROWS.indexOf(a.name) - GENRE_ROWS.indexOf(b.name));
@@ -183,7 +184,7 @@ export class Library {
 
   grid(kind: string, f: Record<string, string>, offset: number, limit: number): { items: TitleCard[]; total: number } {
     const where: string[] = [], args: unknown[] = [];
-    if (f.genre) { where.push('genres LIKE ?'); args.push(`%,${f.genre},%`); }
+    if (f.genre) { where.push('genres LIKE ?'); args.push(genreLike(f.genre)); }
     if (f.lang && LANG_BITS[f.lang]) { where.push('(lmask & ?) != 0'); args.push(LANG_BITS[f.lang]); }
     if (f.year_from) { where.push('year >= ?'); args.push(Number(f.year_from)); }
     if (f.year_to) { where.push('year <= ?'); args.push(Number(f.year_to)); }
@@ -260,7 +261,7 @@ export class Library {
         try {
           const i = await this.details.movie(sid, 4000);
           {
-            const genres = i.genre ? ',' + String(i.genre).split(/\s*[,/&]\s*/).filter(Boolean).map((g: string) => (g === 'Sci-Fi' ? 'Science Fiction' : g)).join(',') + ',' : null;
+            const genres = encodeGenres(i.genre);
             this.st(`UPDATE titles SET plot = COALESCE(NULLIF(?, ''), plot), genres = COALESCE(genres, ?), "cast" = COALESCE("cast", NULLIF(?, '')),
               director = COALESCE(director, NULLIF(?, '')), runtime = COALESCE(runtime, ?), backdrop = COALESCE(backdrop, ?), trailer = COALESCE(trailer, NULLIF(?, '')) WHERE tid = ?`)
               .run(i.plot ?? '', genres, (i.cast ?? '').slice(0, 300), i.director ?? '', i.duration ? Math.round(i.duration / 60) : null, i.backdrop, i.trailer ?? '', tid);
@@ -282,7 +283,7 @@ export class Library {
     }
     if (similar.length < 6 && fresh.genres) {
       const g = String(fresh.genres).split(',').filter(Boolean).slice(0, 2);
-      const extra = this.query(fresh.kind, `AND tid != ? AND ${g.map(() => 'genres LIKE ?').join(' AND ')}`, 'popularity DESC NULLS LAST, rating DESC', [tid, ...g.map((x) => `%,${x},%`)], 20);
+      const extra = this.query(fresh.kind, `AND tid != ? AND ${g.map(() => 'genres LIKE ?').join(' AND ')}`, 'popularity DESC NULLS LAST, rating DESC', [tid, ...g.map(genreLike)], 20);
       similar = [...similar, ...extra.filter((e) => !similar.some((s) => s.tid === e.tid))].slice(0, 20);
     }
     const [me] = this.decorate([toCard(fresh)], false);

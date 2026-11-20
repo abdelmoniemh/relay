@@ -80,7 +80,7 @@ export interface TitleDetail extends TitleCard {
   runtime: number | null; votes: number | null; top250: number | null; origLang: string | null;
   versions: VersionInfo[]; similar: TitleCard[]; collection: TitleCard[];
 }
-export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; liveSynced: number; pairingCode: string; regions: string[]; vodLangs: string[]; letterboxd: LbStatus; tmdb: { enabled: boolean; enriched: number; pending: number; lastError: string | null }; probing: number | null; probeQueue: number }
+export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; pairingCode: string; regions: string[]; vodLangs: string[]; letterboxd: LbStatus; tmdb: { enabled: boolean; enriched: number; pending: number; lastError: string | null } }
 
 export const api = {
   ping: () => req<{ ok: boolean }>('GET', '/api/ping'),

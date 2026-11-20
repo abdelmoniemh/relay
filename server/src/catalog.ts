@@ -2,6 +2,9 @@ import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Category, Item, Kind, Programme } from '../../shared/protocol.ts';
 
 import { itemId, parseId } from '../../shared/domain.ts';
+import { kvGet, kvSet, syncedAt } from './db.ts';
+
+const DEFAULT_REGIONS = ['UK', 'US', 'CA', 'AR', '4K'];
 
 interface Row { kind: Kind; sid: number; name: string; icon: string | null; cat: string | null; epg: string | null; ext: string | null; rating: number | null; archive: number }
 
@@ -21,11 +24,25 @@ const ORDER: Record<Sort, string> = { default: 'sort', added: 'added DESC', name
 export class Catalog {
   private db: DatabaseSync;
   private stmts = new Map<string, StatementSync>();
+  /** Changes whenever what clients see changes (a sync, other regions): ETag of every catalog response. */
   version = '0';
   /** Live TV regions to show (category prefixes like UK, US, CA, AR). Empty = everything. */
-  regions: string[] = [];
+  regions: string[];
 
-  constructor(db: DatabaseSync) { this.db = db; }
+  constructor(db: DatabaseSync) {
+    this.db = db;
+    this.regions = JSON.parse(kvGet(db, 'regions') ?? JSON.stringify(DEFAULT_REGIONS));
+    this.refresh();
+  }
+
+  /** After a sync: new version. */
+  refresh() { this.version = `${syncedAt(this.db, 'catalog')}.${syncedAt(this.db, 'live')}.${syncedAt(this.db, 'epg')}.${this.regions.join('')}`; }
+
+  setRegions(list: string[]) {
+    this.regions = list.map((r) => String(r).toUpperCase().replace(/[^A-Z0-9]/g, '')).filter(Boolean).slice(0, 50);
+    kvSet(this.db, 'regions', JSON.stringify(this.regions));
+    this.refresh();
+  }
 
   private st(sql: string) {
     let s = this.stmts.get(sql);
@@ -35,7 +52,7 @@ export class Catalog {
 
   /** Adult content isn't stored at all; this stays as a second line of defence for old rows. */
   private adult(alias = '') { return ` AND ${alias}adult = 0`; }
-  /** SQL fragment restricting live rows to the chosen regions (values are sanitized, so they can be inlined). */
+  /** SQL fragment restricting live rows to the chosen regions (values are sanitized, so they can be inlined). Empty = everything. */
   regionSql(kind: Kind | null, alias = '') {
     if (!this.regions.length || (kind && kind !== 'live')) return '';
     const list = this.regions.map((r) => `'${r.replace(/[^A-Z0-9]/g, '')}'`).join(',');

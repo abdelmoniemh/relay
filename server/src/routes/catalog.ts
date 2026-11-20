@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { type ApiCtx, KINDS, clamp } from './http.ts';
 
 export function registerCatalogRoutes(app: FastifyInstance, ctx: ApiCtx) {
-  const { catalog, hub, events, prober, cached } = ctx;
+  const { catalog, events, prober, cached } = ctx;
   // ---- catalog ----
   app.get('/api/categories/:kind', async (req, reply) => {
     const kind = (req.params as any).kind as Kind;
@@ -54,14 +54,14 @@ export function registerCatalogRoutes(app: FastifyInstance, ctx: ApiCtx) {
   app.get('/api/regions', async () => ({ enabled: catalog.regions, all: catalog.regionList() }));
   app.get('/api/events', async (req) => {
     const q = req.query as Record<string, string>;
-    let list = events.list(catalog.regions, catalog.version, (sids) => prober.results(sids), { hevcOk: hevcOk(q) });
+    let list = events.list((sids) => prober.results(sids), { hevcOk: hevcOk(q) });
     if (q.sport) list = list.filter((e) => e.sport === q.sport);
     if (q.q) { const t = q.q.toLowerCase(); list = list.filter((e) => `${e.title} ${e.competition ?? ''}`.toLowerCase().includes(t)); }
     return list.map((e) => ({ ...e, sourceCount: e.sources.length, sources: q.full ? e.sources : e.sources.slice(0, 3) }));
   });
   app.get('/api/events/:id', async (req, reply) => {
     const q = req.query as Record<string, string>;
-    const e = events.list(catalog.regions, catalog.version, (sids) => prober.results(sids), { hevcOk: hevcOk(q) }).find((x) => x.id === (req.params as any).id);
+    const e = events.list((sids) => prober.results(sids), { hevcOk: hevcOk(q) }).find((x) => x.id === (req.params as any).id);
     if (!e) return reply.code(404).send({ error: 'Event not found (finished?)' });
     return { ...e, sourceCount: e.sources.length };
   });
@@ -73,7 +73,7 @@ export function registerCatalogRoutes(app: FastifyInstance, ctx: ApiCtx) {
   app.post('/api/probe', async (req) => {
     const ids = ((req.body as any)?.ids ?? []) as string[];
     prober.request(ids.filter((i) => i.startsWith('l')).map((i) => Number(i.slice(1))).filter(Number.isFinite).slice(0, 60));
-    return { queued: prober.pending(), active: prober.active, blocked: hub.streamActive() };
+    return { ok: true };
   });
 
   app.post('/api/observed', async (req) => {

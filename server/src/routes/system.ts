@@ -1,11 +1,11 @@
 import type { ClientMsg, DeviceKind } from '../../../shared/protocol.ts';
-import { kvGet, kvSet } from '../db.ts';
+import { syncedAt } from '../db.ts';
 import { isSyncing, runSync } from '../sync.ts';
 import type { FastifyInstance } from 'fastify';
 import { type ApiCtx, isLocal } from './http.ts';
 
 export function registerSystemRoutes(app: FastifyInstance, ctx: ApiCtx) {
-  const { db, catalog, auth, hub, provider, prober, tmdb, library, tmdbTick, letterboxd, lbTick, refreshVersion } = ctx;
+  const { db, catalog, auth, hub, provider, tmdb, library, tmdbTick, letterboxd, lbTick, catalogChanged } = ctx;
   app.get('/api/ping', async () => ({ ok: true, name: 'relay' }));
 
   app.post('/api/pair', async (req, reply) => {
@@ -19,15 +19,13 @@ export function registerSystemRoutes(app: FastifyInstance, ctx: ApiCtx) {
 
   app.get('/api/status', async () => ({
     syncing: isSyncing(), counts: catalog.counts(),
-    catalogSynced: Number(kvGet(db, 'catalog_synced') ?? 0), epgSynced: Number(kvGet(db, 'epg_synced') ?? 0),
+    catalogSynced: syncedAt(db, 'catalog'), epgSynced: syncedAt(db, 'epg'),
     pairingCode: auth.pairingCode(), regions: catalog.regions, vodLangs: library.langs, letterboxd: letterboxd.status(),
-    tmdb: { enabled: tmdb.enabled, enriched: tmdb.enriched, lastError: tmdb.lastError,
-      pending: (db.prepare('SELECT count(*) AS n FROM titles WHERE tmdb IS NOT NULL AND meta_at IS NULL AND (lmask & ?) != 0').get(library.mask) as { n: number }).n },
-    probing: prober.active, probeQueue: prober.pending(), liveSynced: Number(kvGet(db, 'live_synced') ?? 0),
+    tmdb: { enabled: tmdb.enabled, enriched: tmdb.enriched, lastError: tmdb.lastError, pending: tmdb.pending(library.mask) },
   }));
 
   app.post('/api/sync', async () => {
-    runSync(provider, ['catalog', 'epg']).then(() => { refreshVersion(); }).catch((e) => app.log.error(e));
+    runSync(provider, ['catalog', 'epg']).then(catalogChanged).catch((e) => app.log.error(e));
     return { started: true };
   });
 
@@ -38,12 +36,12 @@ export function registerSystemRoutes(app: FastifyInstance, ctx: ApiCtx) {
     if (typeof b.tmdbKey === 'string') {
       const k = b.tmdbKey.trim();
       if (k && !(await tmdb.verify(k))) return reply.code(400).send({ error: 'TMDB rejected that key' });
-      kvSet(db, 'tmdb_key', k);
+      tmdb.setKey(k);
       library.invalidate();
       if (k) tmdbTick();
     }
-    if (Array.isArray(b.regions)) { catalog.regions = b.regions.map((r) => String(r).toUpperCase().replace(/[^A-Z0-9]/g, '')).filter(Boolean).slice(0, 50); kvSet(db, 'regions', JSON.stringify(catalog.regions)); }
-    refreshVersion();
+    if (Array.isArray(b.regions)) catalog.setRegions(b.regions.map(String));
+    catalogChanged();
     return { ok: true };
   });
 

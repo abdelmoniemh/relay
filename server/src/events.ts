@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Item } from '../../shared/protocol.ts';
 import { EURO_FOOTBALL, implausibleKickoff, matchKey, parseMatch, sportOf, zonedToUnix, type Sport } from './normalize.ts';
-import { toItem } from './catalog.ts';
+import { toItem, type Catalog } from './catalog.ts';
 import { rankSources, type Probe, type RankedSource } from './quality.ts';
 
 export interface SportEvent {
@@ -45,16 +45,17 @@ export class EventsIndex {
   private db: DatabaseSync;
   private cache: { key: string; at: number; events: SportEvent[] } | null = null;
 
-  constructor(db: DatabaseSync) { this.db = db; }
+  private catalog: Catalog;
+
+  constructor(db: DatabaseSync, catalog: Catalog) { this.db = db; this.catalog = catalog; }
 
   invalidate() { this.cache = null; }
 
-  private build(regions: string[], now: number): SportEvent[] {
+  private build(now: number): SportEvent[] {
     const db = this.db;
-    const regionSql = regions.map((r) => `'${r.replace(/[^A-Z0-9]/g, '')}'`).join(',') || "''";
     const rows = db.prepare(`SELECT i.sid, i.name, i.icon, i.cat, i.epg, i.ext, i.rating, i.archive, i.fam, i.region, c.name AS catname
       FROM items i LEFT JOIN categories c ON c.kind = 'live' AND c.id = i.cat
-      WHERE i.kind = 'live' AND i.sep = 0 AND i.adult = 0 AND i.region IN (${regionSql})`).all() as unknown as Row[];
+      WHERE i.kind = 'live' AND i.sep = 0 AND i.adult = 0${this.catalog.regionSql('live', 'i.')}`).all() as unknown as Row[];
 
     // family -> members, family -> dominant EPG id (majority vote; providers mislabel single copies)
     const fams = new Map<number, Row[]>();
@@ -147,10 +148,10 @@ export class EventsIndex {
   }
 
   /** Cached for 60s; rankings applied per request (they depend on the device and fresh probes). */
-  list(regions: string[], version: string, probes: (sids: number[]) => Map<number, Probe>, opts: { hevcOk: boolean }): SportEvent[] {
+  list(probes: (sids: number[]) => Map<number, Probe>, opts: { hevcOk: boolean }): SportEvent[] {
     const now = Math.floor(Date.now() / 1000);
-    const key = regions.join(',') + '|' + version;
-    if (!this.cache || this.cache.key !== key || now - this.cache.at > 60) this.cache = { key, at: now, events: this.build(regions, now) };
+    const key = this.catalog.version; // includes the regions
+    if (!this.cache || this.cache.key !== key || now - this.cache.at > 60) this.cache = { key, at: now, events: this.build(now) };
     return this.cache.events.map((e) => {
       const raw = e.sources as unknown as { item: Item; fam: number }[];
       const pm = probes(raw.map((s) => Number(s.item.id.slice(1))));

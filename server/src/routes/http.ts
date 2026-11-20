@@ -26,12 +26,12 @@ export interface Services {
   db: DatabaseSync; userData: UserData; details: ProviderDetails; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; facts: MediaFacts;
   events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void;
   reminders: Reminders; vodProxy: VodProxy; trackStore: TrackStore; prefetcher: Prefetcher;
+  /** A sync finished or the regions changed. */
+  catalogChanged: () => void;
 }
 export interface ApiCtx extends Services {
   /** Catalog responses are immutable until the next sync: answers 304 when the client already has this version. */
   cached: (req: FastifyRequest, reply: FastifyReply) => boolean;
-  /** The catalog changed (sync, regions): new version, rebuilt events. */
-  refreshVersion: () => void;
 }
 
 export const KINDS = new Set<Kind>(['live', 'movie', 'series']);

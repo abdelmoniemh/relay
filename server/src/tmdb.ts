@@ -1,5 +1,7 @@
 // TMDB metadata: genres, plots, cast, trailers, popularity; trending/popular lists; recommendations.
 // Works with a v3 API key or a v4 read-access token. Everything degrades gracefully without one.
+import { encodeGenres } from './genres.ts';
+import { kvGet, kvSet } from './db.ts';
 import type { DatabaseSync } from 'node:sqlite';
 
 const API = 'https://api.themoviedb.org/3';
@@ -7,6 +9,10 @@ const IMG = 'https://image.tmdb.org/t/p/';
 
 type TKind = 'movie' | 'tv';
 const tk = (kind: string): TKind => (kind === 'series' ? 'tv' : 'movie');
+
+/** Titles to fetch: never fetched, or fetched over 30 days ago (ratings and popularity move). Params: staleBefore, lang mask. */
+const TODO = 'tmdb IS NOT NULL AND (meta_at IS NULL OR meta_at < ?) AND (lmask & ?) != 0';
+const staleBefore = () => Math.floor(Date.now() / 1000) - 30 * 86400;
 
 export class Tmdb {
   private db: DatabaseSync;
@@ -18,9 +24,17 @@ export class Tmdb {
   lastError: string | null = null;
   enriched = 0;
 
-  constructor(db: DatabaseSync, getKey: () => string | null, log: (m: string) => void = () => {}) {
-    this.db = db; this.getKey = getKey; this.log = log;
+  /** A key from the environment wins over the one saved in Settings. */
+  constructor(db: DatabaseSync, envKey: string | null, log: (m: string) => void = () => {}) {
+    this.db = db; this.log = log;
+    this.getKey = () => envKey || kvGet(db, 'tmdb_key');
   }
+
+  /** Titles still to fetch (or re-fetch) for these languages. */
+  pending(langMask: number) { return (this.db.prepare(`SELECT count(*) AS n FROM titles WHERE ${TODO}`).get(staleBefore(), langMask) as { n: number }).n; }
+
+  /** Save (or with '' remove) the Settings key. */
+  setKey(k: string) { kvSet(this.db, 'tmdb_key', k); }
 
   get enabled() { return !!this.getKey(); }
 
@@ -113,9 +127,7 @@ export class Tmdb {
       ? (d.credits?.crew ?? []).filter((c: any) => c.job === 'Director').map((c: any) => c.name).slice(0, 2).join(', ')
       : (d.created_by ?? []).map((c: any) => c.name).slice(0, 2).join(', ');
     const cast = (d.credits?.cast ?? []).slice(0, 10).map((c: any) => c.name).join(', ');
-    // "Action & Adventure" (TV) -> Action, Adventure; "Sci-Fi & Fantasy" -> Science Fiction, Fantasy (matches movie genre names)
-    const gnames = [...new Set((d.genres ?? []).flatMap((g: any) => String(g.name).split(/\s*&\s*/)).map((g: string) => (g === 'Sci-Fi' ? 'Science Fiction' : g)))];
-    const genres = gnames.length ? ',' + gnames.join(',') + ',' : null;
+    const genres = encodeGenres((d.genres ?? []).map((g: any) => String(g.name)));
     const runtime = t === 'movie' ? d.runtime : d.episode_run_time?.[0] ?? null;
     const year = Number((d.release_date ?? d.first_air_date ?? '').slice(0, 4)) || null;
     this.db.prepare(`UPDATE titles SET genres = COALESCE(?, genres), plot = COALESCE(NULLIF(?, ''), plot), "cast" = COALESCE(NULLIF(?, ''), "cast"),
@@ -139,8 +151,8 @@ export class Tmdb {
       this.running = true;
       try {
         for (;;) {
-          const rows = this.db.prepare(`SELECT tid, kind, tmdb FROM titles WHERE tmdb IS NOT NULL AND (meta_at IS NULL OR meta_at < ?)
-            AND (lmask & ?) != 0 ORDER BY added DESC LIMIT 40`).all(Math.floor(Date.now() / 1000) - 30 * 86400, langMask()) as { tid: number; kind: string; tmdb: number }[];
+          const rows = this.db.prepare(`SELECT tid, kind, tmdb FROM titles WHERE ${TODO} ORDER BY added DESC LIMIT 40`)
+            .all(staleBefore(), langMask()) as { tid: number; kind: string; tmdb: number }[];
           if (!rows.length) break;
           let fails = 0;
           for (let i = 0; i < rows.length; i += 8) {

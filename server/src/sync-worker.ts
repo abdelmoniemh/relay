@@ -1,8 +1,9 @@
 // Runs in a worker thread: pulls the full catalog + EPG from the provider into SQLite
 // without blocking the API / WebSocket event loop. WAL keeps readers on the old snapshot until commit.
 import { parentPort, workerData } from 'node:worker_threads';
-import { openDb, kvSet } from './db.ts';
+import { openDb, markSynced } from './db.ts';
 import { Provider, type ProviderCreds } from './xtream.ts';
+import { encodeGenres } from './genres.ts';
 import { parseXmltv } from './epg.ts';
 import { channelKey, isAdultCategory, isAdultChannel, regionOf } from './normalize.ts';
 import { classify, parseTmdb, titleKey, type Lang } from './vod.ts';
@@ -73,8 +74,8 @@ async function syncCatalog(only?: 'live') {
   db.exec(`INSERT INTO items_fts(items_fts) VALUES ('rebuild')`); // fast (~0.4s) even for the full catalog
   db.exec('PRAGMA optimize');
   log(`search index rebuilt in ${((performance.now() - t) / 1000).toFixed(1)}s`);
-  kvSet(db, only ? 'live_synced' : 'catalog_synced', String(Date.now()));
-  if (!only) kvSet(db, 'live_synced', String(Date.now()));
+  markSynced(db, only ? 'live' : 'catalog');
+  if (!only) markSynced(db, 'live');
 }
 
 /** Provider series list already carries genre/plot/cast: keep it as a fallback for TMDB metadata. */
@@ -124,20 +125,23 @@ function buildTitles(kind: string) {
   }
   const upsert = db.prepare(`INSERT INTO titles (kind, tkey, tmdb, name, year, poster, rating, added, lmask, uhd, nver, top250, seen, genres, plot, cast, director, trailer, backdrop)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(tkey) DO UPDATE SET name = excluded.name, year = CASE WHEN titles.meta_at IS NULL THEN COALESCE(excluded.year, titles.year) ELSE titles.year END, poster = COALESCE(excluded.poster, titles.poster),
-      rating = excluded.rating, added = excluded.added, lmask = excluded.lmask, uhd = excluded.uhd, nver = excluded.nver, top250 = excluded.top250,
+    ON CONFLICT(tkey) DO UPDATE SET name = excluded.name, year = CASE WHEN titles.meta_at IS NULL THEN COALESCE(excluded.year, titles.year) ELSE titles.year END,
+      -- once TMDB filled a title in (meta_at), its poster and rating stay; the sync only owns the provider's facts
+      poster = CASE WHEN titles.meta_at IS NULL THEN COALESCE(excluded.poster, titles.poster) ELSE COALESCE(titles.poster, excluded.poster) END,
+      rating = CASE WHEN titles.meta_at IS NULL THEN excluded.rating ELSE titles.rating END, added = excluded.added, lmask = excluded.lmask, uhd = excluded.uhd, nver = excluded.nver, top250 = excluded.top250,
       seen = excluded.seen,
-      genres = CASE WHEN titles.meta_at IS NULL THEN excluded.genres ELSE titles.genres END,
-      plot = CASE WHEN titles.meta_at IS NULL THEN excluded.plot ELSE titles.plot END,
-      cast = CASE WHEN titles.meta_at IS NULL THEN excluded.cast ELSE titles.cast END,
-      director = CASE WHEN titles.meta_at IS NULL THEN excluded.director ELSE titles.director END,
+      -- before TMDB, the provider's text fills in, but never blanks what the movie-info fallback already found
+      genres = CASE WHEN titles.meta_at IS NULL THEN COALESCE(excluded.genres, titles.genres) ELSE titles.genres END,
+      plot = CASE WHEN titles.meta_at IS NULL THEN COALESCE(excluded.plot, titles.plot) ELSE titles.plot END,
+      cast = CASE WHEN titles.meta_at IS NULL THEN COALESCE(excluded.cast, titles.cast) ELSE titles.cast END,
+      director = CASE WHEN titles.meta_at IS NULL THEN COALESCE(excluded.director, titles.director) ELSE titles.director END,
       trailer = COALESCE(titles.trailer, excluded.trailer),
       backdrop = COALESCE(titles.backdrop, excluded.backdrop)`);
   const getTid = db.prepare('SELECT tid FROM titles WHERE tkey = ?');
   const setTid = db.prepare('UPDATE items SET tid = ? WHERE rid = ?');
   for (const g of groups.values()) {
     const m = g.meta ?? {};
-    const genres = m.genre ? ',' + String(m.genre).split(/\s*[,/&]\s*/).filter(Boolean).join(',') + ',' : null;
+    const genres = encodeGenres(m.genre);
     upsert.run(kind, g.key, g.tmdb, g.name || '?', g.year, g.poster, g.rating || null, g.added || null, g.lmask, g.uhd, g.nver, g.top250, syncId,
       genres, m.plot ?? null, m.cast ?? null, m.director ?? null, m.trailer ?? null, m.backdrop ?? null);
     const tid = (getTid.get(g.key) as { tid: number }).tid;
@@ -198,7 +202,7 @@ async function syncEpg() {
     db.exec('COMMIT');
     log(`epg: ${n} programmes for ${used.size} channels in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
   } catch (e) { db.exec('ROLLBACK'); throw e; }
-  kvSet(db, 'epg_synced', String(Date.now()));
+  markSynced(db, 'epg');
 }
 
 try {

@@ -1,6 +1,5 @@
 // HTTP API: authenticates every request, then each feature registers its own routes.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { kvGet } from './db.ts';
 import type { Services } from './routes/http.ts';
 import { registerSystemRoutes } from './routes/system.ts';
 import { registerCatalogRoutes } from './routes/catalog.ts';
@@ -12,11 +11,7 @@ import { registerRemindersRoutes } from './routes/reminders.ts';
 const PUBLIC = new Set(['/api/ping', '/api/pair', '/api/push/due']);
 
 export function registerApi(app: FastifyInstance, services: Services) {
-  const { db, catalog, auth, events } = services;
-  const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.regions.join('')}`; events.invalidate(); };
-  db.prepare(`DELETE FROM kv WHERE k = 'show_adult'`).run();
-  catalog.regions = JSON.parse(kvGet(db, 'regions') ?? '["UK","US","CA","AR","4K"]');
-  refreshVersion();
+  const { catalog, auth } = services;
 
   app.addHook('onRequest', async (req, reply) => {
     const path = req.url.split('?')[0];
@@ -35,7 +30,7 @@ export function registerApi(app: FastifyInstance, services: Services) {
     return false;
   };
 
-  const ctx = { ...services, cached, refreshVersion };
+  const ctx = { ...services, cached };
   registerSystemRoutes(app, ctx);
   registerCatalogRoutes(app, ctx);
   registerLibraryRoutes(app, ctx);

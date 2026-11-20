@@ -106,3 +106,8 @@ export function kvGet(db: DatabaseSync, k: string): string | null {
 export function kvSet(db: DatabaseSync, k: string, v: string) {
   db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run(k, v);
 }
+
+/** When a part of the catalog was last synced (ms): written by the sync worker, read by the scheduler and the catalog. */
+export type SyncPart = 'catalog' | 'live' | 'epg';
+export const syncedAt = (db: DatabaseSync, part: SyncPart) => Number(kvGet(db, `${part}_synced`) ?? 0);
+export const markSynced = (db: DatabaseSync, part: SyncPart) => kvSet(db, `${part}_synced`, String(Date.now()));

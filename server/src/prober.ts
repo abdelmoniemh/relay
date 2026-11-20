@@ -28,7 +28,6 @@ export class Prober implements Worker {
   private log: (m: string) => void;
   private get: ReturnType<DatabaseSync['prepare']>;
   private put: ReturnType<DatabaseSync['prepare']>;
-  active: number | null = null;
   private vodQueue: { id: string; url: string }[] = [];
 
   constructor(db: DatabaseSync, provider: Provider, slot: ProviderSlot, opts: { background: () => number[]; log?: (m: string) => void }) {
@@ -62,8 +61,6 @@ export class Prober implements Worker {
     }
     this.urgent = this.urgent.slice(0, 60);
   }
-
-  pending() { return this.urgent.length; }
 
   /** What a device actually decoded while watching: free verification, no extra connection. */
   observed(sid: number, o: { width: number; height: number; fps?: number | null; vcodec?: string | null; kbps?: number | null }) {
@@ -110,7 +107,7 @@ export class Prober implements Worker {
     }
     if (sid == null) return;
     this.recent.push(now);
-    this.running = this.probe(sid).finally(() => { this.running = null; this.ctl = null; this.active = null; });
+    this.running = this.probe(sid).finally(() => { this.running = null; this.ctl = null; });
   }
 
   private async probeVod(id: string, url: string) {
@@ -128,7 +125,6 @@ export class Prober implements Worker {
 
   private async probe(sid: number) {
     const ctl = (this.ctl = new AbortController());
-    this.active = sid;
     const url = this.provider.live(sid);
     const t0 = performance.now();
     const chunks: Buffer[] = [];

@@ -54,8 +54,8 @@ loadTz(); setInterval(loadTz, 24 * 3600_000).unref();
 const reminders = new Reminders(db);
 const vodProxy = new VodProxy((m) => app.log.warn(m));
 const trackStore = new TrackStore(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}'), (entries) => kvSet(db, 'vod_tracks', JSON.stringify(Object.fromEntries(entries))));
-const events = new EventsIndex(db);
-const tmdb = new Tmdb(db, () => process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || kvGet(db, 'tmdb_key'), (m) => app.log.warn(m));
+const events = new EventsIndex(db, catalog);
+const tmdb = new Tmdb(db, process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || null, (m) => app.log.warn(m));
 const details = new ProviderDetails(db, provider, catalog);
 const library = new Library(db, tmdb, userData, details);
 const tmdbTick = tmdb.start(() => library.mask, () => library.invalidate());
@@ -66,7 +66,7 @@ const lbTick = letterboxd.start();
 const prober = new Prober(db, provider, slot, {
   background: () => {
     const now = Date.now() / 1000;
-    const list = events.list(catalog.regions, catalog.version, () => new Map(), { hevcOk: true })
+    const list = events.list(() => new Map(), { hevcOk: true })
       .filter((e) => e.status === 'live' || (e.start != null && e.start - now < 3 * 3600))
       .sort((a, b) => (a.sport === 'football' ? 0 : 1) - (b.sport === 'football' ? 0 : 1));
     return list.flatMap((e) => e.sources.slice(0, 25).map((s) => Number(s.item.id.slice(1))));
@@ -99,7 +99,9 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transpor
 await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
-registerApi(app, { db, userData, details, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
+/** A sync finished or the regions changed: new catalog version, rebuilt events and library rows, new titles to enrich. */
+function catalogChanged() { catalog.refresh(); events.invalidate(); library.invalidate(); tmdbTick(); }
+registerApi(app, { catalogChanged, db, userData, details, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
 // Reminders: every open app shows it; an "auto-start" device starts playing; installed apps get a notification.
 reminders.start((r) => {
   hub.broadcast({ t: 'reminder', reminder: { id: r.id, item: r.item, title: r.title, start: r.start, stop: r.stop, eventId: r.eventId, autoplay: r.autoplay } });
@@ -115,12 +117,7 @@ if (existsSync(config.webDir)) {
   app.setNotFoundHandler((req, reply) => (req.url.startsWith('/api/') ? reply.code(404).send({ error: 'not found' }) : reply.sendFile('index.html')));
 }
 
-scheduleSync(db, provider, () => {
-  catalog.version = `${Date.now()}.${catalog.regions.join('')}`;
-  events.invalidate();
-  library.invalidate();
-  tmdbTick();
-});
+scheduleSync(db, provider, catalogChanged);
 
 await app.listen({ host: '0.0.0.0', port: config.port });
 
