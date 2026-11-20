@@ -1,5 +1,4 @@
 import Fastify from 'fastify';
-import { isFinished } from '../../shared/domain.ts';
 import websocket from '@fastify/websocket';
 import compress from '@fastify/compress';
 import cors from '@fastify/cors';
@@ -18,6 +17,8 @@ import { scheduleSync } from './sync.ts';
 import { Provider } from './xtream.ts';
 import { Transcoder } from './transcode.ts';
 import { MediaFacts } from './facts.ts';
+import { UserData } from './userdata.ts';
+import { ProviderDetails } from './details.ts';
 import { kvGet, kvSet } from './db.ts';
 import { EventsIndex } from './events.ts';
 import { Prober } from './prober.ts';
@@ -41,9 +42,7 @@ const transcoder = new Transcoder(slot);
 process.on('exit', () => { transcoder.stop(); });
 for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { transcoder.stop().finally(() => process.exit(0)); });
 
-const upsertProgress = db.prepare(`INSERT INTO progress (item, json, position, duration, updated, series) VALUES (?, ?, ?, ?, ?, ?)
-  ON CONFLICT(item) DO UPDATE SET json = excluded.json, position = excluded.position, duration = excluded.duration, updated = excluded.updated`);
-const getProgress = db.prepare('SELECT position, duration FROM progress WHERE item = ?');
+const userData = new UserData(db);
 
 // Catch-up URLs take the provider's local time: learn its timezone (kept for offline starts; refreshed daily).
 provider.timezone = kvGet(db, 'provider_tz') ?? 'UTC';
@@ -57,8 +56,8 @@ const vodProxy = new VodProxy((m) => app.log.warn(m));
 const trackStore = new TrackStore(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}'), (entries) => kvSet(db, 'vod_tracks', JSON.stringify(Object.fromEntries(entries))));
 const events = new EventsIndex(db);
 const tmdb = new Tmdb(db, () => process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || kvGet(db, 'tmdb_key'), (m) => app.log.warn(m));
-const library = new Library(db, tmdb);
-library.providerInfo = (sid) => provider.json('get_vod_info', { vod_id: String(sid) }, 8000);
+const details = new ProviderDetails(db, provider, catalog);
+const library = new Library(db, tmdb, userData, details);
 const tmdbTick = tmdb.start(() => library.mask, () => library.invalidate());
 const letterboxd = new Letterboxd(db, () => library.invalidate());
 library.lb = letterboxd;
@@ -80,11 +79,8 @@ const facts = new MediaFacts(db, prober, trackStore);
 
 const hub = new Hub({
   listDevices: () => auth.devices(),
-  saveProgress: (item: Item, position, duration) => upsertProgress.run(item.id, JSON.stringify(item), position, duration, Date.now(), item.seriesId ?? null),
-  resumePosition: (item) => {
-    const r = getProgress.get(item.id) as { position: number; duration: number } | undefined;
-    return r && r.duration > 0 && !isFinished(r.position, r.duration) ? r.position : 0;
-  },
+  saveProgress: (item: Item, position, duration) => userData.saveProgress(item, position, duration),
+  resumePosition: (item) => userData.resumePosition(item.id),
   urls: (item) => provider.urls(item),
   leaseMoved: async (deviceId) => {
     // Free every server-side use of the provider connection before the new device starts.
@@ -103,7 +99,7 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transpor
 await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
-registerApi(app, { db, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
+registerApi(app, { db, userData, details, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
 // Reminders: every open app shows it; an "auto-start" device starts playing; installed apps get a notification.
 reminders.start((r) => {
   hub.broadcast({ t: 'reminder', reminder: { id: r.id, item: r.item, title: r.title, start: r.start, stop: r.stop, eventId: r.eventId, autoplay: r.autoplay } });

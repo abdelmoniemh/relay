@@ -1,5 +1,6 @@
 // Movie/series browsing on top of `titles` (one row per film/show) and its versions (provider copies).
-import { FINISHED, MIN_RESUME_S } from '../../shared/domain.ts';
+import type { UserData } from './userdata.ts';
+import type { ProviderDetails } from './details.ts';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Item } from '../../shared/protocol.ts';
 import type { Tmdb } from './tmdb.ts';
@@ -42,10 +43,12 @@ export class Library {
   lb: Letterboxd | null = null;
   private wlCache: { at: number; tids: number[]; missing: { name: string; year: number | null }[]; total: number } | null = null;
   /** Provider per-film info (plot, cast, genre...) — used when TMDB has nothing yet. */
-  providerInfo: ((sid: number) => Promise<any>) | null = null;
 
-  constructor(db: DatabaseSync, tmdb: Tmdb) {
-    this.db = db; this.tmdb = tmdb;
+  private userData: UserData;
+  private details: ProviderDetails;
+
+  constructor(db: DatabaseSync, tmdb: Tmdb, userData: UserData, details: ProviderDetails) {
+    this.db = db; this.tmdb = tmdb; this.userData = userData; this.details = details;
     this.langs = JSON.parse(kvGet(db, 'vod_langs') ?? '["en","ar"]');
   }
 
@@ -116,13 +119,11 @@ export class Library {
 
   /** Continue watching for this kind: latest unfinished movie, or latest episode per series, as title cards. */
   continueRow(kind: 'movie' | 'series'): TitleCard[] {
-    const rows = this.db.prepare(`SELECT json, position, duration, updated, series FROM progress
-      WHERE json->>'kind' = ? AND duration > 0 AND position > ${MIN_RESUME_S} AND position < duration * ${FINISHED} ORDER BY updated DESC LIMIT 60`)
-      .all(kind === 'movie' ? 'movie' : 'episode') as any[];
+    const rows = this.userData.unfinished(kind === 'movie' ? 'movie' : 'episode');
     const out: TitleCard[] = [];
     const seen = new Set<number>();
     for (const r of rows) {
-      const it = JSON.parse(r.json) as Item;
+      const it = r.item;
       const ref = kind === 'movie' ? it.id : it.seriesId;
       if (!ref) continue;
       const k = ref[0] === 'm' ? 'movie' : 'series';
@@ -253,17 +254,16 @@ export class Library {
     if (!t) return null;
     if (this.tmdb.enabled && t.tmdb && !t.meta_at) { try { await this.tmdb.enrich(tid, t.kind, t.tmdb); } catch {} }
     let fresh = this.st('SELECT * FROM titles WHERE tid = ?').get(tid) as any;
-    if (!fresh.plot && !fresh.meta_at && fresh.kind === 'movie' && this.providerInfo) {
+    if (!fresh.plot && !fresh.meta_at && fresh.kind === 'movie') {
       const sid = (this.st(`SELECT sid FROM items WHERE tid = ? AND kind = 'movie' ORDER BY (lang = 'en') DESC LIMIT 1`).get(tid) as { sid: number } | undefined)?.sid;
       if (sid) {
         try {
-          const i = (await Promise.race([this.providerInfo(sid), new Promise((r) => setTimeout(() => r(null), 4000))]) as any)?.info;
-          if (i) {
+          const i = await this.details.movie(sid, 4000);
+          {
             const genres = i.genre ? ',' + String(i.genre).split(/\s*[,/&]\s*/).filter(Boolean).map((g: string) => (g === 'Sci-Fi' ? 'Science Fiction' : g)).join(',') + ',' : null;
             this.st(`UPDATE titles SET plot = COALESCE(NULLIF(?, ''), plot), genres = COALESCE(genres, ?), "cast" = COALESCE("cast", NULLIF(?, '')),
               director = COALESCE(director, NULLIF(?, '')), runtime = COALESCE(runtime, ?), backdrop = COALESCE(backdrop, ?), trailer = COALESCE(trailer, NULLIF(?, '')) WHERE tid = ?`)
-              .run(String(i.plot || i.description || ''), genres, String(i.cast || i.actors || '').slice(0, 300), String(i.director || ''),
-                Number(i.duration_secs) ? Math.round(Number(i.duration_secs) / 60) : null, i.backdrop_path?.[0] || null, String(i.youtube_trailer || ''), tid);
+              .run(i.plot ?? '', genres, (i.cast ?? '').slice(0, 300), i.director ?? '', i.duration ? Math.round(i.duration / 60) : null, i.backdrop, i.trailer ?? '', tid);
             fresh = this.st('SELECT * FROM titles WHERE tid = ?').get(tid) as any;
           }
         } catch {}
