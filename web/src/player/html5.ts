@@ -112,6 +112,27 @@ export class Html5Player implements Player {
     v.pause();
     if (v.getAttribute('src') != null) { v.removeAttribute('src'); v.load(); } // release the provider connection first
     this.startHls(gen, 0);
+    this.armWatchdog(gen, 20_000);
+  }
+
+  private watchdog: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * A channel can fail without any error: nothing ever plays, or (iPhone, HEVC in the provider's HLS) sound
+   * with a black picture. After `ms`, treat that as a failure so the usual retry / next source kicks in.
+   * Sound with no picture is fine for radio stations, so that case only switches to the server's version.
+   */
+  private armWatchdog(gen: number, ms: number) {
+    clearTimeout(this.watchdog);
+    this.watchdog = setTimeout(() => {
+      const v = this.v;
+      if (gen !== this.gen || !this.opts?.live || v.paused) return;
+      const noPicture = v.readyState >= 2 && v.videoWidth === 0;
+      if (v.readyState >= 2 && !noPicture) return; // playing fine
+      if (this.isDirectLiveHls()) { api.clientLog(`watchdog: ${noPicture ? 'no picture' : 'nothing played'} (${this.opts.id}), trying the server`); this.toLiveHls(); return; }
+      if (noPicture) return; // radio
+      api.clientLog(`watchdog: nothing played after ${ms / 1000}s (${this.opts.id})`);
+      this.cb('error', 'stalled');
+    }, ms);
   }
 
   /** Playing a movie file as-is, with a conversion to fall back on if this browser can't decode it. */
@@ -122,6 +143,7 @@ export class Html5Player implements Player {
     this.opts = o;
     this.txOffset = null; this.parked = null;
     const gen = ++this.gen;
+    if (o.live) this.armWatchdog(gen, 12_000);
     const hls = urls.find((u) => u.endsWith('.m3u8'));
     const ts = urls.find((u) => u.endsWith('.ts'));
     const v = this.v;
@@ -367,6 +389,7 @@ export class Html5Player implements Player {
 
   stop() {
     this.gen++;
+    clearTimeout(this.watchdog);
     this.cancelPendingSeek();
     clearTimeout(this.parkTimer); clearTimeout(this.audioCheck);
     this.releaseHls();

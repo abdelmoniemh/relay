@@ -141,7 +141,8 @@ export class Transcoder {
 
   private singleOutput(video: string[], live: boolean, dir: string): string[] {
     return [
-      '-map', '0:v:0', '-map', '0:a:0?', ...video,
+      // Live: video optional, so a radio station that ends up here still plays.
+      '-map', live ? '0:v:0?' : '0:v:0', '-map', '0:a:0?', ...video,
       ...(live ? ['-af', 'aresample=async=1:first_pts=0'] : []), // live: absorb provider timestamp gaps
       '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-max_muxing_queue_size', '2048',
       '-f', 'hls', '-hls_time', '4',

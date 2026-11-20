@@ -110,13 +110,29 @@ export function attachPlayer(p: Player) {
       }
       // Still failing: fail over to the next working copy of the same channel / match.
       if (isLiveNow(current.value) && nextSource(1, true)) return;
-      status.value = 'error'; errorMsg.value = detail ?? 'Playback failed';
+      status.value = 'error'; errorMsg.value = friendlyError(detail);
+      if (detail) api.clientLog(`error shown: ${detail} (${current.value?.id})`);
     }
   });
 }
 
 /** Live right now (not a programme from a channel's archive). */
 export const isLiveNow = (item: Item | null | undefined) => item?.kind === 'live' && !item.catchup;
+
+/** What the player says (HTTP codes, engine error names) → a sentence for people. Server messages are already readable. */
+export function friendlyError(raw?: string | null): string {
+  const s = String(raw ?? '');
+  const live = isLiveNow(current.value);
+  if (!s) return 'Playback failed. Try again.';
+  if (/Could not reach the server|Failed to fetch|NetworkError when|Load failed/i.test(s)) return "Can't reach the Relay server. Check this device is on the same network (or Tailscale) and try again.";
+  if (/stalled/.test(s)) return live ? 'This channel isn\'t sending anything right now. Try another source or channel.' : 'The stream stopped. Try again.';
+  if (/(Conversion|Transcode) failed.*(HTTP 5|ffmpeg exited|no output)/i.test(s) || /HTTP 50[23]/.test(s)) return live ? 'The provider didn\'t send this channel. It may be offline or busy: try another source.' : 'The provider didn\'t send this title. It may be busy: try again in a moment.';
+  if (/HTTP 401|HTTP 403|unauthor/i.test(s)) return 'This device is no longer paired. Pair it again in Settings.';
+  if (/archive|catch-up|not found|can't decode|isn't|no longer/i.test(s)) return s; // already a sentence
+  if (/NetworkError|IOException|HttpStatusCodeInvalid|manifestLoadError|fragLoadError|levelLoadError|MEDIA_ERR_NETWORK/i.test(s)) return live ? 'Lost the connection to this channel. Try again or pick another source.' : 'Lost the connection to the stream. Try again.';
+  if (/MediaError|MEDIA_ERR_DECODE|MEDIA_ERR_SRC_NOT_SUPPORTED|bufferAppendError|FormatUnsupported|CodecUnsupported/i.test(s)) return 'This device can\'t play this stream\'s format. Try another source.';
+  return 'Playback failed. Try again.';
+}
 
 function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
   const cu = item.kind === 'live' ? item.catchup : null;
