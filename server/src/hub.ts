@@ -54,6 +54,15 @@ export class Hub {
     };
   }
 
+  /** Message every connected device (e.g. a reminder). */
+  broadcast(m: ServerMsg) { for (const sends of this.clients.values()) for (const send of sends) send(m); }
+  /** Ask a device to start playing something (like "send to"); false if it's offline. */
+  sendPlay(target: string, item: Item, from: string, eventId?: string | null): boolean {
+    if (!this.online(target)) return false;
+    this.sendTo(target, { t: 'play', item, from, ...(eventId ? { eventId } : {}) });
+    return true;
+  }
+
   private sendTo(deviceId: string, m: ServerMsg) {
     for (const s of this.clients.get(deviceId) ?? []) s(m);
   }

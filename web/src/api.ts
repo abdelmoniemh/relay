@@ -1,4 +1,4 @@
-import type { Category, Item, Kind, Programme, Progress, RankedSource, SportEvent } from '@shared/protocol.ts';
+import type { Category, Item, Kind, Programme, Progress, RankedSource, SportEvent, ReminderInfo } from '@shared/protocol.ts';
 import { signal } from '@preact/signals';
 
 const LS = { server: 'relay.server', token: 'relay.token', device: 'relay.device' };
@@ -101,6 +101,12 @@ export const api = {
   event: (id: string) => req<SportEvent>('GET', `/api/events/${id}?hevc=${hevcParam()}`),
   family: (id: string) => req<RankedSource[]>('GET', `/api/family/${id}?hevc=${hevcParam()}`),
   probe: (ids: string[]) => req<{ queued: number; active: number | null; blocked: boolean }>('POST', '/api/probe', { ids }),
+  reminders: () => req<ReminderInfo[]>('GET', '/api/reminders'),
+  addReminder: (r: { itemId: string; title: string; start: number; stop: number | null; eventId: string | null; autoplay: string | null }) => req<ReminderInfo>('POST', '/api/reminders', r),
+  removeReminder: (id: string) => req('DELETE', `/api/reminders/${encodeURIComponent(id)}`),
+  pushKey: () => req<{ key: string }>('GET', '/api/push/key'),
+  pushSubscribe: (endpoint: string) => req<{ secret: string }>('POST', '/api/push/subscribe', { endpoint }),
+  pushUnsubscribe: (endpoint: string) => req('POST', '/api/push/unsubscribe', { endpoint }),
   clientLog: (msg: string) => req('POST', '/api/clientlog', { msg }).catch(() => {}),
   observed: (o: { id: string; width: number; height: number; fps?: number; vcodec?: string; kbps?: number }) => req('POST', '/api/observed', o),
   browse: (kind: 'movie' | 'series') => req<BrowseRow[]>('GET', `/api/browse/${kind}`),

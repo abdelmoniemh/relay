@@ -341,6 +341,12 @@ onServer((m: ServerMsg) => {
     case 'error':
       showToast(m.message);
       return;
+    case 'reminder': {
+      const r = m.reminder;
+      const here = r.autoplay === myDeviceId.value;
+      showToast(`${here ? 'Starting' : 'Starting now'}: ${r.title} · ${r.item.name.replace(/^([A-Z0-9]{2,4}|4K)\s*[|:]\s*/, '')}`, 8000);
+      return;
+    }
   }
 });
 

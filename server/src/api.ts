@@ -13,6 +13,7 @@ import type { EventsIndex } from './events.ts';
 import type { Prober } from './prober.ts';
 import { readFile } from 'node:fs/promises';
 import { VodProxy } from './vodproxy.ts';
+import type { Reminders } from './reminders.ts';
 import { probeTracks, pickAudio, pickSub, trackName, keyframeAt, type Tracks } from './tracks.ts';
 import { vodLayout } from './transcode.ts';
 import { subtitlePlaylist, subtitleSegment, masterPlaylist } from './subs.ts';
@@ -29,8 +30,8 @@ const KINDS = new Set<Kind>(['live', 'movie', 'series']);
 const isLocal = (ip: string) => ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : d; };
 
-export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void }) {
-  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick } = ctx;
+export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; hevc: HevcRegistry; events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void; reminders: Reminders }) {
+  const { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders } = ctx;
   const vodProxy = new VodProxy((m) => app.log.warn(m));
   const refreshVersion = () => { catalog.version = `${kvGet(db, 'catalog_synced') ?? 0}.${kvGet(db, 'live_synced') ?? 0}.${kvGet(db, 'epg_synced') ?? 0}.${catalog.regions.join('')}`; events.invalidate(); };
   db.prepare(`DELETE FROM kv WHERE k = 'show_adult'`).run();
@@ -39,7 +40,8 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
 
   // ---- auth ----
   app.addHook('onRequest', async (req, reply) => {
-    if (!req.url.startsWith('/api/') || req.url.startsWith('/api/pair') || req.url.startsWith('/api/ping')) return;
+    // /api/push/due: the service worker (no device token) authenticates with its subscription secret instead
+    if (!req.url.startsWith('/api/') || req.url.startsWith('/api/pair') || req.url.startsWith('/api/ping') || req.url.startsWith('/api/push/due')) return;
     const h = req.headers.authorization;
     const token = h?.startsWith('Bearer ') ? h.slice(7) : (req.query as any)?.token;
     const id = auth.verify(token);
@@ -407,6 +409,32 @@ export function registerApi(app: FastifyInstance, ctx: { db: DatabaseSync; catal
     const ids = ((req.body as any)?.ids ?? []) as string[];
     prober.request(ids.filter((i) => i.startsWith('l')).map((i) => Number(i.slice(1))).filter(Number.isFinite).slice(0, 60));
     return { queued: prober.pending(), active: prober.active, blocked: hub.streamActive() };
+  });
+
+  // ---- reminders & notifications ----
+  app.get('/api/reminders', async () => reminders.list());
+  app.post('/api/reminders', async (req, reply) => {
+    const b = (req.body ?? {}) as Record<string, any>;
+    const id = String(b.itemId ?? b.item?.id ?? '');
+    const { kind, sid } = parseId(id);
+    const start = Number(b.start);
+    if (kind !== 'live' || !catalog.playable({ id, kind })) return reply.code(400).send({ error: 'Reminders are for channels and events' });
+    if (!(start > Date.now() / 1000 - 60)) return reply.code(400).send({ error: 'That has already started' });
+    const row = db.prepare("SELECT name, icon, cat, epg, archive FROM items WHERE kind = 'live' AND sid = ?").get(sid) as any;
+    const item: Item = { id, kind: 'live', name: row?.name ?? String(b.item?.name ?? id), icon: row?.icon ?? null, cat: row?.cat ?? null, epg: row?.epg ?? null, archive: row?.archive ?? 0 };
+    const autoplay = typeof b.autoplay === 'string' && b.autoplay ? b.autoplay : null;
+    return reminders.add({ item, title: String(b.title ?? item.name).slice(0, 200), start, stop: Number(b.stop) || null, eventId: b.eventId ? String(b.eventId) : null, autoplay });
+  });
+  app.delete('/api/reminders/:id', async (req) => { reminders.remove(String((req.params as any).id)); return { ok: true }; });
+  app.get('/api/push/key', async () => ({ key: reminders.publicKey }));
+  app.post('/api/push/subscribe', async (req, reply) => {
+    const ep = String(((req.body ?? {}) as any).endpoint ?? '');
+    try { return { secret: reminders.subscribe(ep, req.deviceId ?? null) }; } catch { return reply.code(400).send({ error: 'bad subscription' }); }
+  });
+  app.post('/api/push/unsubscribe', async (req) => { reminders.unsubscribe(String(((req.body ?? {}) as any).endpoint ?? '')); return { ok: true }; });
+  app.get('/api/push/due', async (req, reply) => {
+    if (!reminders.validSecret(String((req.query as any).k ?? ''))) return reply.code(403).send({ error: 'unknown subscription' });
+    return reminders.recentlyFired().map((r) => ({ id: r.id, title: r.title, channel: r.item.name, start: r.start, icon: r.item.icon ?? null }));
   });
 
   /** Player problems seen on a device (iPhone Safari has no console we can read): logged for debugging. */

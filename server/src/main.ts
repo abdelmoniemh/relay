@@ -19,6 +19,7 @@ import { Transcoder, HevcRegistry } from './transcode.ts';
 import { kvGet, kvSet } from './db.ts';
 import { EventsIndex } from './events.ts';
 import { Prober } from './prober.ts';
+import { Reminders } from './reminders.ts';
 import { Tmdb } from './tmdb.ts';
 import { Library } from './library.ts';
 import { Letterboxd } from './letterboxd.ts';
@@ -44,6 +45,7 @@ const loadTz = () => getJson(apiUrl(provider), 15_000)
   .catch(() => {});
 loadTz(); setInterval(loadTz, 24 * 3600_000).unref();
 
+const reminders = new Reminders(db);
 const events = new EventsIndex(db);
 const tmdb = new Tmdb(db, () => process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || kvGet(db, 'tmdb_key'), (m) => app.log.warn(m));
 const library = new Library(db, tmdb);
@@ -91,7 +93,12 @@ await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
 hubRef = hub;
-registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick });
+registerApi(app, { db, catalog, auth, hub, provider, transcoder, hevc, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders });
+// Reminders: every open app shows it; an "auto-start" device starts playing; installed apps get a notification.
+reminders.start((r) => {
+  hub.broadcast({ t: 'reminder', reminder: { id: r.id, item: r.item, title: r.title, start: r.start, stop: r.stop, eventId: r.eventId, autoplay: r.autoplay } });
+  if (r.autoplay && !hub.sendPlay(r.autoplay, r.item, 'reminder', r.eventId)) app.log.warn(`reminder ${r.title}: ${r.autoplay} is offline, not auto-starting`);
+}, (m) => app.log.warn(m));
 app.log.warn(`transcoding: ${transcoder.available ? (transcoder.gpu ? 'NVENC (GPU)' : 'x264 (CPU)') : 'unavailable (install ffmpeg)'}`);
 
 if (existsSync(config.webDir)) {

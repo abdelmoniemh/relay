@@ -81,7 +81,19 @@ export type ServerMsg =
   | { t: 'stop'; reason: 'handoff' | 'remote'; to?: string }
   | { t: 'play'; item: Item; startAt?: number; from: string; eventId?: string } // asked to start playing (send-to)
   | { t: 'remote'; cmd: RemoteCmd; arg?: number | string; from: string }
-  | { t: 'error'; message: string };
+  | { t: 'error'; message: string }
+  | { t: 'reminder'; reminder: ReminderInfo }; // a reminded programme / event is about to start
+
+export interface ReminderInfo {
+  id: string;
+  item: Item;
+  title: string;
+  start: number; // unix seconds
+  stop: number | null;
+  eventId: string | null;
+  /** Device that starts playing it at the start time (null = just remind). */
+  autoplay: string | null;
+}
 
 // ---- sports ----
 export type Sport =
