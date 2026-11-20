@@ -68,3 +68,17 @@ test('software fallback uses CPU filters', () => {
   assert.match(vf(a), /^bwdif=mode=send_field/);
   assert.equal(val(a, '-c:v'), 'libx264');
 });
+
+test('data saver: 720p cap on every path, mobile bitrate, stereo 128k', async () => {
+  const { transcodeArgs, videoFilter } = await import('../src/media.ts');
+  const hd = { vcodec: 'h264', width: 1920, height: 1080, fps: 50, interlaced: false, bitDepth: 8, hdr: null, acodec: 'ac3', channels: 6 };
+  assert.match(videoFilter(hd, { gpu: true, maxHeight: 720 }), /scale_cuda=w=-2:h='min\(ih,720\)':format=nv12/);
+  assert.match(videoFilter(hd, { gpu: false, maxHeight: 720 }), /scale=w=-2:h='min\(ih,720\)'/);
+  assert.match(videoFilter({ ...hd, bitDepth: 10 }, { gpu: true, maxHeight: 720 }), /scale_cuda=w=-2:h='min\(ih,720\)':format=p010le.*hwdownload/);
+  const hdr = { ...hd, vcodec: 'hevc', width: 3840, height: 2160, bitDepth: 10, hdr: 'pq' as const };
+  assert.match(videoFilter(hdr, { gpu: true, maxHeight: 720 }), /scale_cuda=w=-2:h='min\(ih,720\)':format=p010le.*tonemap/);
+  assert.match(videoFilter(hdr, { gpu: false, maxHeight: 720 }), /zscale=w=-2:h=720:f=lanczos.*tonemap/);
+  assert.doesNotMatch(videoFilter(hd, { gpu: true }), /720/, 'normal conversion untouched');
+  const a = transcodeArgs('http://x/1.ts', { gpu: true, info: hd, maxHeight: 720 }).join(' ');
+  assert.match(a, /-maxrate 3M/); assert.match(a, /-b:a 128k/); assert.match(a, /-ac 2/);
+});

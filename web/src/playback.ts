@@ -55,6 +55,17 @@ export const subLang = signal<string>(lsGet('relay.slang') ?? 'off');
 export function setAudioLang(l: string | null) { audioLang.value = l; lsSet('relay.alang', l); }
 export function setSubLang(l: string) { subLang.value = l; lsSet('relay.slang', l); }
 
+/**
+ * Data saver: 'auto' = on when Relay is reached through Tailscale (away from home), 'on' / 'off' always.
+ * Only streams that pass through the server can be made smaller, so with it on everything does.
+ */
+export type DataSaver = 'auto' | 'on' | 'off';
+export const dataSaver = signal<DataSaver>(((v) => (v === 'on' || v === 'off' ? v : 'auto'))(lsGet('relay.datasaver')));
+export function setDataSaver(v: DataSaver) { dataSaver.value = v; lsSet('relay.datasaver', v); }
+/** Reached through Tailscale (100.64.0.0/10 or a *.ts.net name), i.e. probably not on the home network. */
+export const isAway = () => typeof location !== 'undefined' && (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(location.hostname) || location.hostname.endsWith('.ts.net'));
+export const lowDataNow = () => !isTizen && (dataSaver.value === 'on' || (dataSaver.value === 'auto' && isAway()));
+
 /** Sports: chase the live edge (lowest delay) instead of playing the provider's backlog smoothly. */
 export const lowLatencySports = signal<boolean>((() => { try { return localStorage.getItem('relay.lowLatency') !== '0'; } catch { return true; } })());
 export function setLowLatency(v: boolean) { lowLatencySports.value = v; try { localStorage.setItem('relay.lowLatency', v ? '1' : '0'); } catch {} }
@@ -136,7 +147,8 @@ export function friendlyError(raw?: string | null): string {
 
 function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
   const cu = item.kind === 'live' ? item.catchup : null;
-  const q = new URLSearchParams({ token: token.value ?? '', ...(item.ext ? { ext: item.ext } : {}), ...(cu ? { cs: String(cu.start), ce: String(cu.stop) } : {}) });
+  const low = lowDataNow();
+  const q = new URLSearchParams({ token: token.value ?? '', ...(item.ext ? { ext: item.ext } : {}), ...(cu ? { cs: String(cu.start), ce: String(cu.stop) } : {}), ...(low ? { q: 'low' } : {}) });
   const src = sources.value.find((s) => s.item.id === item.id);
   return {
     // 4K by measurement, not just by name (the TV needs SET_MODE_4K for a 4K stream)
@@ -148,7 +160,7 @@ function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
     tx: cu ? ((hevc || src?.hevc) ? 'full' as const : 'audio' as const) : lastTx,
     catchupUrl: cu ? `${server.value}/api/catchup/${item.id}.ts?${q}` : undefined,
     interlaced: item.kind === 'live' && (lastInterlaced || !!src?.interlaced),
-    alang: audioLang.value, slang: subLang.value,
+    alang: audioLang.value, slang: subLang.value, lowData: low,
   };
 }
 

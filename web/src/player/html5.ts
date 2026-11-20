@@ -149,19 +149,21 @@ export class Html5Player implements Player {
     const v = this.v;
     if (o.live && ts && this.mse && !this.nativeHls) {
       // Channels we already know are HEVC go straight to the server's GPU transcode: no failed first attempt.
-      const useTx = !!o.transcodeUrl && ((!canHevc && (o.hevc || (!!o.id && hevcIds.has(o.id)))) || !!o.interlaced);
+      // Data saver: always the server's (smaller) version.
+      const useTx = !!o.transcodeUrl && (!!o.lowData || (!canHevc && (o.hevc || (!!o.id && hevcIds.has(o.id)))) || !!o.interlaced);
       if (await this.mpegts(useTx ? o.transcodeUrl! : ts, gen, useTx ? undefined : o)) return;
     }
-    if (o.live && this.nativeHls && o.hlsUrl && o.hevc) {
-      // iPhone, channel known to be HEVC: the provider's HLS won't play, go straight to the server's.
+    if (o.live && this.nativeHls && o.hlsUrl && (o.hevc || o.lowData)) {
+      // iPhone, channel known to be HEVC (the provider's HLS won't play) or data saver: the server's version.
       this.startLiveHls();
       return;
     }
-    if (!o.live && this.nativeHls && o.hlsUrl && !/\.(mp4|m4v|mov)$/i.test(urls[0] ?? '')) {
+    if (!o.live && this.nativeHls && o.hlsUrl && (o.lowData || !/\.(mp4|m4v|mov)$/i.test(urls[0] ?? ''))) {
       // iPhone Safari can't open MKV/AVI at all: straight to the server's HLS version.
       this.startVodTranscode('full', o.startAt);
       return;
     }
+    if (!o.live && o.lowData && o.transcodeUrl && this.mse && !this.nativeHls) { this.startVodTranscode('full', o.startAt); return; }
     if (!o.live && o.tx && o.transcodeUrl && this.mse && !this.nativeHls && !(o.tx === 'full' && canHevc)) {
       // Known not to play directly here: go straight to the conversion.
       this.startVodTranscode(o.tx, o.startAt);

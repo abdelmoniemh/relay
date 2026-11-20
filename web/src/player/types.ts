@@ -23,6 +23,8 @@ export interface LoadOpts {
   slang?: string;
   /** Catch-up programme (TV plays the archive itself): this URL + `&start=<seconds into the programme>`. */
   catchupUrl?: string;
+  /** Data saver: everything through the server's 720p ~3 Mbps conversion (away from home / mobile data). */
+  lowData?: boolean;
 }
 
 /** Audio / subtitle tracks of what's playing (movies through the server's HLS). */

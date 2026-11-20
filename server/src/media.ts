@@ -42,6 +42,12 @@ export const LIVE: EncoderProfile = {
   name: 'live', preset: 'p4', tune: 'hq', bf: 3, bref: 'middle', lookahead: 20, aq: true, multipass: 'disabled',
   cq: 19, maxrateM: 30, gopSec: 2, x264Preset: 'faster', crf: 19,
 };
+/** Data saver (away from home / mobile data): 720p at ~3 Mbps. */
+export const MOBILE: EncoderProfile = {
+  name: 'mobile', preset: 'p4', tune: 'hq', bf: 2, bref: 'middle', lookahead: 16, aq: true, multipass: 'disabled',
+  cq: 27, maxrateM: 3, gopSec: 2, x264Preset: 'veryfast', crf: 26,
+};
+export const MOBILE_H = 720;
 export const VOD: EncoderProfile = {
   name: 'vod', preset: 'p7', tune: 'hq', bf: 3, bref: 'middle', lookahead: 32, aq: true, multipass: 'qres',
   cq: 18, maxrateM: 40, gopSec: 2, x264Preset: 'medium', crf: 18,
@@ -69,6 +75,8 @@ export interface TxOpts {
   audio?: number;
   /** Seconds to drop from the start of the output (catch-up: the provider only starts on whole minutes). */
   skip?: number;
+  /** Data saver: picture no taller than this (with the MOBILE profile). */
+  maxHeight?: number;
 }
 
 const UA = 'Relay/1.0 (like VLC/3.0.20)';
@@ -86,7 +94,11 @@ export function outFps(info: SourceInfo | null | undefined, o: Pick<TxOpts, 'dei
 }
 
 /** Video filter chain. GPU frames stay on the GPU unless a CPU-only step (tone mapping, dithering) is needed. */
-export function videoFilter(info: SourceInfo | null | undefined, o: Pick<TxOpts, 'gpu' | 'dither' | 'deintFrame'>): string {
+export function videoFilter(info: SourceInfo | null | undefined, o: Pick<TxOpts, 'gpu' | 'dither' | 'deintFrame' | 'maxHeight'>): string {
+  const maxH = o.maxHeight ?? 0;
+  const cap = maxH ? Math.min(HDR_MAX_H, maxH) : HDR_MAX_H;
+  /** Data saver: never taller than maxHeight (keeps smaller pictures as they are). */
+  const fit = (f: 'scale' | 'scale_cuda', extra = '') => `${f}=w=-2:h='min(ih,${maxH})'${extra}`;
   const deint = info?.interlaced ? (o.deintFrame ? 'send_frame' : 'send_field') : null;
   const dither = o.dither ?? 'swscale'; // bench: CAMBI 5.8 vs 8.6 (error diffusion) at 1/3 the bitrate
   // HDR -> SDR BT.709: linearise, map primaries, tone map (hable keeps highlight detail), back to 8-bit with error diffusion.
@@ -94,21 +106,21 @@ export function videoFilter(info: SourceInfo | null | undefined, o: Pick<TxOpts,
   const tonemap = 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,'
     + 'zscale=t=bt709:m=bt709:r=tv:dither=ordered,format=yuv420p';
   // CPU tone mapping can't keep up with 4K (0.6x real time on 16 cores): map at 1440p, scaled down on the GPU first (1.4x).
-  const hdrCap = isHdr(info) && (info?.height ?? 0) > HDR_MAX_H;
+  const hdrCap = isHdr(info) && ((info?.height ?? 0) > cap || (!!maxH && !info?.height));
   const to8 = dither === 'error_diffusion' ? 'zscale=dither=error_diffusion,format=yuv420p' : 'format=yuv420p';
   if (o.gpu) {
     const parts: string[] = [];
     if (deint) parts.push(`bwdif_cuda=mode=${deint}:parity=auto:deint=all`);
-    if (isHdr(info)) parts.push(...(hdrCap ? [`scale_cuda=-2:${HDR_MAX_H}:format=p010le:interp_algo=lanczos`] : []), 'hwdownload', 'format=p010le', tonemap);
-    else if (is10(info) && dither !== 'truncate') parts.push('hwdownload', 'format=p010le', to8);
-    else parts.push('scale_cuda=format=nv12');
+    if (isHdr(info)) parts.push(...(hdrCap ? [maxH ? `scale_cuda=w=-2:h='min(ih,${cap})':format=p010le:interp_algo=lanczos` : `scale_cuda=-2:${HDR_MAX_H}:format=p010le:interp_algo=lanczos`] : []), 'hwdownload', 'format=p010le', tonemap);
+    else if (is10(info) && dither !== 'truncate') parts.push(...(maxH ? [fit('scale_cuda', ':format=p010le:interp_algo=lanczos')] : []), 'hwdownload', 'format=p010le', to8);
+    else parts.push(maxH ? fit('scale_cuda', ':format=nv12:interp_algo=lanczos') : 'scale_cuda=format=nv12');
     return parts.join(',');
   }
   const parts: string[] = [];
   if (deint) parts.push(`bwdif=mode=${deint}:parity=auto:deint=all`);
-  if (isHdr(info)) parts.push(...(hdrCap ? [`zscale=w=-2:h=${HDR_MAX_H}:f=lanczos`] : []), tonemap);
-  else if (is10(info) && dither === 'error_diffusion') parts.push(to8);
-  else parts.push("scale=w='min(iw,3840)':h=-2", 'format=yuv420p');
+  if (isHdr(info)) parts.push(...(hdrCap ? [`zscale=w=-2:h=${maxH ? Math.min(cap, info?.height || cap) : HDR_MAX_H}:f=lanczos`] : []), tonemap);
+  else if (is10(info) && dither === 'error_diffusion') parts.push(...(maxH ? [fit('scale')] : []), to8);
+  else parts.push(maxH ? fit('scale', ':flags=lanczos') : "scale=w='min(iw,3840)':h=-2", 'format=yuv420p');
   return parts.join(',');
 }
 
@@ -147,7 +159,7 @@ export function encoderArgs(p: EncoderProfile, gpu: boolean, fps: number): strin
 
 export function transcodeArgs(src: string, o: TxOpts): string[] {
   const vod = !!o.vod, mode = o.mode ?? 'full', info = o.info ?? null;
-  const p = o.profile ?? (vod ? VOD : LIVE);
+  const p = o.profile ?? (o.maxHeight ? MOBILE : vod ? VOD : LIVE);
   const net = !o.bench && /^https?:/.test(src);
   const input = [
     '-hide_banner', '-loglevel', 'error', '-nostdin',
@@ -160,7 +172,8 @@ export function transcodeArgs(src: string, o: TxOpts): string[] {
   ];
   // B-frames need a little mux delay or DTS can fall behind the PCR.
   const out = [
-    '-map', '0:v:0', '-map', `0:a:${o.audio && o.audio > 0 ? o.audio : 0}?`, ...audioArgs(info, vod),
+    '-map', '0:v:0', '-map', `0:a:${o.audio && o.audio > 0 ? o.audio : 0}?`,
+    ...(o.maxHeight ? [...(vod ? [] : ['-af', 'aresample=async=1:first_pts=0']), '-c:a', 'aac', '-ac', '2', '-b:a', '128k'] : audioArgs(info, vod)),
     '-f', 'mpegts', '-muxdelay', p.bf ? '0.2' : '0', '-muxpreload', '0', o.output ?? 'pipe:1',
   ];
   const skip = o.skip && o.skip > 0 ? ['-ss', String(o.skip)] : [];
