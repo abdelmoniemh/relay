@@ -1,9 +1,8 @@
 import type { LoadOpts, MediaTracks, Player, PlayerEvent, PlayError } from './types.ts';
-import { isIOS } from '../env.ts';
+import { isIOS, canHevc } from '../env.ts';
 import { api } from '../api.ts';
 
 /** Can this browser decode HEVC itself (Safari, Chrome/Edge on Windows/Mac with a hardware decoder)? */
-const canHevc = (() => { try { return MediaSource.isTypeSupported('video/mp4; codecs="hvc1.2.4.L153.B0"') || MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90"'); } catch { return false; } })();
 
 type TxMode = 'full' | 'audio';
 

@@ -3,6 +3,10 @@ import type { DeviceKind } from '@shared/protocol.ts';
 export const isTizen = __TIZEN__ || typeof window.tizen !== 'undefined';
 export const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 export const isMobile = isIOS || /Android|Mobile/.test(navigator.userAgent);
+/** Can this device decode HEVC itself? TV hardware and Apple devices can; most desktop browsers can't. */
+export const canHevc = isTizen || (() => {
+  try { return ['hvc1.1.6.L120.90', 'hvc1.2.4.L153.B0'].some((c) => MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)); } catch { return false; }
+})();
 export const deviceKind: DeviceKind = isTizen ? 'tv' : isMobile ? 'phone' : 'desktop';
 export const defaultName = isTizen ? 'Samsung TV' : isIOS ? 'iPhone' : isMobile ? 'Phone' : 'Linux PC';
 

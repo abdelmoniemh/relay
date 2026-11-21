@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { isFinished, MIN_RESUME_S } from '@shared/domain.ts';
+import { isFinished, MIN_RESUME_S, titleId } from '@shared/domain.ts';
 import type { Item } from '@shared/protocol.ts';
 import { api, favorites, toggleFavorite, type TitleCard, type VersionInfo } from '../api.ts';
 import { back, navFocused, compact } from '../router.ts';
@@ -77,8 +77,8 @@ export function TitleScreen({ tid }: { tid: number }) {
     const start = at ?? (pr && !isFinished(pr[0], pr[1]) ? pr[0] : 0);
     play({ ...e, duration: e.duration ?? (pr?.[1] || null) }, { startAt: start, episodes: allEps });
   };
-  const isFav = t ? favorites.value.has(`t${t.tid}`) : false;
-  const fav = () => t && toggleFavorite({ id: `t${t.tid}`, kind: t.kind, name: t.name, icon: t.poster });
+  const isFav = t ? favorites.value.has(titleId(t.tid)) : false;
+  const fav = () => t && toggleFavorite({ id: titleId(t.tid), kind: t.kind, name: t.name, icon: t.poster });
 
   const buttons: Action[] = !t ? [] : [
     ...(t.kind === 'movie'

@@ -1,6 +1,7 @@
 import type { Category, Item, Kind, Programme, Progress, RankedSource, SportEvent, ReminderInfo } from '@shared/protocol.ts';
 import { signal } from '@preact/signals';
 import { persisted } from './storage.ts';
+import { canHevc, isTizen } from './env.ts';
 import type { Sort, SeriesInfo, MovieInfo, TitleCard, BrowseRow, VersionInfo, TitleDetail } from '@shared/protocol.ts';
 export type { Sort, SeriesInfo, MovieInfo, TitleCard, BrowseRow, VersionInfo, TitleDetail };
 
@@ -39,13 +40,7 @@ function cachedGet<T>(path: string): Promise<T> {
 }
 export const clearCache = () => memo.clear();
 
-/** Can this device play HEVC without help? (TV hardware and Apple devices can; most desktop browsers can't.) */
-function hevcParam() {
-  try {
-    if (__TIZEN__ || typeof (window as any).tizen !== 'undefined') return '1';
-    return MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90"') ? '1' : '0';
-  } catch { return '0'; }
-}
+const hevcParam = () => (canHevc ? '1' : '0');
 
 /** Skip-intro / credits markers and the seek-bar thumbnail sprite of a movie or episode (when prepared). */
 export interface Extras {
@@ -98,7 +93,7 @@ export const api = {
   titles: (kind: 'movie' | 'series', f: Record<string, string>, offset: number, limit: number) =>
     cachedGet<{ items: TitleCard[]; total: number }>(`/api/titles/${kind}?${new URLSearchParams({ ...f, offset: String(offset), limit: String(limit) })}`),
   titleSearch: (q: string, kind?: 'movie' | 'series') => cachedGet<TitleCard[]>(`/api/title-search?${new URLSearchParams({ q, ...(kind ? { kind } : {}) })}`),
-  title: (tid: number) => req<TitleDetail>('GET', `/api/title/${tid}?dev=${__TIZEN__ || typeof (window as any).tizen !== 'undefined' ? 'tv' : 'desktop'}&hevc=${hevcParam()}`),
+  title: (tid: number) => req<TitleDetail>('GET', `/api/title/${tid}?dev=${isTizen ? 'tv' : 'desktop'}&hevc=${hevcParam()}`),
   watchlist: () => req<{ items: TitleCard[]; available: number; total: number; missing: { name: string; year: number | null }[]; status: LbStatus }>('GET', '/api/watchlist'),
   titleOf: (itemId: string) => cachedGet<{ tid: number }>(`/api/title-of/${itemId}`),
   regions: () => req<{ enabled: string[]; all: { code: string; channels: number }[] }>('GET', '/api/regions'),

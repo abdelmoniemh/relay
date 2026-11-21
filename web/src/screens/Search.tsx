@@ -4,7 +4,7 @@ import { api, favorites, type TitleCard } from '../api.ts';
 import { navFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
 import { Logo, NowLine } from '../ui/common.tsx';
-import { displayName } from '@shared/domain.ts';
+import { displayName, titleId } from '@shared/domain.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { img, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
@@ -24,7 +24,7 @@ export function Search({ onPick, autoFocus = true }: { onPick?: (it: Item) => vo
   // Live channels come from the catalog; movies & series as titles (one result per film/show, not per copy).
   const res = useAsync(async () => {
     if (dq.length < 2) return [] as Item[];
-    const asItem = (t: TitleCard): Item => ({ id: `t${t.tid}`, kind: t.kind, name: t.year ? `${t.name} (${t.year})` : t.name, icon: t.poster, rating: t.rating });
+    const asItem = (t: TitleCard): Item => ({ id: titleId(t.tid), kind: t.kind, name: t.year ? `${t.name} (${t.year})` : t.name, icon: t.poster, rating: t.rating });
     if (kind === 'live') return api.search(dq, 'live');
     if (kind) return (await api.titleSearch(dq, kind)).map(asItem);
     const [live, titles] = await Promise.all([api.search(dq, 'live'), api.titleSearch(dq)]);
