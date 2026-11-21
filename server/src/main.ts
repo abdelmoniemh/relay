@@ -66,13 +66,7 @@ const tmdbTick = tmdb.start(() => library.mask, () => library.invalidate());
 const lbTick = letterboxd.start();
 // Background quality checks: sources of live/soon events first, football first.
 const prober = new Prober(db, provider, slot, {
-  background: () => {
-    const now = Date.now() / 1000;
-    const list = events.list(() => new Map(), { hevcOk: true })
-      .filter((e) => e.status === 'live' || (e.start != null && e.start - now < 3 * 3600))
-      .sort((a, b) => (a.sport === 'football' ? 0 : 1) - (b.sport === 'football' ? 0 : 1));
-    return list.flatMap((e) => e.sources.slice(0, 25).map((s) => Number(s.item.id.slice(1))));
-  },
+  background: () => events.soonSources(),
   log: (m) => app.log.info(m),
 });
 // Skip-intro markers and seek thumbnails for titles being watched.
@@ -103,7 +97,7 @@ await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib
 await app.register(websocket);
 /** A sync finished or the regions changed. */
 function catalogChanged() { catalog.refresh(); events.invalidate(); library.invalidate(); tmdbTick(); }
-registerApi(app, { catalogChanged, db, userData, details, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
+registerApi(app, { catalogChanged, userData, details, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
 // Reminders: every open app shows it; an "auto-start" device starts playing; installed apps get a notification.
 reminders.start((r) => {
   hub.broadcast({ t: 'reminder', reminder: { id: r.id, item: r.item, title: r.title, start: r.start, stop: r.stop, eventId: r.eventId, autoplay: r.autoplay } });

@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import type { DatabaseSync } from 'node:sqlite';
 import { USER_AGENT, type Provider } from './xtream.ts';
+import { itemId, parseId } from '../../shared/domain.ts';
 import type { ProviderSlot, Worker } from './slot.ts';
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,7 +22,7 @@ export class Prober implements Worker {
   private provider: Provider;
   private slot: ProviderSlot;
   private urgent: number[] = [];   // user asked (event opened)
-  private background: () => number[];
+  private background: () => string[];
   private ctl: AbortController | null = null;
   private running: Promise<void> | null = null;
   private recent: number[] = [];
@@ -29,7 +30,7 @@ export class Prober implements Worker {
   private get: ReturnType<DatabaseSync['prepare']>;
   private put: ReturnType<DatabaseSync['prepare']>;
 
-  constructor(db: DatabaseSync, provider: Provider, slot: ProviderSlot, opts: { background: () => number[]; log?: (m: string) => void }) {
+  constructor(db: DatabaseSync, provider: Provider, slot: ProviderSlot, opts: { background: () => string[]; log?: (m: string) => void }) {
     this.db = db; this.provider = provider; this.slot = slot; this.background = opts.background; this.log = opts.log ?? (() => {});
     slot.work(this);
     this.get = db.prepare('SELECT * FROM probes WHERE sid = ?');
@@ -38,31 +39,36 @@ export class Prober implements Worker {
     setInterval(() => this.kick(), 1500).unref();
   }
 
-  results(sids: number[]): Map<number, Probe> {
-    const m = new Map<number, Probe>();
+  /** Probes of these channels, by item id. */
+  results(ids: string[]): Map<string, Probe> {
+    const m = new Map<string, Probe>();
+    const sids = ids.map((id) => parseId(id)).filter((p) => p.kind === 'live').map((p) => p.sid);
     if (!sids.length) return m;
     for (let i = 0; i < sids.length; i += 500) {
       const chunk = sids.slice(i, i + 500);
       const rows = this.db.prepare(`SELECT * FROM probes WHERE sid IN (${chunk.map(() => '?').join(',')})`).all(...chunk) as unknown as Probe[];
-      for (const r of rows) m.set(r.sid, r);
+      for (const r of rows) m.set(itemId('live', r.sid), r);
     }
     return m;
   }
 
   /** Queue streams the user is looking at right now (front of the line, even if checked recently-ish). */
-  request(sids: number[]) {
+  request(ids: string[]) {
     const now = Date.now() / 1000;
-    const fresh = this.results(sids);
-    for (const s of sids.reverse()) {
-      const p = fresh.get(s);
+    const fresh = this.results(ids);
+    for (const id of [...ids].reverse()) {
+      const { kind, sid } = parseId(id);
+      if (kind !== 'live' || !Number.isFinite(sid)) continue;
+      const p = fresh.get(id);
       if (p && now - p.at < 20 * 60) continue;
-      if (!this.urgent.includes(s)) this.urgent.unshift(s);
+      if (!this.urgent.includes(sid)) this.urgent.unshift(sid);
     }
     this.urgent = this.urgent.slice(0, 60);
   }
 
   /** What a device actually decoded while watching: free verification, no extra connection. */
-  observed(sid: number, o: { width: number; height: number; fps?: number | null; vcodec?: string | null; kbps?: number | null }) {
+  observed(id: string, o: { width: number; height: number; fps?: number | null; vcodec?: string | null; kbps?: number | null }) {
+    const sid = parseId(id).sid;
     const prev = this.get.get(sid) as Probe | undefined;
     this.put.run(sid, Math.floor(Date.now() / 1000), 1, o.width, o.height, o.fps ?? prev?.fps ?? null, o.vcodec ?? prev?.vcodec ?? null,
       prev?.acodec ?? null, o.kbps ?? prev?.kbps ?? null, prev?.ttfb_ms ?? null, prev?.backlog_s ?? null, null,
@@ -93,7 +99,7 @@ export class Prober implements Worker {
     if (this.recent.length >= MAX_PER_HOUR) return;
     let sid = this.urgent.shift();
     if (sid == null) {
-      const stale = this.background().filter((s) => { const p = this.get.get(s) as Probe | undefined; return !p || now / 1000 - p.at > TTL_S; });
+      const stale = this.background().map((id) => parseId(id).sid).filter((s) => { const p = this.get.get(s) as Probe | undefined; return !p || now / 1000 - p.at > TTL_S; });
       sid = stale[0];
     }
     this.hadWork = sid != null;

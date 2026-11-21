@@ -4,17 +4,16 @@ import type { FastifyInstance } from 'fastify';
 import { type ApiCtx } from './http.ts';
 
 export function registerRemindersRoutes(app: FastifyInstance, ctx: ApiCtx) {
-  const { db, catalog, reminders } = ctx;
+  const { catalog, reminders } = ctx;
   app.get('/api/reminders', async () => reminders.list());
   app.post('/api/reminders', async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, any>;
     const id = String(b.itemId ?? b.item?.id ?? '');
-    const { kind, sid } = parseId(id);
+    const { kind } = parseId(id);
     const start = Number(b.start);
     if (kind !== 'live' || !catalog.playable({ id, kind })) return reply.code(400).send({ error: 'Reminders are for channels and events' });
     if (!(start > Date.now() / 1000 - 60)) return reply.code(400).send({ error: 'That has already started' });
-    const row = db.prepare("SELECT name, icon, cat, epg, archive FROM items WHERE kind = 'live' AND sid = ?").get(sid) as any;
-    const item: Item = { id, kind: 'live', name: row?.name ?? String(b.item?.name ?? id), icon: row?.icon ?? null, cat: row?.cat ?? null, epg: row?.epg ?? null, archive: row?.archive ?? 0 };
+    const item: Item = catalog.get(id) ?? { id, kind: 'live', name: String(b.item?.name ?? id) };
     const autoplay = typeof b.autoplay === 'string' && b.autoplay ? b.autoplay : null;
     return reminders.add({ item, title: String(b.title ?? item.name).slice(0, 200), start, stop: Number(b.stop) || null, eventId: b.eventId ? String(b.eventId) : null, autoplay });
   });

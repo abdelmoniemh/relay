@@ -127,7 +127,7 @@ export function audioArgs(info: SourceInfo | null | undefined, vod: boolean): st
   const ch = Math.min(6, Math.max(1, info?.channels ?? 2));
   const surround = ch > 2;
   return [
-    ...(vod ? [] : ['-af', 'aresample=async=1:first_pts=0']), // live: absorb provider timestamp gaps
+    ...(vod ? [] : LIVE_AUDIO_FILTER),
     '-c:a', 'aac', '-ac', surround ? '6' : '2', '-b:a', surround ? '448k' : '224k',
   ];
 }
@@ -193,9 +193,14 @@ export function inputArgs(src: string, o: InputOpts): string[] {
 }
 
 /** Video options for the plan. `container` matters for copied HEVC: MP4/fMP4 (Safari) needs Apple's hvc1 tag. */
+/** The encoder profile: data saver (a height cap) is the mobile profile; else movies vs live. */
+export const profileFor = (o: Pick<TxOpts, 'profile' | 'maxHeight' | 'vod'>) => o.profile ?? (o.maxHeight ? MOBILE : o.vod ? VOD : LIVE);
+/** Live audio: absorb the provider's timestamp gaps. */
+export const LIVE_AUDIO_FILTER = ['-af', 'aresample=async=1:first_pts=0'];
+
 export function videoArgs(plan: VideoPlan, o: TxOpts & { vcodec?: string | null; container: 'mpegts' | 'fmp4' }): string[] {
   if (plan === 'copy') return o.vcodec === 'hevc' && o.container === 'fmp4' ? ['-c:v', 'copy', '-tag:v', 'hvc1'] : ['-c:v', 'copy'];
-  const p = o.profile ?? (o.maxHeight ? MOBILE : o.vod ? VOD : LIVE);
+  const p = profileFor(o);
   return ['-vf', videoFilter(o.info, o), ...encoderArgs(p, o.gpu, outFps(o.info, o))];
 }
 
@@ -203,12 +208,12 @@ export function videoArgs(plan: VideoPlan, o: TxOpts & { vcodec?: string | null;
 export function transcodeArgs(src: string, o: TxOpts): string[] {
   const vod = !!o.vod, info = o.info ?? null;
   const plan: VideoPlan = o.mode === 'audio' ? 'copy' : 'encode';
-  const p = o.profile ?? (o.maxHeight ? MOBILE : vod ? VOD : LIVE);
+  const p = profileFor(o);
   return [
     ...inputArgs(src, { vod, startAt: o.startAt, skip: o.skip, plan, gpu: o.gpu, bench: o.bench }),
     '-map', '0:v:0', '-map', `0:a:${o.audio && o.audio > 0 ? o.audio : 0}?`,
     ...videoArgs(plan, { ...o, container: 'mpegts' }),
-    ...(o.maxHeight ? [...(vod ? [] : ['-af', 'aresample=async=1:first_pts=0']), '-c:a', 'aac', '-ac', '2', '-b:a', '128k'] : audioArgs(info, vod)),
+    ...(o.maxHeight ? [...(vod ? [] : LIVE_AUDIO_FILTER), '-c:a', 'aac', '-ac', '2', '-b:a', '128k'] : audioArgs(info, vod)),
     // B-frames need a little mux delay or DTS can fall behind the PCR.
     '-f', 'mpegts', '-muxdelay', p.bf ? '0.2' : '0', '-muxpreload', '0', 'pipe:1',
   ];

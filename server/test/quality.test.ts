@@ -7,7 +7,7 @@ const now = Math.floor(Date.now() / 1000);
 const item = (n: number, name = `Ch ${n}`): { item: Item; fam: number } => ({ item: { id: `l${n}`, kind: 'live', name }, fam: 1 });
 const probe = (sid: number, o: Partial<Probe>): Probe => ({ sid, at: now, ok: 1, width: 1920, height: 1080, fps: 50, vcodec: 'h264', acodec: 'aac',
   kbps: 8000, ttfb_ms: 400, backlog_s: 15, err: null, interlaced: 0, bitdepth: 8, hdr: null, channels: 2, ...o });
-const rank = (ps: Probe[], hevcOk = false) => rankSources(ps.map((p) => item(p.sid)), new Map(ps.map((p) => [p.sid, p])), { hevcOk });
+const rank = (ps: Probe[], hevcOk = false) => rankSources(ps.map((p) => item(p.sid)), new Map(ps.map((p) => [`l${p.sid}`, p])), { hevcOk });
 
 test('a looping slate (minutes of backlog) is a placeholder, even at a plausible bitrate', () => {
   const r = rank([probe(1, { fps: 30, kbps: 1050, backlog_s: 520 }), probe(2, { height: 720, width: 1280, kbps: 4000 })]);

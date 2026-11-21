@@ -30,8 +30,8 @@ export class MediaFacts {
 
   /** What the conversion should know about the source (deinterlacing, HDR tone mapping, 10-bit, audio layout). */
   source(id: string): SourceInfo | null {
-    const { kind, sid } = parseId(id);
-    if (kind === 'live') return probeToSource(this.prober.results([sid]).get(sid));
+    const { kind } = parseId(id);
+    if (kind === 'live') return probeToSource(this.prober.results([id]).get(id));
     const r = this.vod.get(id) as any;
     const t = this.tracks.get(id);
     if (!r) return t?.vcodec ? { vcodec: t.vcodec } : null;

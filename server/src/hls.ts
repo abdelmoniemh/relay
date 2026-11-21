@@ -6,6 +6,7 @@
 // iOS lists them in its audio menu), segments seg_<variant>_<k>.m4s, and sub_<n>.vtt per text subtitle track, served
 // as subtitle playlists cut to the video's segments (ffmpeg's HLS muxer carries one subtitle per video variant only).
 import { trackName, type Tracks, type SubTrack } from './tracks.ts';
+import { LIVE_AUDIO_FILTER } from './media.ts';
 
 /** Segment length (seconds). */
 export const SEGMENT_S = 4;
@@ -144,7 +145,7 @@ export function hlsOutputArgs(o: { layout: VodLayout | null; dir: string; live: 
   return [
     // Live: video optional, so a radio station that ends up here still plays.
     '-map', o.live ? '0:v:0?' : '0:v:0', '-map', '0:a:0?', ...o.video,
-    ...(o.live ? ['-af', 'aresample=async=1:first_pts=0'] : []), // live: absorb provider timestamp gaps
+    ...(o.live ? LIVE_AUDIO_FILTER : []),
     '-c:a', 'aac', '-b:a', o.abr, '-ac', '2', '-max_muxing_queue_size', '2048',
     '-f', 'hls', '-hls_time', String(SEGMENT_S),
     // Movies: every segment stays listed (seekable). Live: a sliding window; ffmpeg deletes what falls out.
@@ -153,4 +154,14 @@ export function hlsOutputArgs(o: { layout: VodLayout | null; dir: string; live: 
     '-hls_segment_filename', at(f.segmentPattern), '-hls_flags', `independent_segments+temp_file${o.live ? '+delete_segments' : ''}`,
     at(f.entry),
   ];
+}
+
+/** A session playlist as a player gets it: the master with its languages, the token on every URI, movies from the start. */
+export function servePlaylist(pl: string, file: string, layout: VodLayout | null, defaultSub: number, tok: string): string {
+  if (layout && file === sessionFiles(layout).entry) pl = masterPlaylist(pl, layout, defaultSub, tok);
+  return withToken(pl, tok)
+    // The playlist grows while Safari watches, so it may treat it as live and start near the newest
+    // segment (≈40s into the movie, thanks to ffmpeg's head start). Always start at the beginning.
+    // (A live channel's sliding playlist has no #EXT-X-PLAYLIST-TYPE: Safari starts it near the live edge.)
+    .replace(/^#EXTM3U\n(?=[\s\S]*^#EXT-X-PLAYLIST-TYPE:EVENT$)/m, '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n');
 }

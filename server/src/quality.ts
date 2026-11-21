@@ -29,10 +29,10 @@ function claimed(name: string) {
 const hScore = (h: number) => (h >= 2000 ? 100 : h >= 1400 ? 88 : h >= 1000 ? 80 : h >= 700 ? 55 : h >= 540 ? 35 : 20);
 const hLabel = (h: number, scan = 'p') => (h >= 2000 ? '4K' : h >= 1400 ? `1440${scan}` : `${h}${scan}`);
 
-export function rankSources(src: { item: Item; fam: number }[], probes: Map<number, Probe>, opts: { hevcOk: boolean }): RankedSource[] {
+export function rankSources(src: { item: Item; fam: number }[], probes: Map<string, Probe>, opts: { hevcOk: boolean }): RankedSource[] {
   const now = Date.now() / 1000;
   const out = src.map(({ item, fam }): RankedSource => {
-    const p = probes.get(Number(item.id.slice(1)));
+    const p = probes.get(item.id);
     if (p && now - p.at < FRESH_S) {
       if (!p.ok) return { item, fam, score: -100, verified: true, dead: true, label: `Offline${p.err ? ` (${p.err.slice(0, 40)})` : ''}`, checkedAt: p.at };
       const h = p.height ?? 0, w = p.width ?? Math.round((h * 16) / 9), hevc = /hevc|h265/i.test(p.vcodec ?? '');

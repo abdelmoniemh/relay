@@ -1,6 +1,5 @@
 // What every route module gets, and small helpers they share.
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { DatabaseSync } from 'node:sqlite';
 import type { Kind } from '../../../shared/protocol.ts';
 import type { Catalog } from '../catalog.ts';
 import type { Auth } from '../auth.ts';
@@ -23,7 +22,7 @@ import type { ProviderDetails } from '../details.ts';
 declare module 'fastify' { interface FastifyRequest { deviceId: string } }
 
 export interface Services {
-  db: DatabaseSync; userData: UserData; details: ProviderDetails; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; facts: MediaFacts;
+  userData: UserData; details: ProviderDetails; catalog: Catalog; auth: Auth; hub: Hub; provider: Provider; transcoder: Transcoder; facts: MediaFacts;
   events: EventsIndex; prober: Prober; tmdb: Tmdb; library: Library; tmdbTick: () => void; letterboxd: Letterboxd; lbTick: () => void;
   reminders: Reminders; vodProxy: VodProxy; trackStore: TrackStore; prefetcher: Prefetcher;
   /** A sync finished or the regions changed. */

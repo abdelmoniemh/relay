@@ -138,14 +138,28 @@ export class EventsIndex {
     return events;
   }
 
+  /** Sources worth checking in the background: events live or starting within 3 h, football first (25 per event). */
+  soonSources(): string[] {
+    const now = Math.floor(Date.now() / 1000);
+    return this.built()
+      .filter((e) => e.status === 'live' || (e.start != null && e.start - now < 3 * 3600))
+      .sort((a, b) => (a.sport === 'football' ? 0 : 1) - (b.sport === 'football' ? 0 : 1))
+      .flatMap((e) => (e.sources as unknown as { item: Item }[]).slice(0, 25).map((s) => s.item.id));
+  }
+
   /** Cached for 60s; rankings applied per request (they depend on the device and fresh probes). */
-  list(probes: (sids: number[]) => Map<number, Probe>, opts: { hevcOk: boolean }): SportEvent[] {
+  /** Events with their unranked sources, rebuilt after a minute or a catalog change. */
+  private built(): SportEvent[] {
     const now = Math.floor(Date.now() / 1000);
     const key = this.catalog.version; // includes the regions
     if (!this.cache || this.cache.key !== key || now - this.cache.at > 60) this.cache = { key, at: now, events: this.build(now) };
-    return this.cache.events.map((e) => {
+    return this.cache.events;
+  }
+
+  list(probes: (ids: string[]) => Map<string, Probe>, opts: { hevcOk: boolean }): SportEvent[] {
+    return this.built().map((e) => {
       const raw = e.sources as unknown as { item: Item; fam: number }[];
-      const pm = probes(raw.map((s) => Number(s.item.id.slice(1))));
+      const pm = probes(raw.map((s) => s.item.id));
       const sources = rankSources(raw, pm, opts);
       const offline = sources.length > 0 && sources.every((x) => x.dead);
       return { ...e, sources, offline };

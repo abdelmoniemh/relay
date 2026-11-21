@@ -1,14 +1,14 @@
-import { parseId, isVodId } from '../../../shared/domain.ts';
+import { parseId, isVodId, itemId } from '../../../shared/domain.ts';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { pickAudio, pickSub, trackName, keyframeAt, type Tracks } from '../tracks.ts';
-import { vodLayout, sessionFiles, parseSubName, subName, withToken, subtitlePlaylist, subtitleSegment, masterPlaylist } from '../hls.ts';
+import { vodLayout, sessionFiles, parseSubName, subName, subtitlePlaylist, subtitleSegment, servePlaylist } from '../hls.ts';
 import { videoPlan } from '../media.ts';
 import type { FastifyInstance } from 'fastify';
 import { type ApiCtx } from './http.ts';
 
 export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
-  const { db, catalog, provider, transcoder, facts, vodProxy, trackStore, prefetcher } = ctx;
+  const { catalog, provider, transcoder, facts, vodProxy, trackStore, prefetcher } = ctx;
   /** Seconds of picture kept before a seek point, so going back a little after a seek needs no restart. */
   const SEEK_PREROLL = 20;
   const tracksOf = async (id: string, src: string): Promise<Tracks | null> => {
@@ -20,11 +20,10 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
   /** A movie/episode's file through the proxy, for the background prefetcher. */
   const vodSrc = (id: string, ext?: string) => () => { const { kind } = parseId(id); return vodProxy.url(provider.source({ id, kind: kind ?? 'movie', ext })); };
   // Catch-up: a programme from a channel's archive (?cs=<start>&ce=<stop>, unix seconds; ?start= seconds into it).
-  const archiveDays = db.prepare("SELECT archive FROM items WHERE kind = 'live' AND sid = ?");
   const catchupOf = (sid: number, q: Record<string, string>) => {
     const cs = Number(q.cs), ce = Number(q.ce);
     if (!cs || !ce) return null;
-    const days = (archiveDays.get(sid) as { archive: number } | undefined)?.archive ?? 0;
+    const days = catalog.get(itemId('live', sid))?.archive ?? 0;
     const now = Date.now() / 1000;
     if (!days || ce <= cs || cs > now || cs < now - days * 86400 - 600) throw new Error(days ? 'That programme is outside this channel\'s archive' : 'This channel has no catch-up');
     return provider.catchup(sid, { start: cs, stop: ce }, Number(q.start) || 0, now);
@@ -156,15 +155,7 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
     if (!p) return reply.code(404).send({ error: 'gone' });
     reply.header('cache-control', 'no-store').header('access-control-allow-origin', '*');
     if (file.endsWith('.m3u8')) {
-      // Segment requests from Safari's player carry no auth header: put the token on every URI.
-      let pl = await readFile(p, 'utf8');
-      const layout = transcoder.hlsInfo(sid)?.layout ?? null;
-      if (layout && file === sessionFiles(layout).entry) pl = masterPlaylist(pl, layout, Number((req.query as any).ds ?? -1), tok);
-      pl = withToken(pl, tok)
-        // The playlist grows while Safari watches, so it may treat it as live and start near the newest
-        // segment (≈40s into the movie, thanks to ffmpeg's head start). Always start at the beginning.
-        // (A live channel's sliding playlist has no #EXT-X-PLAYLIST-TYPE: Safari starts it near the live edge.)
-        .replace(/^#EXTM3U\n(?=[\s\S]*^#EXT-X-PLAYLIST-TYPE:EVENT$)/m, '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n');
+      const pl = servePlaylist(await readFile(p, 'utf8'), file, transcoder.hlsInfo(sid)?.layout ?? null, Number((req.query as any).ds ?? -1), tok);
       return reply.type('application/vnd.apple.mpegurl').send(pl);
     }
     return reply.type(file.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment').send(await readFile(p));

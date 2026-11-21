@@ -65,19 +65,19 @@ export function registerCatalogRoutes(app: FastifyInstance, ctx: ApiCtx) {
   });
   app.get('/api/family/:id', async (req) => {
     const fam = catalog.family((req.params as any).id);
-    return rankSources(fam, prober.results(fam.map((f) => Number(f.item.id.slice(1)))), { hevcOk: hevcOk(req.query as any) });
+    return rankSources(fam, prober.results(fam.map((f) => f.item.id)), { hevcOk: hevcOk(req.query as any) });
   });
   /** Check these streams' real quality as soon as the connection is free. */
   app.post('/api/probe', async (req) => {
     const ids = ((req.body as any)?.ids ?? []) as string[];
-    prober.request(ids.filter((i) => i.startsWith('l')).map((i) => Number(i.slice(1))).filter(Number.isFinite).slice(0, 60));
+    prober.request(ids.slice(0, 60));
     return { ok: true };
   });
 
   app.post('/api/observed', async (req) => {
     const b = req.body as { id?: string; width?: number; height?: number; fps?: number; vcodec?: string; kbps?: number };
     if (!b?.id?.startsWith('l') || !(Number(b.height) > 0)) return { ok: false };
-    prober.observed(Number(b.id.slice(1)), { width: Number(b.width), height: Number(b.height), fps: b.fps ? Number(b.fps) : null, vcodec: b.vcodec ?? null, kbps: b.kbps ? Number(b.kbps) : null });
+    prober.observed(String(b.id), { width: Number(b.width), height: Number(b.height), fps: b.fps ? Number(b.fps) : null, vcodec: b.vcodec ?? null, kbps: b.kbps ? Number(b.kbps) : null });
     return { ok: true };
   });
 }

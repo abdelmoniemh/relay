@@ -1,11 +1,10 @@
 import type { ClientMsg, DeviceKind } from '../../../shared/protocol.ts';
-import { syncedAt } from '../db.ts';
 import { isSyncing, runSync } from '../sync.ts';
 import type { FastifyInstance } from 'fastify';
 import { type ApiCtx, isLocal } from './http.ts';
 
 export function registerSystemRoutes(app: FastifyInstance, ctx: ApiCtx) {
-  const { db, catalog, auth, hub, provider, tmdb, library, letterboxd, lbTick, catalogChanged } = ctx;
+  const { catalog, auth, hub, provider, tmdb, library, letterboxd, lbTick, catalogChanged } = ctx;
   app.get('/api/ping', async () => ({ ok: true, name: 'relay' }));
 
   app.post('/api/pair', async (req, reply) => {
@@ -19,7 +18,7 @@ export function registerSystemRoutes(app: FastifyInstance, ctx: ApiCtx) {
 
   app.get('/api/status', async () => ({
     syncing: isSyncing(), counts: catalog.counts(),
-    catalogSynced: syncedAt(db, 'catalog'), epgSynced: syncedAt(db, 'epg'),
+    catalogSynced: catalog.syncedAt('catalog'), epgSynced: catalog.syncedAt('epg'),
     pairingCode: auth.pairingCode(), regions: catalog.regions, vodLangs: library.langs, letterboxd: letterboxd.status(),
     tmdb: { enabled: tmdb.enabled, enriched: tmdb.enriched, lastError: tmdb.lastError, pending: tmdb.pending(library.mask) },
   }));

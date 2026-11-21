@@ -3,7 +3,7 @@ import type { Category, Item, Kind, Programme, Sort } from '../../shared/protoco
 export type { Sort };
 
 import { itemId, parseId } from '../../shared/domain.ts';
-import { kvGet, kvSet, syncedAt } from './db.ts';
+import { kvGet, kvSet, syncedAt, type SyncPart } from './db.ts';
 
 const DEFAULT_REGIONS = ['UK', 'US', 'CA', 'AR', '4K'];
 
@@ -32,6 +32,13 @@ export class Catalog {
     this.db = db;
     this.regions = JSON.parse(kvGet(db, 'regions') ?? JSON.stringify(DEFAULT_REGIONS));
     this.refresh();
+  }
+
+  /** When this part was last synced (ms). */
+  syncedAt(part: SyncPart) { return syncedAt(this.db, part); }
+  /** The film/show title a provider copy belongs to. */
+  titleOf(kind: Kind, sid: number): number | null {
+    return (this.st('SELECT tid FROM items WHERE kind = ? AND sid = ?').get(kind, sid) as { tid: number | null } | undefined)?.tid ?? null;
   }
 
   refresh() { this.version = `${syncedAt(this.db, 'catalog')}.${syncedAt(this.db, 'live')}.${syncedAt(this.db, 'epg')}.${this.regions.join('')}`; }

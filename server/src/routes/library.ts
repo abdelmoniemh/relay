@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { type ApiCtx, clamp } from './http.ts';
 
 export function registerLibraryRoutes(app: FastifyInstance, ctx: ApiCtx) {
-  const { db, userData, catalog, provider, library, letterboxd, details, prefetcher, vodProxy } = ctx;
+  const { userData, catalog, provider, library, letterboxd, details, prefetcher, vodProxy } = ctx;
   app.get('/api/movie/:id', async (req, reply) => {
     const { kind, sid } = parseId((req.params as any).id);
     if (kind !== 'movie') return reply.code(400).send({ error: 'bad id' });
@@ -36,8 +36,8 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: ApiCtx) {
   app.get('/api/title-of/:id', async (req, reply) => {
     const { kind, sid } = parseId((req.params as any).id);
     if (!kind) return reply.code(404).send({ error: 'not found' });
-    const r = db.prepare('SELECT tid FROM items WHERE kind = ? AND sid = ?').get(kind, sid) as { tid: number | null } | undefined;
-    return r?.tid ? { tid: r.tid } : reply.code(404).send({ error: 'not found' });
+    const tid = catalog.titleOf(kind, sid);
+    return tid ? { tid } : reply.code(404).send({ error: 'not found' });
   });
   app.get('/api/title/:tid', async (req, reply) => {
     const d = await library.detail(Number((req.params as any).tid), device(req.query as any));

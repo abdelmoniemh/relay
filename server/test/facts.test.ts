@@ -10,7 +10,7 @@ function setup(probes: Record<number, any> = {}) {
   db.exec(`CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
     CREATE TABLE items (kind TEXT, sid INTEGER, name TEXT);
     CREATE TABLE vod_probes (id TEXT PRIMARY KEY, at INTEGER, ok INTEGER, width INTEGER, height INTEGER, hdr TEXT, vcodec TEXT, acodec TEXT, channels INTEGER, alangs TEXT, slangs TEXT, err TEXT)`);
-  const prober = { results: (sids: number[]) => new Map(sids.filter((s) => probes[s]).map((s) => [s, { sid: s, ok: 1, ...probes[s] }])) } as unknown as Prober;
+  const prober = { results: (ids: string[]) => new Map(ids.filter((id) => probes[Number(id.slice(1))]).map((id) => [id, { sid: Number(id.slice(1)), ok: 1, ...probes[Number(id.slice(1))] }])) } as unknown as Prober;
   const tracks = new TrackStore({}, () => {});
   return { db, facts: new MediaFacts(db, prober, tracks), tracks };
 }
