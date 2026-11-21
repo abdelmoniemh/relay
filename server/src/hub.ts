@@ -1,6 +1,7 @@
 // Coordinates the provider's single allowed connection across devices.
 // Invariant: a device is only told to start (`granted`) after the previous holder confirmed it stopped
 // (or timed out / is offline), so the provider never sees two simultaneous streams from us.
+import { parseTitleId } from '../../shared/domain.ts';
 import type { ClientMsg, DeviceInfo, Item, Lease, ServerMsg } from '../../shared/protocol.ts';
 
 export interface HubDeps {
@@ -14,6 +15,8 @@ export interface HubDeps {
   uhd?(item: Item): boolean;
   /** Source is interlaced: browsers should take the server's deinterlacing conversion. */
   interlaced?(item: Item): boolean;
+  /** A film title (t123) sent to a device: the version that suits it (TV builds from before titles were sent play only items). */
+  versionFor?(tid: number, deviceId: string): Promise<Item | null>;
   /** The lease now belongs to `deviceId` (or nobody): free server-side streams held for anyone else. */
   leaseMoved?(deviceId: string | null): void | Promise<void>;
   now?: () => number;
@@ -171,7 +174,10 @@ export class Hub {
           this.sendTo(deviceId, { t: 'error', message: 'That device is offline' });
           return;
         }
-        this.sendTo(msg.target, { t: 'play', item, startAt: msg.startAt, from: deviceId, ...(msg.eventId ? { eventId: msg.eventId } : {}) });
+        const tid = parseTitleId(item.id);
+        const deliver = (it: Item) => this.sendTo(msg.target, { t: 'play', item: it, startAt: msg.startAt, from: deviceId, ...(msg.eventId ? { eventId: msg.eventId } : {}), ...(tid != null ? { titleId: item.id } : {}) });
+        if (tid == null || !this.deps.versionFor) { deliver(item); return; }
+        this.deps.versionFor(tid, msg.target).then((v) => (v ? deliver(v) : this.sendTo(deviceId, { t: 'error', message: 'Not available' })), () => this.sendTo(deviceId, { t: 'error', message: 'Not available' }));
         return;
       }
       case 'remote':

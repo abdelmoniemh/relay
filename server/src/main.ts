@@ -16,6 +16,7 @@ import { registerApi } from './api.ts';
 import { scheduleSync } from './sync.ts';
 import { Provider } from './xtream.ts';
 import { Transcoder } from './transcode.ts';
+import { versionItem } from '../../shared/domain.ts';
 import { MediaFacts } from './facts.ts';
 import { claimed } from './quality.ts';
 import { UserData } from './userdata.ts';
@@ -88,6 +89,11 @@ const hub = new Hub({
   txMode: (item) => facts.browserNeeds(item.id),
   interlaced: (item) => item.kind === 'live' && !item.catchup && !!facts.source(item.id)?.interlaced,
   uhd: (item) => { const h = facts.source(item.id)?.height; return h ? h >= 2000 : claimed(item.name).height >= 2160; }, // measured, else the name
+  versionFor: async (tid, deviceId) => {
+    const tv = auth.devices().find((d) => d.id === deviceId)?.kind === 'tv';
+    const d = await library.detail(tid, { tv, hevcOk: tv });
+    return d ? versionItem(d) : null;
+  },
   allowed: (item) => catalog.playable(item),
   log: (m) => app.log.info(m),
 });

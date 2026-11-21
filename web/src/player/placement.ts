@@ -5,4 +5,5 @@ import { signal } from '@preact/signals';
 export const previewBox = signal<HTMLElement | null>(null);
 
 /** The channel list on screen: the numbers next to channels are positions in it, so typed digits pick from it. */
-export const numbered = signal<{ at: (i: number) => Item | undefined } | null>(null);
+// cat: a provider category (positions past what's loaded are fetched from it); none for Favourites / Recent.
+export const numbered = signal<{ at: (i: number) => Item | undefined; cat?: string } | null>(null);

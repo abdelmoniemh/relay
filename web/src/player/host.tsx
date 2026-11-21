@@ -9,6 +9,7 @@ import {
   sources, nextSource, sourceEvent, nextUp, nextEpisode, playNextEpisode, cancelNextUp,
   isLiveNow, skipAt, skipIntro, thumbAt, mediaTracks, selectAudio, selectSub, startOver, canCatchup,
   showToast,
+  continueOn,
 } from '../playback.ts';
 import { Sheet } from '../ui/kit.tsx';
 import { ProgrammesSheet } from '../features/programmes.tsx';
@@ -16,7 +17,7 @@ import { useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
 import { Logo } from '../ui/common.tsx';
 import { displayName } from '@shared/domain.ts';
 import { api, myDeviceId, toggleFavorite, favorites } from '../api.ts';
-import { devices, send } from '../ws.ts';
+import { devices } from '../ws.ts';
 import { route, go, compact } from '../router.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { previewBox, numbered } from './placement.ts';
@@ -131,7 +132,7 @@ export function PlayerHost() {
     place();
     window.addEventListener('resize', place);
     return () => window.removeEventListener('resize', place);
-  }, [m, onLive, previewBox.value]);
+  }, [m, onLive, previewBox.value, compact.value]);
 
   // On the TV the corner mini player can't punch through the UI, and an off-screen stream wastes the one connection.
   useEffect(() => { if (hw && m === 'mini' && !onLive) stop(); }, [m, onLive]);
@@ -203,7 +204,7 @@ function Overlay() {
       if (k === 'back') { setSendMenu(false); return true; }
       if (k.startsWith('digit')) {
         const d = others[Number(k.slice(5)) - 1];
-        if (d) { send({ t: 'sendTo', target: d.id }); setSendMenu(false); }
+        if (d) { continueOn(d.id); setSendMenu(false); }
         return true;
       }
       return true;
@@ -234,9 +235,11 @@ function Overlay() {
         setDigits('');
         const n = Number(d);
         if (!n) return;
-        // the list whose numbers were on screen (Favourites, Recent, a category), else this channel's category
-        const pick = numbered.value?.at(n - 1) ?? (it.cat ? (await api.items('live', it.cat, 'default', n - 1, 1)).items[0] : undefined);
-        if (pick) play(pick, { mode: 'full' });
+        // the list whose numbers were on screen (Favourites, Recent, a category): only it, or a number off its end
+        // plays some other channel. No list shown: this channel's category.
+        const list = numbered.value, cat = list ? list.cat : it.cat;
+        const pick = list?.at(n - 1) ?? (cat ? (await api.items('live', cat, 'default', n - 1, 1)).items[0] : undefined);
+        if (pick) play(pick, { mode: 'full' }); else showToast(t('No channel {n}', { n }), 2000);
       }, 1300);
       return true;
     }
@@ -381,7 +384,7 @@ function Overlay() {
         <div class="dialog" onClick={(e) => e.stopPropagation()}>
           <h3>{t('Continue on…')}</h3>
           {others.map((d, i) => (
-            <button key={d.id} class="list-row" onClick={() => { send({ t: 'sendTo', target: d.id }); setSendMenu(false); }}><span class="tnum">{i + 1}</span><span class="lr-main"><b>{d.name}</b></span></button>
+            <button key={d.id} class="list-row" onClick={() => { continueOn(d.id); setSendMenu(false); }}><span class="tnum">{i + 1}</span><span class="lr-main"><b>{d.name}</b></span></button>
           ))}
           <button class="btn secondary" onClick={() => setSendMenu(false)}>{t('Cancel')}</button>
         </div>

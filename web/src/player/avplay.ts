@@ -43,8 +43,8 @@ export class AvPlayer implements Player {
     try { av.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', 'PLAYER_BUFFER_SIZE_IN_SECOND', o.live ? 3 : 6); } catch {}
     if (o.uhd) try { av.setStreamingProperty('SET_MODE_4K', 'TRUE'); } catch {}
     av.setDisplayRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
-    await new Promise<void>((resolve, reject) => av.prepareAsync(resolve, reject)).catch((e) => { if (gen === this.gen) this.cb('error', 'other', String(e)); throw e; });
-    if (gen !== this.gen) return;
+    const prepared = await new Promise<void>((resolve, reject) => av.prepareAsync(resolve, reject)).then(() => true, (e) => { if (gen === this.gen) this.cb('error', 'other', String(e)); return false; }); // reported once, as an error event
+    if (gen !== this.gen || !prepared) return;
     if (!o.live && o.alang) this.pickAudio(o.alang);
     if (o.startAt > 0 && !this.catchup) await new Promise<void>((r) => av.seekTo(o.startAt * 1000, r, r));
     av.play();

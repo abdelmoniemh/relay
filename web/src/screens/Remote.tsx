@@ -5,7 +5,7 @@ import { useAsync } from '../ui/hooks.ts';
 import { back, stack } from '../router.ts';
 import { myDeviceId } from '../api.ts';
 import { devices, lease, send } from '../ws.ts';
-import { current, takeover } from '../playback.ts';
+import { current, takeover, continueOn } from '../playback.ts';
 import { Search } from './Search.tsx';
 import { Logo, ProgBar } from '../ui/common.tsx';
 import { displayName } from '@shared/domain.ts';
@@ -69,7 +69,7 @@ export function Remote() {
           {!current.value && <Btn a={{ label: t('Watch here'), primary: true, act: () => takeover() }} />}
         </div>
       ) : t2 ? <div class="np empty-np">{t2.online ? t('Nothing playing on {name}', { name: t2.name }) : t('{name} is offline. Open Relay on it.', { name: t2.name })}</div> : null}
-      {current.value && target && <Btn a={{ label: t('Move what I’m watching to {name}', { name: t2?.name ?? '' }), icon: 'send', act: () => send({ t: 'sendTo', target }) }} />}
+      {current.value && target && <Btn a={{ label: t('Move what I’m watching to {name}', { name: t2?.name ?? '' }), icon: 'send', act: () => continueOn(target) }} />}
 
       <Segmented value={tab} onChange={setTab} options={[{ v: 'pad', label: t('Remote') }, { v: 'sports', label: t('Football') }, { v: 'browse', label: t('Find & play') }]} />
 

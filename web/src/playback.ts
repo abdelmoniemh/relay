@@ -142,7 +142,7 @@ export function attachPlayer(p: Player) {
       if (!retried && current.value) {
         retried = true; status.value = 'loading';
         const item = current.value;
-        setTimeout(() => { if (current.value === item) p.load(lastUrls, loadOpts(item, p.position() || lastStart)).catch(loadFailed); }, 1200);
+        setTimeout(() => { if (current.value === item) p.load(lastUrls, loadOpts(item, p.position() || lastStart)).catch((e) => loadFailed(item.id, e)); }, 1200);
         return;
       }
       if (isLiveNow(current.value) && nextSource(1, true)) return;
@@ -266,10 +266,17 @@ export function stop() {
 }
 
 /** The player couldn't even start (an engine chunk failed to load, the TV player threw): say so, don't spin. */
-function loadFailed(e: unknown) {
-  if (!current.value) return;
+function loadFailed(id: string, e: unknown) {
+  if (current.value?.id !== id || status.value === 'error') return; // zapped on meanwhile, or the player already said why
   status.value = 'error'; errorMsg.value = friendlyError('other');
   api.clientLog(`load failed: ${(e as Error)?.message ?? e} (${current.value.id})`);
+}
+
+/** Move what's playing here to another device: from this position, and a match with all its sources. */
+export function continueOn(target: string) {
+  const item = current.value;
+  if (!item) { send({ t: 'sendTo', target }); return; }
+  send({ t: 'sendTo', target, item, startAt: isLiveNow(item) ? undefined : Math.floor(player?.position() ?? position.value), ...(sourceEvent.value ? { eventId: sourceEvent.value } : {}) });
 }
 
 /** Lock screen / headphones play: also brings back a stream released while the app was in the background. */
@@ -363,8 +370,11 @@ export function preconnect(url: string) {
 /** The server says go: this device has the stream. */
 function onGranted(m: Extract<ServerMsg, { t: 'granted' }>, player: Player) {
   const item = m.item;
-  // stopped meanwhile (play, then stop before the server answered): hand the stream straight back
-  if (!pending) { send({ t: 'stopped', position: 0, duration: 0 }); return; }
+  if (!pending) {
+    if (current.value?.id === item.id) return; // the same thing asked for twice (double-click): already playing it
+    // stopped meanwhile (play, then stop before the server answered): hand the stream straight back
+    send({ t: 'stopped', position: 0, duration: 0 }); return;
+  }
   if (pending.item.id !== item.id) return; // a newer request is in flight
   current.value = item;
   if (pending) mode.value = pending.mode;
@@ -379,7 +389,7 @@ function onGranted(m: Extract<ServerMsg, { t: 'granted' }>, player: Player) {
   }
   position.value = m.startAt;
   if (m.urls[0]) preconnect(m.urls[0]);
-  player.load(m.urls, loadOpts(item, m.startAt, m.tx === 'full')).catch(loadFailed);
+  player.load(m.urls, loadOpts(item, m.startAt, m.tx === 'full')).catch((e) => loadFailed(item.id, e));
 }
 let earlyGrant: Extract<ServerMsg, { t: 'granted' }> | null = null;
 
@@ -401,9 +411,9 @@ onServer((m: ServerMsg) => {
     case 'play':
       // Sent from another device: choose what suits *this* one (versions and sources are ranked per device).
       if (m.eventId) playEvent(m.eventId).catch(() => play(m.item, { mode: 'full' }));
-      else if (parseTitleId(m.item.id) != null) playTitle(parseTitleId(m.item.id)!);
+      else if (m.titleId && parseTitleId(m.titleId) != null) playTitle(parseTitleId(m.titleId)!);
       else play(m.item, { startAt: m.startAt, mode: 'full' });
-      showToast(t('Sent from {name}', { name: deviceName(m.from) }));
+      if (m.from !== 'reminder') showToast(t('Sent from {name}', { name: deviceName(m.from) })); // a reminder shows its own
       return;
     case 'remote': {
       const map: Partial<Record<string, Key>> = { playpause: 'playpause', chup: 'chup', chdown: 'chdown', home: 'back' };
@@ -417,6 +427,7 @@ onServer((m: ServerMsg) => {
     }
     case 'error':
       showToast(m.message);
+      if (status.value === 'requesting') reset(); // refused: stop waiting for a grant
       return;
     case 'reminder': {
       const r = m.reminder;

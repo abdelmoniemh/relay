@@ -35,7 +35,7 @@ export function Live() {
   const paged = usePaged(`live:${cat.id}`, virtual ? null : (o, l) => api.items('live', cat.id, 'default', o, l));
   const count = virtual ? virtual.length : paged.total;
   const get = (i: number): Item | undefined => (virtual ? virtual[i] : paged.get(i));
-  useEffect(() => { numbered.value = { at: get }; return () => { numbered.value = null; }; });
+  useEffect(() => { numbered.value = { at: get, cat: virtual ? undefined : cat.id }; return () => { numbered.value = null; }; });
 
   useEffect(() => { if (cats.data && lastCat === 0 && favList.length === 0) { setCi(2); } }, [cats.data]);
   const firstCat = useRef(true);

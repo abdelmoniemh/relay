@@ -82,7 +82,8 @@ export type ServerMsg =
   // uhd: a 4K stream (measured, or claimed by the name): the TV must switch its player to 4K mode.
   | { t: 'granted'; item: Item; startAt: number; urls: string[]; tx?: 'full' | 'audio'; interlaced?: boolean; uhd?: boolean }
   | { t: 'stop'; reason: 'handoff' | 'remote'; to?: string }
-  | { t: 'play'; item: Item; startAt?: number; from: string; eventId?: string } // asked to start playing (send-to)
+  // asked to start playing (send-to). titleId: a film was sent; item is the version the server picked for this device
+  | { t: 'play'; item: Item; startAt?: number; from: string; eventId?: string; titleId?: string }
   | { t: 'remote'; cmd: RemoteCmd; arg?: number | string; from: string }
   | { t: 'error'; message: string }
   | { t: 'reminder'; reminder: ReminderInfo }; // a reminded programme / event is about to start

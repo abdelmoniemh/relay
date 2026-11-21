@@ -32,5 +32,10 @@ export function tn(n: number, one: string, many: string) {
 /** A language's name in the UI language ('ara' → "Arabic" / "العربية"); the code itself if the browser doesn't know it. */
 export function languageName(code: string): string {
   const c = lang2(code) ?? code;
-  try { return new Intl.DisplayNames([lang.value], { type: 'language' }).of(c) ?? c.toUpperCase(); } catch { return c.toUpperCase(); }
+  try { return new Intl.DisplayNames([lang.value], { type: 'language' }).of(c) ?? c.toUpperCase(); } catch { return t(FALLBACK_NAMES[c] ?? c.toUpperCase()); }
 }
+// The TV's browser (Chromium 63–69) has no Intl.DisplayNames: the languages people actually pick, named here.
+const FALLBACK_NAMES: Record<string, string> = {
+  en: 'English', ar: 'Arabic', fr: 'French', de: 'German', es: 'Spanish', it: 'Italian', pt: 'Portuguese', tr: 'Turkish', hi: 'Hindi', ur: 'Urdu',
+  ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese', nl: 'Dutch', fa: 'Persian', he: 'Hebrew', el: 'Greek', pl: 'Polish', sv: 'Swedish',
+};
