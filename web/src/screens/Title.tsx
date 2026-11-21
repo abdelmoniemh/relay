@@ -6,7 +6,7 @@ import { back, navFocused, compact } from '../router.ts';
 import { play } from '../playback.ts';
 import { useAsync, useKeys } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
-import { ProgBar } from '../ui/common.tsx';
+import { ProgBar, stars, diaryStars } from '../ui/common.tsx';
 import { Btn, IconBtn, Row, Sheet, type Action } from '../ui/kit.tsx';
 import { Icon } from '../ui/Icon.tsx';
 import { fmtTime, img, isTizen } from '../env.ts';
@@ -160,7 +160,7 @@ export function TitleScreen({ tid }: { tid: number }) {
   if (!t) return <div class="title-screen page"><div class="empty">{d.error?.message ?? tr('Not found')}</div></div>;
   const f = (z: Zone) => zone === z && !navFocused.value && panel === 'none' && !compact.value;
   const meta = [t.year, t.runtime ? (t.kind === 'movie' ? `${Math.floor(t.runtime / 60)}h ${t.runtime % 60}m` : tr('{n} min episodes', { n: t.runtime })) : null,
-    t.rating ? `★ ${(t.rating * 2).toFixed(1)}` : null, t.genres.slice(0, 3).join(', ') || null].filter(Boolean);
+    stars(t.rating), t.genres.slice(0, 3).join(', ') || null].filter(Boolean);
   const audio = ver?.probe?.alangs ? langs(ver.probe.alangs) : '';
   const subs = ver?.probe?.slangs ? langs(ver.probe.slangs) : '';
 
@@ -178,7 +178,7 @@ export function TitleScreen({ tid }: { tid: number }) {
             {t.uhd && <span class="badge-inline">4K</span>}
             {t.top250 && <span class="badge-inline imdb">IMDb Top 250 #{t.top250}</span>}
             {t.wl && !t.watched && <span class="badge-inline lb">{tr('On your watchlist')}</span>}
-            {t.watched && <span class="badge-inline lb">{tr('Watched')}{typeof t.watched === 'number' ? ` · ${'★'.repeat(Math.floor(t.watched))}${t.watched % 1 ? '½' : ''}` : ''}</span>}
+            {t.watched && <span class="badge-inline lb">{tr('Watched')}{typeof t.watched === 'number' ? ` · ${diaryStars(t.watched)}` : ''}</span>}
           </div>
           {resumeAt && t.kind === 'movie' && <ProgBar p={resumeAt.p} d={resumeAt.d} />}
           <div class="bb-actions">{buttons.map((b, i) => <Btn key={b.label} a={b} focused={f('buttons') && i === bi} />)}</div>

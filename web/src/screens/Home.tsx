@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'preact/hooks';
+import { stars } from '../ui/common.tsx';
 import type { Item, Progress, SportEvent } from '@shared/protocol.ts';
 import { api, favorites, type TitleDetail } from '../api.ts';
 import { current, play, playEvent } from '../playback.ts';
@@ -119,7 +120,7 @@ export function Home() {
   const kb = !navFocused.value && !compact.value;
   const loading = cont.loading && !cont.data;
   const empty = !loading && !rows.length && !bb;
-  const meta = bb ? [bb.d.year, bb.d.genres.slice(0, 3).join(' · '), bb.d.rating ? `★ ${(bb.d.rating * 2).toFixed(1)}` : null].filter(Boolean).join('  ·  ') : '';
+  const meta = bb ? [bb.d.year, bb.d.genres.slice(0, 3).join(' · '), stars(bb.d.rating)].filter(Boolean).join('  ·  ') : '';
 
   return (
     <div class="home page">

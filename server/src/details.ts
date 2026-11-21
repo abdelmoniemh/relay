@@ -25,7 +25,7 @@ export class ProviderDetails {
     const v: MovieInfo = {
       plot: i.plot || i.description || null, genre: i.genre || null, year: i.releasedate?.slice(0, 4) || i.year || null,
       duration: Number(i.duration_secs) || null, backdrop: i.backdrop_path?.[0] || null, cast: i.cast || i.actors || null,
-      director: i.director || null, rating: Number(i.rating) || null, trailer: i.youtube_trailer || null,
+      director: i.director || null, rating: Number(i.rating_5based) || (Number(i.rating) ? Number(i.rating) / 2 : null), // out of 5, like every rating trailer: i.youtube_trailer || null,
     };
     if (this.movies.size > 2000) this.movies.clear();
     this.movies.set(sid, { at: Date.now(), v });

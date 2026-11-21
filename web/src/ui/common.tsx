@@ -24,3 +24,8 @@ export function NowLine({ list }: { list?: Programme[] }) {
     </div>
   );
 }
+
+/** Ratings are stored out of 5 and shown out of 10, like TMDB and IMDb. */
+export const stars = (r?: number | null) => (r ? `★ ${(r * 2).toFixed(1)}` : null);
+/** Your own Letterboxd rating (0.5–5): ★★★½. */
+export const diaryStars = (n: number) => `${'★'.repeat(Math.floor(n))}${n % 1 ? '½' : ''}`;

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { stars, diaryStars } from '../ui/common.tsx';
 import { api, type BrowseRow, type TitleCard } from '../api.ts';
 import { push, go, back, navFocused, compact } from '../router.ts';
 import { play } from '../playback.ts';
@@ -14,7 +15,7 @@ const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize
 export const openTitle = (tid: number) => push({ name: 'title', tid });
 
 export function Card({ c, focused, onClick }: { c: TitleCard; focused: boolean; onClick?: () => void; size?: 'md' | 'lg' }) {
-  const sub = [c.progress?.label, c.year, c.rating ? `★ ${(c.rating * 2).toFixed(1)}` : null].filter(Boolean).join(' · ');
+  const sub = [c.progress?.label, c.year, stars(c.rating)].filter(Boolean).join(' · ');
   return (
     <PosterTile src={c.poster} title={c.name} sub={sub} focused={focused} onClick={onClick}
       progress={c.progress && c.progress.duration > 0 ? c.progress.position / c.progress.duration : undefined}
@@ -22,7 +23,7 @@ export function Card({ c, focused, onClick }: { c: TitleCard; focused: boolean; 
         {c.uhd && <span class="badge-4k">4K</span>}
         {c.fresh && c.wl && <span class="badge-new">{t('NEW')}</span>}
         {c.wl && !c.watched && <span class="badge-wl" title={t('On your Letterboxd watchlist')} />}
-        {c.watched ? <span class="badge-seen"><Icon n="check" />{typeof c.watched === 'number' ? ` ${'★'.repeat(Math.floor(c.watched))}${c.watched % 1 ? '½' : ''}` : ''}</span> : null}
+        {c.watched ? <span class="badge-seen"><Icon n="check" />{typeof c.watched === 'number' ? ` ${diaryStars(c.watched)}` : ''}</span> : null}
       </>} />
   );
 }
@@ -82,7 +83,7 @@ export function Browse({ kind }: { kind: 'movie' | 'series' }) {
   });
 
   const kb = !navFocused.value && !compact.value;
-  const meta = bb ? [bb.year, bb.genres.slice(0, 3).join(' · '), bb.rating ? `★ ${(bb.rating * 2).toFixed(1)}` : null, bb.uhd ? '4K' : null].filter(Boolean).join('  ·  ') : '';
+  const meta = bb ? [bb.year, bb.genres.slice(0, 3).join(' · '), stars(bb.rating), bb.uhd ? '4K' : null].filter(Boolean).join('  ·  ') : '';
   return (
     <div class="browse page">
       <div class="browse-head">

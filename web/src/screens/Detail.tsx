@@ -5,7 +5,7 @@ import { back, navFocused } from '../router.ts';
 import { play } from '../playback.ts';
 import { useAsync, useKeys } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
-import { ProgBar } from '../ui/common.tsx';
+import { ProgBar, stars } from '../ui/common.tsx';
 import { displayName, isFinished, isResumable } from '@shared/domain.ts';
 import { fmtTime, img } from '../env.ts';
 import { Btn, IconBtn, type Action } from '../ui/kit.tsx';
@@ -47,7 +47,7 @@ export function MovieDetail({ item }: { item: Item }) {
         <div class="txt">
           <IconBtn n="back" label={t('Back')} onClick={() => back()} />
           <h1>{displayName(item.name)}</h1>
-          <div class="facts muted">{[i?.year, i?.genre, i?.duration ? fmtTime(i.duration) : null, (i?.rating ?? item.rating) ? `★ ${(i?.rating ?? item.rating)!.toFixed(1)}` : null].filter(Boolean).join(' · ')}</div>
+          <div class="facts muted">{[i?.year, i?.genre, i?.duration ? fmtTime(i.duration) : null, stars(i?.rating ?? item.rating)].filter(Boolean).join(' · ')}</div>
           {resumable && <ProgBar p={p} d={d} />}
           <div class="bb-actions">{buttons.map((b, n) => <Btn key={b.label} a={b} focused={n === bi && !navFocused.value} />)}</div>
           {i?.plot && <p class="plot">{i.plot}</p>}
@@ -111,7 +111,7 @@ export function SeriesDetail({ item }: { item: Item }) {
         <div class="txt">
           <IconBtn n="back" label={t('Back')} onClick={() => back()} />
           <h1>{displayName(d?.name || item.name)}</h1>
-          <div class="facts muted">{[d?.year, d?.genre, d?.rating ? `★ ${d.rating.toFixed(1)}` : null].filter(Boolean).join(' · ')}</div>
+          <div class="facts muted">{[d?.year, d?.genre, stars(d?.rating)].filter(Boolean).join(' · ')}</div>
           {d?.plot && <p class="plot clamp">{d.plot}</p>}
         </div>
       </div>

@@ -3,7 +3,7 @@ import type { Item } from '@shared/protocol.ts';
 import { api, favorites, type TitleCard } from '../api.ts';
 import { navFocused } from '../router.ts';
 import { useAsync, useDebounced, useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
-import { Logo, NowLine } from '../ui/common.tsx';
+import { Logo, NowLine, stars } from '../ui/common.tsx';
 import { displayName, titleId } from '@shared/domain.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { img, isTizen } from '../env.ts';
@@ -93,7 +93,7 @@ export function Search({ onPick, autoFocus = true }: { onPick?: (it: Item) => vo
                       : it.icon ? <img class="thumb-poster" src={img(it.icon, 92)} loading="lazy" alt="" /> : <span class="thumb-poster ph">{it.name.slice(0, 1)}</span>}
                     <span class="lr-main">
                       <b>{displayName(it.name)}{favorites.value.has(it.id) && <Icon n="star" filled class="fav-mark" />}</b>
-                      {it.kind === 'live' ? <NowLine list={nowNext(it.epg)} /> : <span class="lr-sub">{it.rating ? `★ ${(it.rating * 2).toFixed(1)}` : ''}</span>}
+                      {it.kind === 'live' ? <NowLine list={nowNext(it.epg)} /> : <span class="lr-sub">{stars(it.rating) ?? ''}</span>}
                     </span>
                     <Icon n="chevron" class="lr-chev" />
                   </div>

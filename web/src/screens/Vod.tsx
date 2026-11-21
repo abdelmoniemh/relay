@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { stars } from '../ui/common.tsx';
 import type { Category, Item } from '@shared/protocol.ts';
 import { api, favorites, toggleFavorite, type Sort } from '../api.ts';
 import { back, navFocused } from '../router.ts';
@@ -89,7 +90,7 @@ export function Vod({ kind }: { kind: 'movie' | 'series' }) {
         <VList count={count} rowH={rowH} cols={cols} focus={zone === 'grid' ? fi : -1} onRange={(s, e) => paged.ensure(s, e)} render={(i, f) => {
           const it = get(i);
           if (!it) return <div class="tile poster skel" />;
-          return <PosterTile src={it.icon} title={displayName(it.name)} sub={it.rating ? `★ ${it.rating.toFixed(1)}` : undefined} focused={f}
+          return <PosterTile src={it.icon} title={displayName(it.name)} sub={stars(it.rating) ?? undefined} focused={f}
             onClick={() => { setZone('grid'); setFi(i); open(it); }} />;
         }} />
       </div>

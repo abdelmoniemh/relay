@@ -10,7 +10,7 @@ export interface Item {
   name: string;
   icon?: string | null;
   cat?: string | null;
-  rating?: number | null;
+  rating?: number | null; // out of 5 (shown out of 10)
   epg?: string | null; // epg channel id (live)
   archive?: number; // catch-up days (live)
   ext?: string | null; // container extension (vod/episode)
