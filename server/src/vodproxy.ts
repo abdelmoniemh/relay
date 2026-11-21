@@ -36,8 +36,6 @@ export class VodProxy {
   private titles = new Map<string, Title>();
   private port = 0;
   private ready: Promise<void>;
-  /** For tests/logs: provider requests made, cache hits served. */
-  stats = { upstream: 0, hits: 0 };
 
   private log: (m: string) => void;
 
@@ -72,7 +70,6 @@ export class VodProxy {
 
     const hit = t.size != null ? t.chunks.find((c) => off >= c.start && off < c.start + c.buf.length) : undefined;
     if (hit) {
-      this.stats.hits++;
       const part = hit.buf.subarray(off - hit.start);
       res.writeHead(206, {
         'content-type': 'application/octet-stream', 'accept-ranges': 'bytes', 'content-length': part.length,
@@ -128,13 +125,11 @@ export class VodProxy {
   private async fetchUpstream(t: Title, off: number, signal: AbortSignal): Promise<Response> {
     const headers = { 'user-agent': UA, range: `bytes=${off}-` };
     if (t.loc) {
-      this.stats.upstream++;
       const r = await fetch(t.loc, { headers, signal }).catch(() => null);
       if (r && (r.status === 200 || r.status === 206)) return r;
       await r?.body?.cancel().catch(() => {});
       t.loc = null; // expired: resolve the redirect again
     }
-    this.stats.upstream++;
     const r = await fetch(t.src, { headers, signal });
     if (r.url && r.url !== t.src) t.loc = r.url;
     return r;
