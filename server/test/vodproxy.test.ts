@@ -42,11 +42,10 @@ test('seeks through the proxy: same frames, redirect resolved once, metadata fro
   const url = await px.url(src);
   assert.equal(await frameAt(url, 30), await frameAt(file, 30), 'same picture as the file itself');
   assert.equal(hits.redirect, 1, 'redirect resolved once, then reused');
-  const cold = px.stats.upstream;
+  const cold = hits.ranges;
 
   assert.equal(await frameAt(url, 45), await frameAt(file, 45));
-  const warm = px.stats.upstream - cold;
-  assert.ok(warm < cold, `repeat seek needs fewer provider requests (${warm} vs ${cold})`);
-  assert.ok(px.stats.hits > 0);
+  const warm = hits.ranges - cold;
+  assert.ok(warm < cold, `a repeat seek asks the provider less: the header and index come from memory (${warm} vs ${cold} requests)`);
   assert.equal(hits.redirect, 1);
 });

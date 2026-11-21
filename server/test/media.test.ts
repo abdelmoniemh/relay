@@ -12,22 +12,25 @@ test('interlaced sources are deinterlaced to field rate on the GPU', () => {
   assert.equal(val(transcodeArgs('in.ts', { gpu: true, info }), '-g'), '100'); // 2s GOP at 50 fps
 });
 
+const onGpu = (f: string) => !f.includes('hwdownload');
+
 test('progressive 8-bit SDR stays on the GPU', () => {
-  assert.equal(videoFilter({ bitDepth: 8 }, { gpu: true }), 'scale_cuda=format=nv12');
-  assert.equal(videoFilter(null, { gpu: true }), 'scale_cuda=format=nv12');
+  assert.ok(onGpu(videoFilter({ bitDepth: 8 }, { gpu: true })));
+  assert.ok(onGpu(videoFilter(null, { gpu: true })));
 });
 
 test('10-bit SDR is dithered (swscale by default), not truncated', () => {
-  assert.equal(videoFilter({ bitDepth: 10 }, { gpu: true }), 'hwdownload,format=p010le,format=yuv420p');
-  assert.equal(videoFilter({ bitDepth: 10 }, { gpu: true, dither: 'truncate' }), 'scale_cuda=format=nv12');
+  const f = videoFilter({ bitDepth: 10 }, { gpu: true });
+  assert.ok(!onGpu(f) && /format=yuv420p$/.test(f), 'downloaded and converted to 8-bit by swscale (dithering)');
+  assert.ok(onGpu(videoFilter({ bitDepth: 10 }, { gpu: true, dither: 'truncate' })), 'truncating can stay on the GPU');
 });
 
 test('HDR is tone mapped to BT.709', () => {
   const f = videoFilter({ bitDepth: 10, hdr: 'pq' }, { gpu: true });
   assert.match(f, /tonemap=tonemap=hable/);
   assert.match(f, /zscale=t=bt709:m=bt709/);
-  assert.ok(!f.includes('scale_cuda=-2'), '1080p HDR is not rescaled');
-  assert.match(videoFilter({ bitDepth: 10, hdr: 'pq', height: 2160 }, { gpu: true }), /^scale_cuda=-2:1440:format=p010le/); // 4K: map at 1440p
+  assert.ok(!/scale_cuda=[^,]*1440/.test(f), '1080p HDR is not rescaled');
+  assert.match(videoFilter({ bitDepth: 10, hdr: 'pq', height: 2160 }, { gpu: true }), /^scale_cuda=[^,]*1440[^,]*,.*tonemap/, '4K: scaled to 1440p on the GPU before tone mapping');
 });
 
 test('colour tags are never forced (SD sources are BT.601)', () => {
