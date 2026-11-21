@@ -29,9 +29,8 @@ export class Library {
 
   private lb: Letterboxd;
   private wlCache: { at: number; tids: number[]; missing: { name: string; year: number | null }[]; total: number } | null = null;
-  /** Provider per-film info (plot, cast, genre...) — used when TMDB has nothing yet. */
-
   private userData: UserData;
+  /** Provider per-film info (plot, cast, genre...) — used when TMDB has nothing yet. */
   private details: ProviderDetails;
 
   constructor(db: DatabaseSync, tmdb: Tmdb, userData: UserData, details: ProviderDetails, lb: Letterboxd) {
@@ -42,8 +41,6 @@ export class Library {
   get mask() { return this.langs.reduce((m, l) => m | (LANG_BITS[l as keyof typeof LANG_BITS] ?? 0), 0) || 1; }
   setLangs(langs: string[]) { this.langs = langs.filter((l) => l in LANG_BITS); kvSet(this.db, 'vod_langs', JSON.stringify(this.langs)); this.invalidate(); }
   invalidate() { this.rowCache.clear(); this.wlCache = null; }
-
-  // ---------------- Letterboxd watchlist ----------------
 
   /** Watchlist films that are available here, in Letterboxd order (+ the ones that aren't). */
   private watchlistResolved() {

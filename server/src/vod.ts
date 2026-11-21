@@ -42,7 +42,6 @@ export function cleanTitle(rest: string): { name: string; year: number | null; r
   return { name: s, year, rank };
 }
 
-/** Classify one provider copy from its name and category name. */
 export function classify(rawName: string, categoryName = ''): Version {
   const { tokens, rest } = splitPrefix(rawName);
   const cat = categoryName.normalize('NFKC').toUpperCase();

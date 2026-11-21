@@ -215,7 +215,6 @@ interface SampleInfo {
   bitDepth: number | null; hdr: 'pq' | 'hlg' | null; fieldOrder: string | null; channels: number | null;
 }
 
-/** SourceInfo the transcoder can use, from a probe row. */
 export function probeToSource(p: Probe | undefined | null): SourceInfo | null {
   if (!p || !p.ok) return null;
   return { vcodec: p.vcodec, width: p.width, height: p.height, fps: p.fps, interlaced: p.interlaced == null ? null : !!p.interlaced,

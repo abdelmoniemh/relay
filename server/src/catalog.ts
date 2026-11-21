@@ -20,7 +20,6 @@ export function toItem(r: Row): Item {
 
 const ORDER: Record<Sort, string> = { default: 'sort', added: 'added DESC', name: 'name COLLATE NOCASE', rating: 'rating DESC NULLS LAST' };
 
-/** All catalog reads go through prepared statements cached here. */
 export class Catalog {
   private db: DatabaseSync;
   private stmts = new Map<string, StatementSync>();
@@ -35,7 +34,6 @@ export class Catalog {
     this.refresh();
   }
 
-  /** After a sync: new version. */
   refresh() { this.version = `${syncedAt(this.db, 'catalog')}.${syncedAt(this.db, 'live')}.${syncedAt(this.db, 'epg')}.${this.regions.join('')}`; }
 
   setRegions(list: string[]) {
@@ -99,7 +97,6 @@ export class Catalog {
     return rows.map(toItem);
   }
 
-  /** Now + next programme for many channels in one query. */
   nowNext(chs: string[], now = Math.floor(Date.now() / 1000)): Record<string, Programme[]> {
     const out: Record<string, Programme[]> = {};
     const q = this.st(`SELECT start, stop, title, descr AS desc FROM epg WHERE ch = ? AND stop > ? ORDER BY start LIMIT 2`);
@@ -128,7 +125,6 @@ export class Catalog {
     return rows.map((x) => ({ item: toItem(x), fam: x.fam }));
   }
 
-  /** Can this item be played? Live/movies must be in the catalog; episodes must belong to a known series. */
   playable(item: { id: string; kind: string; seriesId?: string | null }): boolean {
     if (item.kind === 'live' || item.kind === 'movie') return this.get(item.id) !== null;
     if (item.kind === 'episode') return !item.seriesId || this.get(item.seriesId) !== null;

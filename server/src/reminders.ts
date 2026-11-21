@@ -45,7 +45,6 @@ export class Reminders {
     this.vapid = this.loadVapid();
   }
 
-  // ---- reminders ----
   list(): Reminder[] {
     const now = Date.now() / 1000;
     return (this.db.prepare('SELECT json, fired FROM reminders WHERE start > ? ORDER BY start').all(now - 6 * 3600) as { json: string; fired: number | null }[])

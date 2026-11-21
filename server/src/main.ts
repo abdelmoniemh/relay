@@ -98,7 +98,7 @@ const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transpor
 await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);
-/** A sync finished or the regions changed: new catalog version, rebuilt events and library rows, new titles to enrich. */
+/** A sync finished or the regions changed. */
 function catalogChanged() { catalog.refresh(); events.invalidate(); library.invalidate(); tmdbTick(); }
 registerApi(app, { catalogChanged, db, userData, details, catalog, auth, hub, provider, transcoder, facts, events, prober, tmdb, library, tmdbTick, letterboxd, lbTick, reminders, vodProxy, trackStore, prefetcher });
 // Reminders: every open app shows it; an "auto-start" device starts playing; installed apps get a notification.

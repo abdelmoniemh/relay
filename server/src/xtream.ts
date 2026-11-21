@@ -23,7 +23,6 @@ export class Provider {
     this.timezone = timezone;
   }
 
-  // ---- API ----
   api(action?: string, extra: Record<string, string> = {}) {
     const q = new URLSearchParams({ username: this.creds.user, password: this.creds.pass, ...(action ? { action } : {}), ...extra });
     return `${this.creds.base}/player_api.php?${q}`;

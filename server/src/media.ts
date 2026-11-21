@@ -99,8 +99,8 @@ export function videoFilter(info: SourceInfo | null | undefined, o: Pick<TxOpts,
   const fit = (f: 'scale' | 'scale_cuda', extra = '') => `${f}=w=-2:h='min(ih,${maxH})'${extra}`;
   const deint = info?.interlaced ? (o.deintFrame ? 'send_frame' : 'send_field') : null;
   const dither = o.dither ?? 'swscale'; // bench: CAMBI 5.8 vs 8.6 (error diffusion) at 1/3 the bitrate
-  // HDR -> SDR BT.709: linearise, map primaries, tone map (hable keeps highlight detail), back to 8-bit with error diffusion.
-  // (ordered dither: error diffusion is serial and halves the speed; bench shows no banding advantage after encoding)
+  // HDR -> SDR BT.709, tone mapped with hable (keeps highlight detail). Ordered dither, not error diffusion: that is
+  // serial and halves the speed, and the bench shows no banding advantage after encoding.
   const tonemap = 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,'
     + 'zscale=t=bt709:m=bt709:r=tv:dither=ordered,format=yuv420p';
   // CPU tone mapping can't keep up with 4K (0.6x real time on 16 cores): map at 1440p, scaled down on the GPU first (1.4x).
@@ -122,7 +122,6 @@ export function videoFilter(info: SourceInfo | null | undefined, o: Pick<TxOpts,
   return parts.join(',');
 }
 
-/** Audio: keep AAC untouched; otherwise AAC with the source's channel layout (up to 5.1). */
 export function audioArgs(info: SourceInfo | null | undefined, vod: boolean): string[] {
   if (info?.acodec === 'aac') return ['-c:a', 'copy'];
   const ch = Math.min(6, Math.max(1, info?.channels ?? 2));
@@ -174,7 +173,6 @@ export interface InputOpts {
   bench?: boolean;
 }
 
-/** Everything up to and including the input (plus the output-side skip). */
 export function inputArgs(src: string, o: InputOpts): string[] {
   const net = !o.bench && /^https?:/.test(src);
   const skip = o.skip && o.skip > 0 ? o.skip : 0;

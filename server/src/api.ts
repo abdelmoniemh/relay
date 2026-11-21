@@ -1,4 +1,3 @@
-// HTTP API: authenticates every request, then each feature registers its own routes.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Services } from './routes/http.ts';
 import { registerSystemRoutes } from './routes/system.ts';

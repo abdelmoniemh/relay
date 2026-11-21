@@ -35,7 +35,6 @@ export class Hub {
   private online(id: string) { return (this.clients.get(id)?.size ?? 0) > 0; }
 
   getLease() { return this.lease; }
-  /** Is any device actually holding a stream open right now? */
   streamActive() { return !!this.lease && this.online(this.lease.deviceId); }
 
   connect(deviceId: string, send: Send) {
@@ -54,7 +53,6 @@ export class Hub {
     };
   }
 
-  /** Message every connected device (e.g. a reminder). */
   broadcast(m: ServerMsg) { for (const sends of this.clients.values()) for (const send of sends) send(m); }
   /** Ask a device to start playing something (like "send to"); false if it's offline. */
   sendPlay(target: string, item: Item, from: string, eventId?: string | null): boolean {

@@ -30,7 +30,6 @@ export class Tmdb {
     this.getKey = () => envKey || kvGet(db, 'tmdb_key');
   }
 
-  /** Titles still to fetch (or re-fetch) for these languages. */
   pending(langMask: number) { return (this.db.prepare(`SELECT count(*) AS n FROM titles WHERE ${TODO}`).get(staleBefore(), langMask) as { n: number }).n; }
 
   /** Save (or with '' remove) the Settings key. */
@@ -85,7 +84,6 @@ export class Tmdb {
     }
   }
 
-  /** TMDB ids of a list (first 3 pages). */
   list(kind: string, which: 'trending' | 'popular' | 'now_playing'): Promise<number[]> {
     const pages = 3;
     const t = tk(kind);
@@ -118,7 +116,6 @@ export class Tmdb {
     });
   }
 
-  /** Fetch details for one title and store them on the titles row. */
   async enrich(tid: number, kind: string, id: number) {
     const t = tk(kind);
     const d = await this.get<any>(`/${t}/${id}`, { append_to_response: 'credits,videos' });

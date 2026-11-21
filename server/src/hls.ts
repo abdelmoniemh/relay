@@ -31,9 +31,7 @@ export function sessionFiles(layout: VodLayout | null) {
     playlistPattern: layout ? 'idx_%v.m3u8' : 'index.m3u8',
     streamMap: layout ? [layout.audio.length ? 'v:0,agroup:aud,name:v' : 'v:0,name:v', ...layout.audio.map((_, i) => `a:${i},agroup:aud,name:a${i}${i === 0 ? ',default:yes' : ''}`)] : null,
     subVtt: (n: number) => `sub_${n}.vtt`,
-    /** All segment files for segment number k (one per variant). */
     segments: (k: number) => { const s = String(k).padStart(5, '0'); return variants ? variants.map((v) => `seg_${v}_${s}.m4s`) : [`seg${s}.m4s`]; },
-    /** The video segment number of a file name, or null. */
     videoSegment: (name: string) => { const m = (layout ? /^seg_v_(\d+)\.m4s$/ : /^seg(\d+)\.m4s$/).exec(name); return m ? Number(m[1]) : null; },
   };
 }
@@ -44,7 +42,6 @@ export const isSessionFile = (name: string) => /^((index|master|idx_(v|a\d+))\.m
 // Subtitle playlists and segments are built by the API, not written by ffmpeg.
 export const subPlaylistName = (n: number) => `sub_${n}.m3u8`;
 export const subSegmentName = (n: number, k: number) => `sub_${n}_${k}.vtt`;
-/** sub_<n>.m3u8 or sub_<n>_<k>.vtt */
 export function parseSubName(name: string): { n: number; k: number | null } | null {
   const m = /^sub_(\d+)(?:_(\d+)\.vtt|\.m3u8)$/.exec(name);
   return m ? { n: Number(m[1]), k: m[2] != null ? Number(m[2]) : null } : null;

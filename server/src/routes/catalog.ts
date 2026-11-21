@@ -6,7 +6,6 @@ import { type ApiCtx, KINDS, clamp } from './http.ts';
 
 export function registerCatalogRoutes(app: FastifyInstance, ctx: ApiCtx) {
   const { catalog, events, prober, cached } = ctx;
-  // ---- catalog ----
   app.get('/api/categories/:kind', async (req, reply) => {
     const kind = (req.params as any).kind as Kind;
     if (!KINDS.has(kind)) return reply.code(400).send({ error: 'bad kind' });
@@ -48,7 +47,6 @@ export function registerCatalogRoutes(app: FastifyInstance, ctx: ApiCtx) {
     return catalog.guide(String(q.ch ?? '').split(',').filter(Boolean).slice(0, 200), from, Math.min(to, from + 2 * 86400));
   });
 
-  // Movie details (plot, duration, backdrop) — fetched lazily from the provider, memoized.
   // ---- sports events & sources ----
   const hevcOk = (q: Record<string, string>) => q.hevc === '1';
   app.get('/api/regions', async () => ({ enabled: catalog.regions, all: catalog.regionList() }));

@@ -25,7 +25,6 @@ export class UserData {
     };
   }
 
-  // ---- favourites ----
   favorites(): Item[] { return (this.st.favs.all() as { json: string }[]).map((r) => JSON.parse(r.json)); }
   addFavorite(item: Item) { this.st.favPut.run(item.id, JSON.stringify(item), Date.now()); }
   removeFavorite(id: string) { this.st.favDel.run(id); }

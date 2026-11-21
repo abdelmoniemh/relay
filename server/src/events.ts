@@ -97,7 +97,7 @@ export class EventsIndex {
         const localHour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(new Date(now * 1000)));
         if (localHour < 7 && start > now + 6 * 3600) start -= 86400;
       }
-      if (start != null && (start < now - 4 * 3600 || start > now + 7 * 86400)) continue; // stale or far-future listing
+      if (start != null && (start < now - 4 * 3600 || start > now + 7 * 86400)) continue;
       airings.push({
         key: matchKey(m), home: m.home, away: m.away, competition: m.competition ?? cleanCat(r.catname),
         sport: sportOf(m.competition, r.catname, r.name), start, stop: start ? start + FOOTBALL_MINUTES * 60 : null, live: false,
@@ -119,7 +119,7 @@ export class EventsIndex {
       if (!main.length) continue;
       const start = first;
       const stop = main.reduce<number | null>((s, a) => (a.stop != null && (s == null || a.stop > s) ? a.stop : s), null);
-      if (stop != null && stop < now) continue; // finished
+      if (stop != null && stop < now) continue;
       const sids = new Set<number>();
       for (const a of main) { a.sids.forEach((s) => sids.add(s)); a.famIds.forEach((f) => fams.get(f)?.forEach((m) => sids.add(m.sid))); }
       if (!sids.size) continue;

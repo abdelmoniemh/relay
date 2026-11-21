@@ -5,7 +5,6 @@ import { type ApiCtx } from './http.ts';
 
 export function registerRemindersRoutes(app: FastifyInstance, ctx: ApiCtx) {
   const { db, catalog, reminders } = ctx;
-  // ---- reminders & notifications ----
   app.get('/api/reminders', async () => reminders.list());
   app.post('/api/reminders', async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, any>;

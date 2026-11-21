@@ -24,7 +24,6 @@ export class ProviderSlot {
   hold(h: Holder) { this.holders.push(h); }
   work(w: Worker) { this.workers.push(w); }
 
-  /** May this background worker use the connection now? */
   mayRun(w: Worker) { return !this.holders.some((h) => h.active()) && !this.workers.some((o) => o !== w && o.busy); }
 
   /** A foreground use is starting: stop background work; resolves once its connection is closed (and let go). */

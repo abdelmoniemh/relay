@@ -19,10 +19,8 @@ import { join } from 'node:path';
 const HLS_ROOT = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'relay-hls');
 /** Segments (4s each, so ≈20 min) kept behind the newest one the player asked for; seeking further back restarts. */
 const HLS_KEEP_BEHIND = 300;
-/** How each source video codec goes into HLS for Safari. */
 /** No playlist/segment request for this long (app closed, phone locked): free the provider connection. */
 const HLS_IDLE_MS = 45_000;
-/** What an HLS session should play. */
 export interface HlsStart {
   src: string;
   /** Movies: position to start at (seconds). */
@@ -57,7 +55,6 @@ export class Transcoder {
   readonly available: boolean;
   readonly gpu: boolean;
   private current: Proc | null = null;
-  /** Device the running transcode belongs to. */
   owner: string | null = null;
   private slot: ProviderSlot;
   /** Starts and probes in progress: the connection counts as taken before ffmpeg even runs. */
