@@ -43,7 +43,7 @@ export const LIVE: EncoderProfile = {
   cq: 19, maxrateM: 30, gopSec: 2, x264Preset: 'faster', crf: 19,
 };
 /** Data saver (away from home / mobile data): 720p at ~3 Mbps. */
-export const MOBILE: EncoderProfile = {
+const MOBILE: EncoderProfile = {
   name: 'mobile', preset: 'p4', tune: 'hq', bf: 2, bref: 'middle', lookahead: 16, aq: true, multipass: 'disabled',
   cq: 27, maxrateM: 3, gopSec: 2, x264Preset: 'veryfast', crf: 26,
 };
@@ -80,9 +80,9 @@ export interface TxOpts {
 import { USER_AGENT as UA } from './xtream.ts';
 
 /** Tallest picture we tone map in real time (see videoFilter). */
-export const HDR_MAX_H = 1440;
+const HDR_MAX_H = 1440;
 
-export const isHdr = (i?: SourceInfo | null) => i?.hdr === 'pq' || i?.hdr === 'hlg';
+const isHdr = (i?: SourceInfo | null) => i?.hdr === 'pq' || i?.hdr === 'hlg';
 const is10 = (i?: SourceInfo | null) => (i?.bitDepth ?? 8) > 8;
 
 /** Output frame rate after deinterlacing (bwdif send_field doubles it). */
@@ -135,7 +135,7 @@ export function audioArgs(info: SourceInfo | null | undefined, vod: boolean): st
 // Colour tags: the source's own tags pass through (SD channels are BT.601, HD BT.709); tone-mapped frames carry
 // BT.709 from zscale. Never force them: output -colorspace options also make ffmpeg insert a CPU scaler that
 // can't take GPU frames.
-export function encoderArgs(p: EncoderProfile, gpu: boolean, fps: number): string[] {
+function encoderArgs(p: EncoderProfile, gpu: boolean, fps: number): string[] {
   const g = String(Math.max(1, Math.round(fps * p.gopSec)));
   if (gpu) {
     return [
@@ -155,7 +155,7 @@ export function encoderArgs(p: EncoderProfile, gpu: boolean, fps: number): strin
 }
 
 /** Movies: read this many seconds ahead before settling to real time (fills the player's buffer fast). */
-export const HEAD_START_S = 45;
+const HEAD_START_S = 45;
 
 /** Copy the video as it is (browsers/Safari decode H.264 and HEVC), or encode it. Data saver always encodes. */
 export type VideoPlan = 'copy' | 'encode';
@@ -194,7 +194,7 @@ export function inputArgs(src: string, o: InputOpts): string[] {
 
 /** Video options for the plan. `container` matters for copied HEVC: MP4/fMP4 (Safari) needs Apple's hvc1 tag. */
 /** The encoder profile: data saver (a height cap) is the mobile profile; else movies vs live. */
-export const profileFor = (o: Pick<TxOpts, 'profile' | 'maxHeight' | 'vod'>) => o.profile ?? (o.maxHeight ? MOBILE : o.vod ? VOD : LIVE);
+const profileFor = (o: Pick<TxOpts, 'profile' | 'maxHeight' | 'vod'>) => o.profile ?? (o.maxHeight ? MOBILE : o.vod ? VOD : LIVE);
 /** Live audio: absorb the provider's timestamp gaps. */
 export const LIVE_AUDIO_FILTER = ['-af', 'aresample=async=1:first_pts=0'];
 

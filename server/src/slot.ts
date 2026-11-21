@@ -31,13 +31,13 @@ export class ProviderSlot {
   /** The worker that had the last turn: workers take turns, one job each, so none starves the other. */
   private last: Worker | null = null;
 
+  /** May `w` start a job now? (Only asks: call takeTurn() when it does start one.) */
   mayRun(w: Worker) {
     if (this.claims || this.holders.some((h) => h.active()) || this.workers.some((o) => o !== w && o.busy)) return false;
-    const waiting = this.workers.filter((o) => o !== w && o.wants());
-    if (this.last === w && waiting.length) { this.last = null; setTimeout(() => waiting.forEach((o) => o.kick()), 0); return false; }
-    this.last = w;
-    return true;
+    return !(this.last === w && this.workers.some((o) => o !== w && o.wants()));
   }
+  /** `w` starts a job. When it's done, it calls released() so a waiting worker gets its turn. */
+  takeTurn(w: Worker) { this.last = w; }
 
   /** Keep background work out until the returned function is called (e.g. while a device is being granted). */
   claim(): () => void {

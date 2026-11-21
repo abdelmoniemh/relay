@@ -12,7 +12,7 @@ export interface Tracks {
 }
 
 /** HDR format of a video stream: Dolby Vision is in its side data, HDR10 / HLG in its transfer. */
-export function hdrOf(s: any): 'dv' | 'hdr10' | 'hlg' | 'sdr' {
+function hdrOf(s: any): 'dv' | 'hdr10' | 'hlg' | 'sdr' {
   if ((s.side_data_list ?? []).some((d: any) => /DOVI|Dolby Vision/i.test(d.side_data_type ?? ''))) return 'dv';
   if (s.color_transfer === 'smpte2084') return 'hdr10';
   if (s.color_transfer === 'arib-std-b67') return 'hlg';
@@ -68,11 +68,11 @@ export function parseTracks(json: string): Tracks {
 }
 
 /** Reads the track list (only the start of the file is needed: through the VOD proxy this is usually from memory). */
-export function probeTracks(url: string, timeoutMs = 12_000): Promise<Tracks> {
+export function probeTracks(url: string, timeoutMs = 12_000, signal?: AbortSignal): Promise<Tracks> {
   return new Promise((resolve, reject) => {
     execFile('ffprobe', ['-v', 'error', '-user_agent', USER_AGENT, '-probesize', '2M', '-analyzeduration', '0',
       '-show_chapters', '-show_entries', 'format=duration:stream=index,codec_type,codec_name,channels,width,height,color_transfer,side_data_list:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,attached_pic',
-      '-of', 'json', url], { timeout: timeoutMs, maxBuffer: 4 << 20 }, (err, out) => {
+      '-of', 'json', url], { timeout: timeoutMs, maxBuffer: 4 << 20, signal, killSignal: 'SIGKILL' }, (err, out) => {
       if (err) return reject(err);
       try { resolve(parseTracks(out)); } catch (e) { reject(e); }
     });
@@ -94,9 +94,10 @@ export class TrackStore {
     this.save = save; this.onProbed = onProbed;
   }
   /** Known, and read with chapters/duration (older entries were not). */
-  get(id: string): Tracks | undefined { const t = this.cache.get(id); return t && t.chapters ? t : undefined; }
-  async probe(id: string, url: string): Promise<Tracks> {
-    const t = await probeTracks(url);
+  // Entries from before the picture size was read count as unknown, so they're read again.
+  get(id: string): Tracks | undefined { const t = this.cache.get(id); return t && t.chapters && t.video !== undefined ? t : undefined; }
+  async probe(id: string, url: string, signal?: AbortSignal): Promise<Tracks> {
+    const t = await probeTracks(url, undefined, signal);
     this.cache.set(id, t);
     this.save([...this.cache].slice(-3000));
     this.onProbed(id, t);

@@ -2,7 +2,7 @@
 // (The installed TV app sends exactly these names: change them only together with a TV rebuild.)
 import type { MediaTrackInfo } from './protocol.ts';
 
-export type StreamKind = 'transcode' | 'hls' | 'catchup';
+type StreamKind = 'transcode' | 'hls' | 'catchup';
 const PATH: Record<StreamKind, (id: string) => string> = {
   transcode: (id) => `/api/transcode/${id}.ts`, // MPEG-TS for desktop browsers (mpegts.js)
   hls: (id) => `/api/hls/${id}`,                // POST: starts an HLS session (iPhone/iPad)

@@ -10,7 +10,7 @@ import type { ProviderSlot, Worker } from './slot.ts';
 import { isVodId } from '../../shared/domain.ts';
 
 /** Sprite layout: 10×10 tiles of 160 px wide frames. */
-export const THUMB_COLS = 10, THUMB_ROWS = 10, THUMB_W = 160, THUMB_H = 90;
+const THUMB_COLS = 10, THUMB_ROWS = 10, THUMB_W = 160, THUMB_H = 90;
 const THUMBS = THUMB_COLS * THUMB_ROWS;
 /** Gap between provider requests (each thumbnail is one range request). */
 const PACE_MS = 700;
@@ -70,25 +70,35 @@ export class Prefetcher implements Worker {
   /** Stop now (a stream needs the provider connection); resolves once it's closed. */
   async stop() {
     this.stopping = true;
+    this.reading?.abort();
     if (this.proc && this.proc.exitCode === null) this.proc.kill('SIGKILL');
     await this.loop;
     this.stopping = false;
   }
   private stopping = false;
-  private canRun() { return !this.stopping && this.slot.mayRun(this); }
+  /** The track read in progress (stop() aborts it). */
+  private reading: AbortController | null = null;
+  /** Between jobs: is it our turn? Within one: only a foreground use (stop()) interrupts it. */
+  private mayStart() { return !this.stopping && this.slot.mayRun(this); }
 
   kick() {
-    if (this.running || !this.queue.length || !this.canRun()) return;
+    if (this.running || !this.queue.length || !this.mayStart()) return;
     this.running = true;
-    this.loop = this.work().catch((e) => this.log(`prefetch: ${(e as Error).message}`)).finally(() => { this.running = false; });
+    this.loop = this.work().catch((e) => this.log(`prefetch: ${(e as Error).message}`)).finally(() => { this.running = false; this.slot.released(); });
   }
 
   private async work() {
-    while (this.queue.length && this.canRun()) {
+    while (this.queue.length && this.mayStart()) {
+      this.slot.takeTurn(this);
       const job = this.queue[0];
       const url = await job.url();
       let t = this.tracks.get(job.id);
-      if (!t) t = await this.tracks.probe(job.id, url).catch((e) => { this.log(`prefetch ${job.id}: ${(e as Error).message.split('\n')[0]}`); return undefined; });
+      if (!t) {
+        this.reading = new AbortController();
+        t = await this.tracks.probe(job.id, url, this.reading.signal).catch((e) => { if (!this.stopping) this.log(`prefetch ${job.id}: ${(e as Error).message.split('\n')[0]}`); return undefined; });
+        this.reading = null;
+        if (this.stopping) return; // interrupted: resume later
+      }
       if (!t || !t.duration || !t.vcodec || !job.thumbs) { this.queue.shift(); continue; }
       if (!(await this.thumbnails(job.id, url, t.duration))) return; // interrupted: resume later
       this.queue.shift();
@@ -104,11 +114,11 @@ export class Prefetcher implements Worker {
     for (let i = 0; i < THUMBS; i++) {
       const f = `${String(i).padStart(3, '0')}.jpg`;
       if (have.has(f)) continue;
-      if (!this.canRun()) return false;
+      if (this.stopping) return false;
       const at = (i + 0.5) * (duration / THUMBS);
       const ok = await this.run(['-hide_banner', '-loglevel', 'error', '-nostdin', '-skip_frame', 'nokey', '-ss', at.toFixed(2), '-i', url,
         '-frames:v', '1', '-vf', `scale=${THUMB_W}:-2:flags=bicubic`, '-q:v', '6', '-y', join(work, f)]);
-      if (!ok && !this.canRun()) return false;
+      if (!ok && this.stopping) return false;
       await new Promise((r) => setTimeout(r, this.pace));
     }
     // Any frame that failed: repeat the previous one so the tiles stay in place.

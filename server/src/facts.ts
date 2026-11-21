@@ -9,6 +9,8 @@ import { kvGet, kvSet } from './db.ts';
 
 /** Audio browsers (Chrome) can't decode: those films need their audio converted. */
 const BROWSER_UNPLAYABLE_AUDIO = new Set(['ac3', 'eac3', 'dts', 'truehd']);
+/** Browsers can't decode this audio (the server converts it). */
+export const browserUnplayableAudio = (codec: string | null | undefined) => !!codec && BROWSER_UNPLAYABLE_AUDIO.has(codec);
 const LEARNED_KEY = 'hevc_ids';
 
 export class MediaFacts {
@@ -60,7 +62,7 @@ export class MediaFacts {
     const learned = this.learned.get(id);
     if (learned && !(learned === 'full' && plainH264)) return learned;
     const audio = this.tracks.get(id)?.audio[0]?.codec ?? s?.acodec;
-    return audio && BROWSER_UNPLAYABLE_AUDIO.has(audio) ? 'audio' : undefined;
+    return browserUnplayableAudio(audio) ? 'audio' : undefined;
   }
 
   /** A movie's file was read (tracks): keep its quality facts for the title page and conversions. */
@@ -68,7 +70,7 @@ export class MediaFacts {
     const a = t.audio[0];
     const langs = (l: (string | null)[]) => [...new Set(l.filter(Boolean))].join(',');
     this.db.prepare(`INSERT OR REPLACE INTO vod_probes (id, at, ok, width, height, hdr, vcodec, acodec, channels, alangs, slangs, err) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`)
-      .run(id, Math.floor(Date.now() / 1000), t.video?.width ?? null, t.video?.height ?? null, t.video?.hdr ?? 'sdr', t.vcodec, a?.codec ?? null, a?.channels ?? null,
+      .run(id, Math.floor(Date.now() / 1000), t.video?.width ?? null, t.video?.height ?? null, t.video?.hdr ?? null, t.vcodec, a?.codec ?? null, a?.channels ?? null,
         langs(t.audio.map((x) => x.lang)), langs(t.subs.map((x) => x.lang)));
   }
 

@@ -13,6 +13,12 @@ export interface ProviderCreds {
 /** What's needed to find something's stream: a catalog item, or a channel's archive programme. */
 export type StreamRef = Pick<Item, 'id' | 'kind'> & { ext?: string | null; catchup?: Item['catchup'] };
 
+/** A provider rating out of 5 (it sends `rating_5based`, or only `rating` out of 10). */
+export function rating5(x: { rating_5based?: unknown; rating?: unknown }): number | null {
+  const five = Number(x.rating_5based), ten = Number(x.rating);
+  return five > 0 ? five : ten > 0 ? ten / 2 : null;
+}
+
 export class Provider {
   readonly creds: ProviderCreds;
   /** Archive (timeshift) URLs take a start time on the provider's local clock. */

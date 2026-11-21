@@ -16,7 +16,7 @@ import { join } from 'node:path';
  * Where HLS sessions (iPhone movie playback) write their segments. On disk, not /tmp: /tmp is RAM here and
  * a whole movie (4K ≈ 20–40 GB) would fill it. Old segments are pruned while playing (HLS_KEEP_BEHIND).
  */
-export const DEFAULT_HLS_ROOT = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'relay-hls');
+const DEFAULT_HLS_ROOT = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'relay-hls');
 /** Segments (4s each, so ≈20 min) kept behind the newest one the player asked for; seeking further back restarts. */
 const HLS_KEEP_BEHIND = 300;
 /** No playlist/segment request for this long (app closed, phone locked): free the provider connection. */

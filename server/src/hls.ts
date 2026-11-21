@@ -41,8 +41,8 @@ export function sessionFiles(layout: VodLayout | null) {
 export const isSessionFile = (name: string) => /^((index|master|idx_(v|a\d+))\.m3u8|init(_\d+)?\.mp4|seg(_(v|a\d+)_)?\d+\.m4s|sub_\d+\.vtt)$/.test(name);
 
 // Subtitle playlists and segments are built by the API, not written by ffmpeg.
-export const subPlaylistName = (n: number) => `sub_${n}.m3u8`;
-export const subSegmentName = (n: number, k: number) => `sub_${n}_${k}.vtt`;
+const subPlaylistName = (n: number) => `sub_${n}.m3u8`;
+const subSegmentName = (n: number, k: number) => `sub_${n}_${k}.vtt`;
 export function parseSubName(name: string): { n: number; k: number | null } | null {
   const m = /^sub_(\d+)(?:_(\d+)\.vtt|\.m3u8)$/.exec(name);
   return m ? { n: Number(m[1]), k: m[2] != null ? Number(m[2]) : null } : null;
@@ -52,7 +52,7 @@ export function parseSubName(name: string): { n: number; k: number | null } | nu
 export const subName = (s: SubTrack) => trackName(s, s.forced ? ' (forced)' : s.sdh ? ' (SDH)' : '');
 
 /** Every URI in a playlist gets the token: Safari's segment requests carry no auth header. */
-export function withToken(pl: string, tok: string): string {
+function withToken(pl: string, tok: string): string {
   return pl.replace(/^([^#\s][^\s?]*)$/gm, `$1${tok}`).replace(/URI="([^"?]+)"/g, `URI="$1${tok}"`);
 }
 
@@ -81,7 +81,7 @@ const toSec = (ts: string) => {
   return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
 };
 
-export interface Cue { start: number; end: number; block: string }
+interface Cue { start: number; end: number; block: string }
 
 /** Cues of a WebVTT document (blocks with a timing line; NOTE/STYLE blocks are dropped). */
 export function parseVtt(vtt: string): Cue[] {

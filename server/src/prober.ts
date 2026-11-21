@@ -79,7 +79,8 @@ export class Prober implements Worker {
   get busy() { return !!this.running; }
   /** Whether its last look found background work (recomputing the list on every check would be costly). */
   private hadWork = true;
-  wants() { return this.urgent.length > 0 || this.hadWork; }
+  wants() { return !this.limited() && (this.urgent.length > 0 || this.hadWork); }
+  private limited() { const now = Date.now(); this.recent = this.recent.filter((t) => now - t < 3600_000); return this.recent.length >= MAX_PER_HOUR; }
 
   /** Stop probing now; resolves when the provider connection is closed. */
   async stop() {
@@ -94,9 +95,8 @@ export class Prober implements Worker {
 
   kick() {
     if (this.running || !this.slot.mayRun(this)) return;
+    if (this.limited()) return;
     const now = Date.now();
-    this.recent = this.recent.filter((t) => now - t < 3600_000);
-    if (this.recent.length >= MAX_PER_HOUR) return;
     let sid = this.urgent.shift();
     if (sid == null) {
       const stale = this.background().map((id) => parseId(id).sid).filter((s) => { const p = this.get.get(s) as Probe | undefined; return !p || now / 1000 - p.at > TTL_S; });
@@ -105,7 +105,8 @@ export class Prober implements Worker {
     this.hadWork = sid != null;
     if (sid == null) return;
     this.recent.push(now);
-    this.running = this.probe(sid).finally(() => { this.running = null; this.ctl = null; });
+    this.slot.takeTurn(this);
+    this.running = this.probe(sid).finally(() => { this.running = null; this.ctl = null; this.slot.released(); });
   }
 
 
@@ -146,7 +147,7 @@ export class Prober implements Worker {
     } catch (e) {
       if (ctl.signal.aborted && !(size > 50_000) && performance.now() - t0 < CAPTURE_MS + 5900) {
         // aborted because someone pressed play: don't record a failure
-        if (this.stopping || !this.slot.mayRun(this)) { this.urgent.unshift(sid); return; }
+        if (this.stopping) { this.urgent.unshift(sid); return; }
       }
       const msg = (e as Error).message;
       if (!ctl.signal.aborted || msg !== 'This operation was aborted') {

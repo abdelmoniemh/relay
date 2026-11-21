@@ -1,4 +1,5 @@
 // Movie/series browsing on top of `titles` (one row per film/show) and its versions (provider copies).
+import { browserUnplayableAudio } from './facts.ts';
 import type { UserData } from './userdata.ts';
 import { LANG_BITS } from './vod.ts';
 import { encodeGenres, genreLike } from './genres.ts';
@@ -218,7 +219,7 @@ export class Library {
       score += r.vsrc && ['NF', 'AMZ', 'TOP', 'PRMT', 'UNV', 'MAX'].includes(r.vsrc) ? 4 : 0;
       if (r.ext === 'mp4' && !dev.tv) score += 2;
       if (r.vcodec === 'hevc' && !dev.hevcOk) score -= 3;
-      if (r.acodec && /ac3|eac3|dts|truehd/.test(r.acodec) && !dev.tv) score -= 2; // browser needs audio conversion
+      if (browserUnplayableAudio(r.acodec) && !dev.tv) score -= 2; // browser needs audio conversion
       const parts = [
         r.lang === 'en' ? 'English' : r.lang === 'ar' ? 'Arabic' : r.lang,
         height ? (height >= 2000 ? '4K' : `${height}p`) : null,

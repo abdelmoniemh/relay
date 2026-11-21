@@ -2,7 +2,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { Item, MovieInfo } from '../../shared/protocol.ts';
 import { itemId } from '../../shared/domain.ts';
-import type { Provider } from './xtream.ts';
+import { rating5, type Provider } from './xtream.ts';
 import type { Catalog } from './catalog.ts';
 
 const FRESH_MS = 6 * 3600_000;
@@ -25,7 +25,7 @@ export class ProviderDetails {
     const v: MovieInfo = {
       plot: i.plot || i.description || null, genre: i.genre || null, year: i.releasedate?.slice(0, 4) || i.year || null,
       duration: Number(i.duration_secs) || null, backdrop: i.backdrop_path?.[0] || null, cast: i.cast || i.actors || null,
-      director: i.director || null, rating: Number(i.rating_5based) || (Number(i.rating) ? Number(i.rating) / 2 : null), trailer: i.youtube_trailer || null, // rating: out of 5, like every rating
+      director: i.director || null, rating: rating5(i), trailer: i.youtube_trailer || null,
     };
     if (this.movies.size > 2000) this.movies.clear();
     this.movies.set(sid, { at: Date.now(), v });
@@ -55,7 +55,7 @@ export class ProviderDetails {
     const json = JSON.stringify({
       id: itemId('series', sid), name: info.name || parent?.name || '', cover: info.cover || parent?.icon || null,
       backdrop: info.backdrop_path?.[0] || null, plot: info.plot || null, genre: info.genre || null,
-      year: info.releaseDate?.slice(0, 4) || info.release_date?.slice(0, 4) || null, rating: Number(info.rating_5based) || parent?.rating || null,
+      year: info.releaseDate?.slice(0, 4) || info.release_date?.slice(0, 4) || null, rating: rating5(info) ?? parent?.rating ?? null,
       seasons,
     });
     this.series.put.run(sid, json, Date.now());

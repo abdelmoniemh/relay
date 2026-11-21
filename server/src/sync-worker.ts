@@ -2,7 +2,7 @@
 // without blocking the API / WebSocket event loop. WAL keeps readers on the old snapshot until commit.
 import { parentPort, workerData } from 'node:worker_threads';
 import { openDb, markSynced } from './db.ts';
-import { Provider, type ProviderCreds } from './xtream.ts';
+import { Provider, rating5, type ProviderCreds } from './xtream.ts';
 import { encodeGenres } from './genres.ts';
 import { parseXmltv } from './epg.ts';
 import { channelKey, isAdultCategory, isAdultChannel, regionOf } from './normalize.ts';
@@ -57,7 +57,7 @@ async function syncCatalog(only?: 'live') {
         ins.run(
           k.kind, Number(x[k.id]), name, x[k.icon] || null, x.category_id != null ? String(x.category_id) : null,
           num(x.num) ?? i, x.epg_channel_id || null, x.container_extension || null,
-          num(x.rating_5based ?? x.rating), num(x.added ?? x.last_modified), num(x.tv_archive_duration) ?? 0,
+          rating5(x), num(x.added ?? x.last_modified), num(x.tv_archive_duration) ?? 0,
           0, sep, parseTmdb(x.tmdb),
           k.kind === 'series' ? seriesMeta(x) : k.kind === 'movie' && x.trailer ? JSON.stringify({ trailer: x.trailer }) : null,
         );

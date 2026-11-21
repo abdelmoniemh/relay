@@ -7,7 +7,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Item } from '../../shared/protocol.ts';
 import { EURO_FOOTBALL, implausibleKickoff, matchKey, parseMatch, sportOf, zonedToUnix } from './normalize.ts';
 import { toItem, type Catalog } from './catalog.ts';
-import { rankSources, type Probe } from './quality.ts';
+import { claimed, rankSources, type Probe } from './quality.ts';
 import type * as Shared from '../../shared/protocol.ts';
 import type { Sport } from '../../shared/protocol.ts';
 
@@ -144,7 +144,9 @@ export class EventsIndex {
     return this.built()
       .filter((e) => e.status === 'live' || (e.start != null && e.start - now < 3 * 3600))
       .sort((a, b) => (a.sport === 'football' ? 0 : 1) - (b.sport === 'football' ? 0 : 1))
-      .flatMap((e) => (e.sources as unknown as { item: Item }[]).slice(0, 25).map((s) => s.item.id));
+      // the 25 most promising copies by name (best claimed picture first)
+      .flatMap((e) => (e.sources as unknown as { item: Item }[]).map((s) => ({ id: s.item.id, c: claimed(s.item.name) }))
+        .sort((a, b) => b.c.height - a.c.height || b.c.fps - a.c.fps).slice(0, 25).map((s) => s.id));
   }
 
   /** Cached for 60s; rankings applied per request (they depend on the device and fresh probes). */

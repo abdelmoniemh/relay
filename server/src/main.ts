@@ -87,7 +87,7 @@ const hub = new Hub({
   },
   txMode: (item) => facts.browserNeeds(item.id),
   interlaced: (item) => item.kind === 'live' && !item.catchup && !!facts.source(item.id)?.interlaced,
-  uhd: (item) => (facts.source(item.id)?.height ?? 0) >= 2000 || claimed(item.name).height >= 2160,
+  uhd: (item) => { const h = facts.source(item.id)?.height; return h ? h >= 2000 : claimed(item.name).height >= 2160; }, // measured, else the name
   allowed: (item) => catalog.playable(item),
   log: (m) => app.log.info(m),
 });
