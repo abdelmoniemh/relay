@@ -6,22 +6,13 @@ import { api, myDeviceId } from '../api.ts';
 import { canCatchup, playCatchup } from '../playback.ts';
 import { reminders, loadReminders, remind, unremind } from '../notify.ts';
 import { devices, deviceName } from '../ws.ts';
-import { clock, isTizen } from '../env.ts';
+import { clock, dayLabel, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
 import { Sheet, Btn } from './kit.tsx';
 import { Icon, deviceIcon } from './Icon.tsx';
 
 import { displayName } from '@shared/domain.ts';
 
-const day = (unix: number) => {
-  const d = new Date(unix * 1000), today = new Date();
-  const y = new Date(); y.setDate(today.getDate() - 1);
-  const tm = new Date(); tm.setDate(today.getDate() + 1);
-  if (d.toDateString() === today.toDateString()) return t('Today');
-  if (d.toDateString() === y.toDateString()) return t('Yesterday');
-  if (d.toDateString() === tm.toDateString()) return t('Tomorrow');
-  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-};
 
 export const reminderFor = (channelId: string, start: number) => reminders.value.find((r) => r.item.id === channelId && r.start === start);
 
@@ -64,7 +55,7 @@ export function ProgrammesSheet({ channel, onClose }: { channel: Item; onClose: 
               const r = reminderFor(channel.id, p.start);
               return (
                 <button key={p.start} class="list-row tappable" aria-pressed={!!r} onClick={() => (r ? unremind(r.id) : setAsk(p))}>
-                  <span class="lr-main"><b>{p.title}</b><span class="lr-sub tnum">{day(p.start)} · {clock(p.start)}–{clock(p.stop)}</span></span>
+                  <span class="lr-main"><b>{p.title}</b><span class="lr-sub tnum">{dayLabel(p.start)} · {clock(p.start)}–{clock(p.stop)}</span></span>
                   <span class="lr-value">{r ? <><Icon n="check" />{r.autoplay ? t('Starts on {name}', { name: deviceName(r.autoplay) }) : t('Reminder set')}</> : <><Icon n="plus" />{t('Remind me')}</>}</span>
                 </button>
               );
@@ -78,7 +69,7 @@ export function ProgrammesSheet({ channel, onClose }: { channel: Item; onClose: 
           <div class="list-group">
             {past.map((p) => (
               <button key={p.start} class="list-row tappable" onClick={() => watch(p)}>
-                <span class="lr-main"><b>{p.title}</b><span class="lr-sub tnum">{day(p.start)} · {clock(p.start)}–{clock(p.stop)}</span></span>
+                <span class="lr-main"><b>{p.title}</b><span class="lr-sub tnum">{dayLabel(p.start)} · {clock(p.start)}–{clock(p.stop)}</span></span>
                 <Icon n="play" class="lr-chev" />
               </button>
             ))}
@@ -97,7 +88,7 @@ export function RemindSheet({ channel, prog, eventId, onClose }: { channel: Item
   const targets = [...devices.value].sort((a, b) => Number(b.kind === 'tv') - Number(a.kind === 'tv'));
   return (
     <Sheet title={prog.title} onClose={onClose}>
-      <p class="sheet-hint tnum">{day(prog.start)} · {clock(prog.start)}{prog.stop ? `–${clock(prog.stop)}` : ''} · {displayName(channel.name)}</p>
+      <p class="sheet-hint tnum">{dayLabel(prog.start)} · {clock(prog.start)}{prog.stop ? `–${clock(prog.stop)}` : ''} · {displayName(channel.name)}</p>
       <div class="list-group">
         <button class="list-row tappable" onClick={() => set(isTizen ? myDeviceId.value : null)}>
           <span class="lr-main"><b>{isTizen ? t('Start it here when it begins') : t('Just remind me')}</b><span class="lr-sub">{t('Every open Relay app shows it a minute before')}</span></span>

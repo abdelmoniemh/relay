@@ -1,4 +1,5 @@
 import type { DeviceKind } from '@shared/protocol.ts';
+import { t } from './i18n.ts';
 
 export const isTizen = __TIZEN__ || typeof window.tizen !== 'undefined';
 export const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -22,3 +23,16 @@ export const fmtTime = (s: number) => {
   return (h ? `${h}:${String(m).padStart(2, '0')}` : String(m)) + ':' + String(sec).padStart(2, '0');
 };
 export const clock = (unix: number) => new Date(unix * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+/** "Today", "Yesterday", "Tomorrow", else "Sat 22 Nov". */
+export function dayLabel(unix: number) {
+  const d = new Date(unix * 1000), now = new Date();
+  const off = (n: number) => { const x = new Date(now); x.setDate(now.getDate() + n); return x; };
+  if (sameDay(d, now)) return t('Today');
+  if (sameDay(d, off(-1))) return t('Yesterday');
+  if (sameDay(d, off(1))) return t('Tomorrow');
+  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+/** A start time: "20:00" today, else "Tomorrow 20:00" / "Sat 22 Nov 20:00". */
+export const startsAt = (unix: number) => { const d = new Date(unix * 1000); return sameDay(d, new Date()) ? clock(unix) : `${dayLabel(unix)} ${clock(unix)}`; };

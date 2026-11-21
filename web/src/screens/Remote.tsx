@@ -9,7 +9,7 @@ import { current, takeover } from '../playback.ts';
 import { Search } from './Search.tsx';
 import { Logo, ProgBar } from '../ui/common.tsx';
 import { displayName } from '@shared/domain.ts';
-import { fmtTime, img } from '../env.ts';
+import { fmtTime, img, startsAt } from '../env.ts';
 import { Btn, IconBtn, LivePill, Segmented } from '../ui/kit.tsx';
 import { Icon, type IconName, deviceIcon } from '../ui/Icon.tsx';
 import { t } from '../i18n.ts';
@@ -105,7 +105,7 @@ export function Remote() {
             const best = e.sources.find((x) => !x.dead);
             return (
               <button key={e.id} class="list-row" disabled={!t2?.online || !best} onClick={() => best && target && send({ t: 'sendTo', target, item: best.item, eventId: e.id })}>
-                <span class="ev-when">{e.status === 'live' ? <LivePill /> : <span class="tnum">{e.start ? new Date(e.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>}</span>
+                <span class="ev-when">{e.status === 'live' ? <LivePill /> : <span class="tnum">{e.start ? startsAt(e.start) : ''}</span>}</span>
                 <span class="lr-main"><b>{e.home} {t('v')} {e.away}</b><span class="lr-sub">{e.competition}</span></span>
                 <Icon n="send" class="lr-chev" />
               </button>

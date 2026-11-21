@@ -53,7 +53,6 @@ export interface LbStatus { user: string | null; fromConfig: boolean; watchlist:
 export interface Status { syncing: boolean; counts: Record<string, number>; catalogSynced: number; epgSynced: number; pairingCode: string; regions: string[]; vodLangs: string[]; letterboxd: LbStatus; tmdb: { enabled: boolean; enriched: number; pending: number; lastError: string | null } }
 
 export const api = {
-  ping: () => req<{ ok: boolean }>('GET', '/api/ping'),
   pair: (code: string, name: string, kind: string) => req<{ token: string; deviceId: string }>('POST', '/api/pair', { code, name, kind }),
   status: () => req<Status>('GET', '/api/status'),
   sync: () => req('POST', '/api/sync'),
@@ -61,7 +60,6 @@ export const api = {
   categories: (kind: Kind) => cachedGet<Category[]>(`/api/categories/${kind}`),
   items: (kind: Kind, cat: string | null, sort: Sort, offset: number, limit: number) =>
     cachedGet<{ items: Item[]; total: number }>(`/api/items/${kind}?${new URLSearchParams({ ...(cat ? { cat } : {}), sort, offset: String(offset), limit: String(limit) })}`),
-  item: (id: string) => cachedGet<Item>(`/api/item/${id}`),
   neighbor: (id: string, dir: 'next' | 'prev') => req<Item>('GET', `/api/neighbor/${id}?dir=${dir}`),
   search: (q: string, kind?: Kind) => cachedGet<Item[]>(`/api/search?${new URLSearchParams({ q, ...(kind ? { kind } : {}) })}`),
   nowNext: (chs: string[]) => req<Record<string, Programme[]>>('GET', `/api/epg/now?ch=${encodeURIComponent(chs.join(','))}`),
@@ -97,7 +95,6 @@ export const api = {
   watchlist: () => req<{ items: TitleCard[]; available: number; total: number; missing: { name: string; year: number | null }[]; status: LbStatus }>('GET', '/api/watchlist'),
   titleOf: (itemId: string) => cachedGet<{ tid: number }>(`/api/title-of/${itemId}`),
   regions: () => req<{ enabled: string[]; all: { code: string; channels: number }[] }>('GET', '/api/regions'),
-  devices: () => req<{ id: string; name: string; kind: string }[]>('GET', '/api/devices'),
   renameDevice: (id: string, name: string) => req('PUT', `/api/devices/${id}`, { name }),
   removeDevice: (id: string) => req('DELETE', `/api/devices/${id}`),
 };

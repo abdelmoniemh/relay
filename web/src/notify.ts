@@ -17,7 +17,6 @@ export async function remind(channel: Item, prog: { start: number; stop?: number
   return r;
 }
 export async function unremind(id: string) { await api.removeReminder(id); await loadReminders(); }
-export const isReminded = (channelId: string, start: number) => reminders.value.some((r) => r.item.id === channelId && r.start === start);
 
 export function notificationsSupported() {
   return typeof window !== 'undefined' && window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;

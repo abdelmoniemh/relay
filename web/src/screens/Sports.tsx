@@ -7,7 +7,7 @@ import { useKeys, useDebounced } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
 import { Logo } from '../ui/common.tsx';
 import { displayName } from '@shared/domain.ts';
-import { isMobile } from '../env.ts';
+import { isMobile, startsAt } from '../env.ts';
 import { Btn, IconBtn, LivePill, QualityChip } from '../ui/kit.tsx';
 import { Icon } from '../ui/Icon.tsx';
 import { t, tn } from '../i18n.ts';
@@ -23,16 +23,7 @@ const sportName = (k: string) => t(LABEL[k] ?? k);
 
 let lastSport = 'football';
 
-const when = (e: SportEvent) => {
-  if (e.status === 'live') return null;
-  if (!e.start) return '—';
-  const d = new Date(e.start * 1000), now = new Date();
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  if (d.toDateString() === now.toDateString()) return time;
-  const tmr = new Date(now.getTime() + 86400000);
-  if (d.toDateString() === tmr.toDateString()) return `${t('Tmrw')} ${time}`;
-  return `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
-};
+const when = (e: SportEvent) => (e.status === 'live' ? null : e.start ? startsAt(e.start) : '—');
 
 export function Sports() {
   const [remindFor, setRemindFor] = useState<SportEvent | null>(null);

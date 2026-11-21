@@ -6,8 +6,9 @@ import { AvPlayer } from './avplay.ts';
 import type { Player } from './types.ts';
 import {
   attachPlayer, current, mode, status, position, duration, errorMsg, play, stop, togglePause, seekBy, seekTo, zap, setMode, volume,
-  sources, nextSource, sourceEvent, nextUp, nextEpisode, playNextEpisode, cancelNextUp, toast,
+  sources, nextSource, sourceEvent, nextUp, nextEpisode, playNextEpisode, cancelNextUp,
   isLiveNow, skipAt, skipIntro, thumbAt, mediaTracks, selectAudio, selectSub, startOver, canCatchup,
+  showToast,
 } from '../playback.ts';
 import { Sheet } from '../ui/kit.tsx';
 import { ProgrammesSheet } from '../ui/programmes.tsx';
@@ -16,7 +17,7 @@ import { Logo } from '../ui/common.tsx';
 import { displayName } from '@shared/domain.ts';
 import { api, myDeviceId, toggleFavorite, favorites } from '../api.ts';
 import { devices, send } from '../ws.ts';
-import { route, go } from '../router.ts';
+import { route, go, compact } from '../router.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { previewBox, numbered } from './placement.ts';
 import { t } from '../i18n.ts';
@@ -54,7 +55,7 @@ export function toggleFullscreen() {
     }
     const v = videoEl;
     if (!v?.webkitEnterFullscreen) return;
-    if (v.readyState < 1) { toast.value = 'Wait for the video to start'; setTimeout(() => { toast.value = null; }, 2000); return; }
+    if (v.readyState < 1) { showToast(t('Wait for the video to start'), 2000); return; }
     v.webkitEnterFullscreen();
   } catch {}
 }
@@ -119,7 +120,7 @@ export function PlayerHost() {
       // (on phones the Live preview box is hidden: fall back to the corner player instead of a 0×0 video)
       if (b && b.width > 0 && b.height > 0) { setRect({ x: b.left, y: b.top, w: b.width, h: b.height }); return; }
       const W = window.innerWidth, H = window.innerHeight;
-      const small = W < 760 || H < 500;
+      const small = compact.value; // the phone layout (router.ts)
       const w = Math.min(480, W * (small ? 0.55 : 0.45)), h = (w * 9) / 16;
       const gap = small ? 12 : 24;
       // Keep clear of the bottom tab bar on phones.

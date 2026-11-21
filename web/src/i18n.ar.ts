@@ -143,4 +143,8 @@ export const AR: Record<string, string> = {
   "Notifications are blocked for Relay in this browser's settings.": "الإشعارات محظورة لـ Relay في إعدادات هذا المتصفح.",
   "Sent from {name}": "أُرسل من {name}",
   "Couldn't open that title": "تعذّر فتح هذا العنوان",
+  "Source failed — switched to source {i} of {n}": "تعذّر المصدر، تم التبديل إلى المصدر {i} من {n}",
+  "No sources for this event right now": "لا توجد مصادر لهذا الحدث الآن",
+  "Now playing on {name}": "يُعرض الآن على {name}",
+  "Wait for the video to start": "انتظر حتى يبدأ الفيديو",
 };

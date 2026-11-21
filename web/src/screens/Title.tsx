@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { isFinished, MIN_RESUME_S, titleId } from '@shared/domain.ts';
+import { isFinished, MIN_RESUME_S, titleId, lang2 } from '@shared/domain.ts';
 import type { Item } from '@shared/protocol.ts';
 import { api, favorites, toggleFavorite, type TitleCard, type VersionInfo } from '../api.ts';
 import { back, navFocused, compact } from '../router.ts';
@@ -10,16 +10,15 @@ import { ProgBar, stars, diaryStars } from '../ui/common.tsx';
 import { Btn, IconBtn, Row, Sheet, type Action } from '../ui/kit.tsx';
 import { Icon } from '../ui/Icon.tsx';
 import { fmtTime, img, isTizen } from '../env.ts';
-import { t as tr } from '../i18n.ts';
+import { t as tr, languageName } from '../i18n.ts';
 import { Card, openTitle } from './Browse.tsx';
 import { versionItem } from '@shared/domain.ts';
 
 type Ep = Item & { plot?: string; duration?: number };
-const LANG_NAME: Record<string, string> = { eng: 'English', en: 'English', ara: 'Arabic', ar: 'Arabic', fre: 'French', fra: 'French', ger: 'German', deu: 'German', spa: 'Spanish', ita: 'Italian', tur: 'Turkish', hin: 'Hindi', por: 'Portuguese', dut: 'Dutch', nld: 'Dutch', rus: 'Russian', pol: 'Polish', jpn: 'Japanese', kor: 'Korean', chi: 'Chinese', zho: 'Chinese', heb: 'Hebrew', per: 'Persian', fas: 'Persian' };
 const langs = (s: string | null | undefined) => {
   if (!s) return '';
-  const l = s.split(',').map((x) => LANG_NAME[x] ?? x.toUpperCase()).filter((v, i, a) => a.indexOf(v) === i);
-  l.sort((a, b) => Number(b === 'English' || b === 'Arabic') - Number(a === 'English' || a === 'Arabic'));
+  const first = (c: string) => Number(['en', 'ar'].includes(lang2(c) ?? ''));
+  const l = s.split(',').sort((a, b) => first(b) - first(a)).map(languageName).filter((v, i, a) => a.indexOf(v) === i);
   return l.length > 8 ? `${l.slice(0, 8).join(', ')} +${l.length - 8}` : l.join(', ');
 };
 

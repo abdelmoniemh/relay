@@ -1,4 +1,5 @@
 import { persisted } from './storage.ts';
+import { lang2 } from '@shared/domain.ts';
 import { AR } from './i18n.ar.ts';
 
 /** UI language. English strings are the keys; Arabic comes from i18n.ar.ts (missing keys fall back to English). */
@@ -26,4 +27,10 @@ export function t(s: string, vars?: Record<string, string | number>): string {
 /** Plural helper: tn(n, '{n} source', '{n} sources'). Arabic uses its own forms when given. */
 export function tn(n: number, one: string, many: string) {
   return t(n === 1 ? one : many, { n: n.toLocaleString() });
+}
+
+/** A language's name in the UI language ('ara' → "Arabic" / "العربية"); the code itself if the browser doesn't know it. */
+export function languageName(code: string): string {
+  const c = lang2(code) ?? code;
+  try { return new Intl.DisplayNames([lang.value], { type: 'language' }).of(c) ?? c.toUpperCase(); } catch { return c.toUpperCase(); }
 }

@@ -196,8 +196,8 @@ export function nextSource(dir: 1 | -1, auto = false): boolean {
     const j = (i + dir * k + list.length * k) % list.length;
     const cand = list[j];
     if (auto && (cand.dead || failed.has(cand.item.id))) continue;
-    if (auto) { failed.add(cur.id); showToast(`Source failed — switched to source ${j + 1}/${list.length}`); }
-    else showToast(`Source ${j + 1}/${list.length} · ${cand.label}`, 2500);
+    if (auto) { failed.add(cur.id); showToast(t('Source failed — switched to source {i} of {n}', { i: j + 1, n: list.length })); }
+    else showToast(`${t('Source {i} of {n}', { i: j + 1, n: list.length })} · ${cand.label}`, 2500);
     play(cand.item, { mode: mode.value === 'off' ? 'full' : mode.value, keepSources: true });
     return true;
   }
@@ -295,7 +295,7 @@ export async function playEvent(eventId: string, opts: { mode?: Mode; sourceId?:
   const ev = await api.event(eventId);
   const list = ev.sources;
   const pick = (opts.sourceId && list.find((s) => s.item.id === opts.sourceId)) || list.find((s) => !s.dead) || list[0];
-  if (!pick) { showToast('No sources for this event right now'); return; }
+  if (!pick) { showToast(t('No sources for this event right now')); return; }
   play(pick.item, { mode: opts.mode ?? 'full', sources: list, eventId });
 }
 
@@ -394,7 +394,7 @@ onServer((m: ServerMsg) => {
       player?.stop(); // free the provider connection *before* acking
       send({ t: 'stopped', position: pos, duration: dur });
       reset();
-      if (m.reason === 'handoff' && m.to && m.to !== myDeviceId.value) showToast(`Now playing on ${deviceName(m.to)}`);
+      if (m.reason === 'handoff' && m.to && m.to !== myDeviceId.value) showToast(t('Now playing on {name}', { name: deviceName(m.to) }));
       return;
     }
     case 'play':

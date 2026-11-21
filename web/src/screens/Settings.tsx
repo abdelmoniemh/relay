@@ -9,8 +9,8 @@ import { navFocused, back, compact, stack } from '../router.ts';
 import { useAsync, useKeys } from '../ui/hooks.ts';
 import { EditSheet, IconBtn, Sheet, Btn } from '../ui/kit.tsx';
 import { Icon, type IconName, deviceIcon } from '../ui/Icon.tsx';
-import { isTizen, clock } from '../env.ts';
-import { t, lang, setLang } from '../i18n.ts';
+import { isTizen, clock, dayLabel } from '../env.ts';
+import { t, lang, setLang, languageName } from '../i18n.ts';
 
 const ago = (ms: number) => {
   if (!ms) return t('never');
@@ -27,7 +27,6 @@ type Edit = { title: string; hint?: string; initial: string; save: (v: string) =
 type Pick = { title: string; hint?: string; options: { label: string; sel: boolean; act: () => void }[] } | null;
 
 /** Languages offered for audio / subtitles (others still play: these are just the preference). */
-const langName = (code: string) => { try { return new Intl.DisplayNames([lang.value], { type: 'language' }).of(code) ?? code; } catch { return code; } };
 
 export function Settings() {
   const [tick, setTick] = useState(0);
@@ -63,15 +62,15 @@ export function Settings() {
   groups.push({ title: t('Playback'), rows: [
     { id: 'lowlat', label: t('Lowest delay for live sport'), sub: lowLatencySports.value ? t('Jumps to the live edge') : t('Plays the provider’s buffer for smoother video'),
       toggle: lowLatencySports.value, act: () => setLowLatency(!lowLatencySports.value) },
-    { id: 'alang', label: t('Audio language'), value: audioLang.value ? langName(audioLang.value) : t('As the film comes'),
+    { id: 'alang', label: t('Audio language'), value: audioLang.value ? languageName(audioLang.value) : t('As the film comes'),
       act: () => setPick({ title: t('Audio language'), hint: t('When a film or episode has several, start with this one.'), options: [
         { label: t('As the film comes'), sel: !audioLang.value, act: () => setAudioLang(null) },
-        ...PREFERRED_LANGS.map((c) => ({ label: langName(c), sel: audioLang.value === c, act: () => setAudioLang(c) })),
+        ...PREFERRED_LANGS.map((c) => ({ label: languageName(c), sel: audioLang.value === c, act: () => setAudioLang(c) })),
       ] }) },
-    { id: 'slang', label: t('Subtitles'), value: subLang.value === 'off' ? t('Off') : langName(subLang.value),
+    { id: 'slang', label: t('Subtitles'), value: subLang.value === 'off' ? t('Off') : languageName(subLang.value),
       act: () => setPick({ title: t('Subtitles'), hint: t('Shown when the film has them. Forced subtitles (signs, foreign dialogue) show either way.'), options: [
         { label: t('Off'), sel: subLang.value === 'off', act: () => setSubLang('off') },
-        ...PREFERRED_LANGS.map((c) => ({ label: langName(c), sel: subLang.value === c, act: () => setSubLang(c) })),
+        ...PREFERRED_LANGS.map((c) => ({ label: languageName(c), sel: subLang.value === c, act: () => setSubLang(c) })),
       ] }) },
     ...(!isTizen ? [{ id: 'saver', label: t('Data saver'), value: DS[dataSaver.value],
       sub: dataSaver.value === 'auto' ? (isAway() ? t('On now: Relay is reached through Tailscale') : t('Turns on away from home (through Tailscale)')) : dataSaver.value === 'on' ? t('720p, about 3 Mbps') : t('Full quality'),
@@ -81,7 +80,7 @@ export function Settings() {
     ...(!isTizen ? [{ id: 'notif', label: t('Notifications on this device'), toggle: notificationsOn.value, sub: blocker ? t('Not available here') : undefined,
       act: blocker ? undefined : () => { (notificationsOn.value ? disableNotifications() : enableNotifications()).catch(() => {}); } } as R] : []),
     ...reminders.value.filter((r) => r.start > Date.now() / 1000 - 600).map((r): R => ({
-      id: `rem${r.id}`, label: r.title, sub: `${new Date(r.start * 1000).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} · ${clock(r.start)}${r.autoplay ? ` · ${t('Starts on {name}', { name: deviceName(r.autoplay) })}` : ''}`,
+      id: `rem${r.id}`, label: r.title, sub: `${dayLabel(r.start)} · ${clock(r.start)}${r.autoplay ? ` · ${t('Starts on {name}', { name: deviceName(r.autoplay) })}` : ''}`,
       value: t('Remove'), act: () => unremind(r.id),
     })),
     ...(reminders.value.length ? [] : [{ id: 'remnone', label: t('No reminders'), sub: t('Set one from a channel’s programmes or a sports event.') } as R]),
@@ -93,7 +92,7 @@ export function Settings() {
       id: `vl${code}`, label: t(name), toggle: on.has(code),
       act: () => {
         const next = on.has(code) ? s.vodLangs.filter((x) => x !== code) : [...s.vodLangs, code];
-        if (next.length) api.settings({ vodLangs: next }).then(() => { clearCache(); refresh(); });
+        if (next.length) api.settings({ vodLangs: next }).then(() => refresh());
       },
     })) });
   }
@@ -105,7 +104,7 @@ export function Settings() {
     groups.push({ title: t('Live TV regions'), rows: [
       ...shown.map((x): R => ({
         id: `rg${x.code}`, label: t(REGION[x.code] ?? x.code), sub: t('{n} channels', { n: x.channels.toLocaleString() }), toggle: on.has(x.code),
-        act: () => { const next = on.has(x.code) ? r.enabled.filter((y) => y !== x.code) : [...r.enabled, x.code]; api.settings({ regions: next }).then(() => { clearCache(); refresh(); }); },
+        act: () => { const next = on.has(x.code) ? r.enabled.filter((y) => y !== x.code) : [...r.enabled, x.code]; api.settings({ regions: next }).then(() => refresh()); },
       })),
       ...(!allRegions && list.length > shown.length ? [{ id: 'allrg', label: t('Show all {n} regions', { n: list.length }), act: () => setAllRegions(true) }] : []),
     ] });
@@ -119,14 +118,14 @@ export function Settings() {
       sub: !s ? '…' : s.tmdb.enabled ? (s.tmdb.pending ? t('{n} titles to fetch', { n: s.tmdb.pending.toLocaleString() }) : t('Up to date')) + (s.tmdb.lastError ? ` · ${s.tmdb.lastError}` : '') : t('Off. Add a free TMDB key.'),
       value: s?.tmdb.enabled ? t('On') : t('Off'),
       act: () => setEdit({ title: t('TMDB key'), hint: t('API key or read-access token from themoviedb.org › Settings › API. Leave empty to remove.'), initial: '',
-        save: (k) => { api.settings({ tmdbKey: k }).then(() => { clearCache(); refresh(); }); } }) },
+        save: (k) => { api.settings({ tmdbKey: k }).then(() => refresh()); } }) },
     { id: 'lb', label: 'Letterboxd',
       sub: !s ? '…' : s.letterboxd.user
         ? `@${s.letterboxd.user} · ${t('{n} on watchlist', { n: s.letterboxd.watchlist })}${s.letterboxd.syncing ? ` · ${t('syncing…')}` : s.letterboxd.syncedAt ? ` · ${t('synced {t}', { t: ago(s.letterboxd.syncedAt) })}` : ''}${s.letterboxd.error ? ` · ${s.letterboxd.error}` : ''}`
         : t('Not linked'),
       value: s?.letterboxd.fromConfig ? t('Set on server') : undefined,
       act: s?.letterboxd.fromConfig ? undefined : () => setEdit({ title: t('Letterboxd username'), hint: t('Your watchlist must be public. Leave empty to unlink.'), initial: s?.letterboxd.user ?? '',
-        save: (u) => { api.settings({ letterboxd: u }).then(() => { clearCache(); refresh(1500); }); } }) },
+        save: (u) => { api.settings({ letterboxd: u }).then(() => refresh(1500)); } }) },
   ] });
   groups.push({ title: '', rows: [
     { id: 'unpair', label: t('Unpair this device'), danger: true,

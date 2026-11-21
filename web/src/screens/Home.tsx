@@ -11,7 +11,7 @@ import { displayName } from '@shared/domain.ts';
 import { Billboard, ChannelTile, IconBtn, PosterTile, Row, SkeletonRow, LivePill, QualityChip, type Action } from '../ui/kit.tsx';
 import { Icon, type IconName } from '../ui/Icon.tsx';
 import { Card } from './Browse.tsx';
-import { fmtTime } from '../env.ts';
+import { fmtTime, clock } from '../env.ts';
 import { t } from '../i18n.ts';
 import { openItem } from '../catalogue.ts';
 import { versionItem } from '@shared/domain.ts';
@@ -19,7 +19,7 @@ import { versionItem } from '@shared/domain.ts';
 interface Tile { key: string; render: (f: boolean) => any; act: () => void }
 interface HRow { title: string; tiles: Tile[]; wide?: boolean; more?: () => void }
 
-const kickoff = (e: SportEvent) => e.start ? new Date(e.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+const kickoff = (e: SportEvent) => (e.start ? clock(e.start) : '');
 
 
 export function Home() {
