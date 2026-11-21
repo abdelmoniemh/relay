@@ -28,7 +28,6 @@ export class Prober implements Worker {
   private log: (m: string) => void;
   private get: ReturnType<DatabaseSync['prepare']>;
   private put: ReturnType<DatabaseSync['prepare']>;
-  private vodQueue: { id: string; url: string }[] = [];
 
   constructor(db: DatabaseSync, provider: Provider, slot: ProviderSlot, opts: { background: () => number[]; log?: (m: string) => void }) {
     this.db = db; this.provider = provider; this.slot = slot; this.background = opts.background; this.log = opts.log ?? (() => {});
@@ -72,6 +71,9 @@ export class Prober implements Worker {
 
   /** Is a probe holding the provider connection right now? */
   get busy() { return !!this.running; }
+  /** Whether its last look found background work (recomputing the list on every check would be costly). */
+  private hadWork = true;
+  wants() { return this.urgent.length > 0 || this.hadWork; }
 
   /** Stop probing now; resolves when the provider connection is closed. */
   async stop() {
@@ -82,21 +84,10 @@ export class Prober implements Worker {
   }
   private stopping = false;
 
-  /** Movie/series files: read the header for real resolution, HDR, audio format and languages. */
-  requestVod(list: { id: string; url: string }[]) {
-    const fresh = new Set((this.db.prepare(`SELECT id FROM vod_probes WHERE at > ? AND id IN (${list.map(() => '?').join(',') || "''"})`)
-      .all(Math.floor(Date.now() / 1000) - 30 * 86400, ...list.map((l) => l.id)) as { id: string }[]).map((r) => r.id));
-    for (const l of list.reverse()) if (!fresh.has(l.id) && !this.vodQueue.some((q) => q.id === l.id)) this.vodQueue.unshift(l);
-    this.vodQueue = this.vodQueue.slice(0, 40);
-  }
+
 
   kick() {
     if (this.running || !this.slot.mayRun(this)) return;
-    const vod = this.vodQueue.shift();
-    if (vod) {
-      this.running = this.probeVod(vod.id, vod.url).finally(() => { this.running = null; this.ctl = null; });
-      return;
-    }
     const now = Date.now();
     this.recent = this.recent.filter((t) => now - t < 3600_000);
     if (this.recent.length >= MAX_PER_HOUR) return;
@@ -105,23 +96,13 @@ export class Prober implements Worker {
       const stale = this.background().filter((s) => { const p = this.get.get(s) as Probe | undefined; return !p || now / 1000 - p.at > TTL_S; });
       sid = stale[0];
     }
+    this.hadWork = sid != null;
     if (sid == null) return;
     this.recent.push(now);
     this.running = this.probe(sid).finally(() => { this.running = null; this.ctl = null; });
   }
 
-  private async probeVod(id: string, url: string) {
-    const ctl = (this.ctl = new AbortController());
-    try {
-      const r = await probeVodUrl(url, ctl.signal);
-      this.db.prepare(`INSERT OR REPLACE INTO vod_probes (id, at, ok, width, height, hdr, vcodec, acodec, channels, alangs, slangs, err) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`)
-        .run(id, Math.floor(Date.now() / 1000), r.width, r.height, r.hdr, r.vcodec, r.acodec, r.channels, r.alangs, r.slangs);
-      this.log(`vod probe ${id}: ${r.width}x${r.height} ${r.hdr} ${r.vcodec}/${r.acodec} ${r.channels}ch a:${r.alangs} s:${r.slangs}`);
-    } catch (e) {
-      if (ctl.signal.aborted) { this.vodQueue.unshift({ id, url }); return; } // someone pressed play: retry later
-      this.db.prepare(`INSERT OR REPLACE INTO vod_probes (id, at, ok, err) VALUES (?, ?, 0, ?)`).run(id, Math.floor(Date.now() / 1000), (e as Error).message.slice(0, 80));
-    }
-  }
+
 
   private async probe(sid: number) {
     const ctl = (this.ctl = new AbortController());
@@ -173,42 +154,6 @@ export class Prober implements Worker {
   }
 }
 
-function hdrOf(s: any): string {
-  if ((s.side_data_list ?? []).some((d: any) => /DOVI|Dolby Vision/i.test(d.side_data_type ?? ''))) return 'dv';
-  if (s.color_transfer === 'smpte2084') return 'hdr10';
-  if (s.color_transfer === 'arib-std-b67') return 'hlg';
-  return 'sdr';
-}
-
-export interface VodProbeResult { width: number | null; height: number | null; hdr: string; vcodec: string | null; acodec: string | null; channels: number | null; alangs: string; slangs: string }
-
-/** ffprobe a remote movie file (reads the header + a little data). */
-export function probeVodUrl(url: string, signal: AbortSignal): Promise<VodProbeResult> {
-  return new Promise((resolve, reject) => {
-    const p = spawn('ffprobe', ['-v', 'error', '-of', 'json', '-probesize', '5M', '-analyzeduration', '2000000', '-user_agent', USER_AGENT,
-      '-show_entries', 'stream=codec_type,codec_name,width,height,color_transfer,channels,side_data_list:stream_tags=language', '-i', url],
-      { stdio: ['ignore', 'pipe', 'pipe'] });
-    const kill = () => p.kill('SIGKILL');
-    signal.addEventListener('abort', kill, { once: true });
-    let out = '', err = '';
-    p.stdout.on('data', (d) => (out += d));
-    p.stderr.on('data', (d) => (err += d));
-    const timer = setTimeout(kill, 20_000);
-    p.on('close', (code) => {
-      clearTimeout(timer); signal.removeEventListener('abort', kill);
-      if (code !== 0) return reject(new Error(err.trim().split('\n').pop() || `ffprobe exit ${code}`));
-      try {
-        const st = (JSON.parse(out).streams ?? []) as any[];
-        const v = st.find((s) => s.codec_type === 'video' && s.width);
-        const a = st.filter((s) => s.codec_type === 'audio');
-        const sub = st.filter((s) => s.codec_type === 'subtitle');
-        const langs = (l: any[]) => [...new Set(l.map((s) => s.tags?.language).filter((x: string) => x && x !== 'und'))].join(',');
-        resolve({ width: v?.width ?? null, height: v?.height ?? null, hdr: v ? hdrOf(v) : 'sdr', vcodec: v?.codec_name ?? null,
-          acodec: a[0]?.codec_name ?? null, channels: a[0]?.channels ?? null, alangs: langs(a), slangs: langs(sub) });
-      } catch (e) { reject(e); }
-    });
-  });
-}
 
 interface SampleInfo {
   width: number | null; height: number | null; fps: number | null; vcodec: string | null; acodec: string | null; mediaSec: number;

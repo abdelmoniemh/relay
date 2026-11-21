@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ProviderSlot, type Worker } from '../src/slot.ts';
 
 function worker(slot: ProviderSlot) {
-  const w = { busy: false as boolean, kicks: 0, stops: 0, kick() { if (slot.mayRun(w)) { w.kicks++; w.busy = true; } }, async stop() { w.stops++; w.busy = false; } } satisfies Worker & Record<string, unknown>;
+  const w = { busy: false as boolean, kicks: 0, stops: 0, wanting: false, wants(): boolean { return w.wanting; }, kick() { if (slot.mayRun(w)) { w.kicks++; w.busy = true; } }, async stop() { w.stops++; w.busy = false; } } satisfies Worker & Record<string, unknown>;
   slot.work(w);
   return w;
 }
@@ -48,4 +48,14 @@ test('a claim keeps background work out until released (a device is being grante
   release();
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(a.kicks, 1, 'released: the worker is told it may run');
+});
+
+test('workers take turns: one that just ran yields to another one waiting', async () => {
+  const slot = new ProviderSlot();
+  const a = worker(slot), b = worker(slot);
+  a.kick(); a.busy = false;             // a ran a job
+  b.wanting = true;
+  assert.equal(slot.mayRun(a), false, 'b has work: a waits its turn');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(b.kicks, 1, 'b was told to go');
 });

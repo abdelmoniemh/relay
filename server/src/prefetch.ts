@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path';
 import { markersFrom, type Markers, type TrackStore } from './tracks.ts';
 import type { ProviderSlot, Worker } from './slot.ts';
+import { isVodId } from '../../shared/domain.ts';
 
 /** Sprite layout: 10×10 tiles of 160 px wide frames. */
 export const THUMB_COLS = 10, THUMB_ROWS = 10, THUMB_W = 160, THUMB_H = 90;
@@ -21,7 +22,7 @@ export interface Extras {
 }
 
 export class Prefetcher implements Worker {
-  private queue: { id: string; url: () => Promise<string> }[] = [];
+  private queue: { id: string; url: () => Promise<string>; thumbs: boolean }[] = [];
   private running = false;
   private proc: ChildProcess | null = null;
   private dir: string;
@@ -52,14 +53,17 @@ export class Prefetcher implements Worker {
   sprite(id: string) { return join(this.dir, `${id.replace(/[^\w-]/g, '')}.jpg`); }
 
   /** Queue a title (url resolved lazily: it goes through the VOD proxy). Most recent first. */
-  want(id: string, url: () => Promise<string>) {
-    if (!/^[me]\d+$/.test(id) || (this.tracks.get(id) && existsSync(this.sprite(id)))) return;
-    this.queue = [{ id, url }, ...this.queue.filter((q) => q.id !== id)].slice(0, 30);
+  /** `thumbs: false`: only read its tracks and quality (title pages, for every version). */
+  want(id: string, url: () => Promise<string>, { thumbs = true } = {}) {
+    if (!isVodId(id) || (this.tracks.get(id) && (!thumbs || existsSync(this.sprite(id))))) return;
+    const prev = this.queue.find((q) => q.id === id);
+    this.queue = [{ id, url, thumbs: thumbs || !!prev?.thumbs }, ...this.queue.filter((q) => q.id !== id)].slice(0, 40);
     this.kick();
   }
 
   /** Is it using the provider connection right now? */
   get busy() { return this.running; }
+  wants() { return this.queue.length > 0; }
   /** Resolves when the queue has been worked through (or interrupted). For tests. */
   async idle() { while (this.running) await new Promise((r) => setTimeout(r, 50)); }
 
@@ -84,8 +88,8 @@ export class Prefetcher implements Worker {
       const job = this.queue[0];
       const url = await job.url();
       let t = this.tracks.get(job.id);
-      if (!t) t = await this.tracks.probe(job.id, url).catch(() => undefined);
-      if (!t || !t.duration || !t.vcodec) { this.queue.shift(); continue; }
+      if (!t) t = await this.tracks.probe(job.id, url).catch((e) => { this.log(`prefetch ${job.id}: ${(e as Error).message.split('\n')[0]}`); return undefined; });
+      if (!t || !t.duration || !t.vcodec || !job.thumbs) { this.queue.shift(); continue; }
       if (!(await this.thumbnails(job.id, url, t.duration))) return; // interrupted: resume later
       this.queue.shift();
     }

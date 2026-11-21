@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { type ApiCtx, clamp } from './http.ts';
 
 export function registerLibraryRoutes(app: FastifyInstance, ctx: ApiCtx) {
-  const { db, userData, catalog, provider, prober, library, letterboxd, details } = ctx;
+  const { db, userData, catalog, provider, library, letterboxd, details, prefetcher, vodProxy } = ctx;
   app.get('/api/movie/:id', async (req, reply) => {
     const { kind, sid } = parseId((req.params as any).id);
     if (kind !== 'movie') return reply.code(400).send({ error: 'bad id' });
@@ -42,8 +42,8 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: ApiCtx) {
   app.get('/api/title/:tid', async (req, reply) => {
     const d = await library.detail(Number((req.params as any).tid), device(req.query as any));
     if (!d) return reply.code(404).send({ error: 'not found' });
-    // Check the real quality of the movie files while nothing is playing.
-    if (d.kind === 'movie') prober.requestVod(d.versions.slice(0, 8).map((v) => ({ id: v.item.id, url: provider.source(v.item) })));
+    // Read the movie files (real quality, languages) while nothing is playing: one header read each, through the proxy.
+    if (d.kind === 'movie') for (const v of d.versions.slice(0, 8)) prefetcher.want(v.item.id, () => vodProxy.url(provider.source(v.item)), { thumbs: false });
     return d;
   });
 

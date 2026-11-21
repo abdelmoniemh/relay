@@ -55,7 +55,8 @@ loadTz(); setInterval(loadTz, 24 * 3600_000).unref();
 
 const reminders = new Reminders(db);
 const vodProxy = new VodProxy((m) => app.log.warn(m));
-const trackStore = new TrackStore(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}'), (entries) => kvSet(db, 'vod_tracks', JSON.stringify(Object.fromEntries(entries))));
+const trackStore = new TrackStore(JSON.parse(kvGet(db, 'vod_tracks') ?? '{}'), (entries) => kvSet(db, 'vod_tracks', JSON.stringify(Object.fromEntries(entries))),
+  (id, t) => facts.recordProbe(id, t));
 const events = new EventsIndex(db, catalog);
 const tmdb = new Tmdb(db, process.env.TMDB_API_KEY || process.env.TMDB_TOKEN || null, (m) => app.log.warn(m));
 const details = new ProviderDetails(db, provider, catalog);
@@ -90,7 +91,7 @@ const hub = new Hub({
     try { await slot.clear(); await transcoder.releaseExcept(deviceId); } finally { release(); }
   },
   txMode: (item) => facts.browserNeeds(item.id),
-  interlaced: (item) => item.kind === 'live' && !!prober.results([Number(item.id.slice(1))]).get(Number(item.id.slice(1)))?.interlaced,
+  interlaced: (item) => item.kind === 'live' && !item.catchup && !!facts.source(item.id)?.interlaced,
   allowed: (item) => catalog.playable(item),
   log: (m) => app.log.info(m),
 });

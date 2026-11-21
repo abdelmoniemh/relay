@@ -12,6 +12,8 @@ export interface Worker {
   stop(): Promise<void>;
   /** The connection is free: start if there's work. */
   kick(): void;
+  /** Has work queued. */
+  wants(): boolean;
 }
 
 /** The provider keeps counting a connection for a moment after it's closed. */
@@ -26,7 +28,16 @@ export class ProviderSlot {
   hold(h: Holder) { this.holders.push(h); }
   work(w: Worker) { this.workers.push(w); }
 
-  mayRun(w: Worker) { return !this.claims && !this.holders.some((h) => h.active()) && !this.workers.some((o) => o !== w && o.busy); }
+  /** The worker that had the last turn: workers take turns, one job each, so none starves the other. */
+  private last: Worker | null = null;
+
+  mayRun(w: Worker) {
+    if (this.claims || this.holders.some((h) => h.active()) || this.workers.some((o) => o !== w && o.busy)) return false;
+    const waiting = this.workers.filter((o) => o !== w && o.wants());
+    if (this.last === w && waiting.length) { this.last = null; setTimeout(() => waiting.forEach((o) => o.kick()), 0); return false; }
+    this.last = w;
+    return true;
+  }
 
   /** Keep background work out until the returned function is called (e.g. while a device is being granted). */
   claim(): () => void {

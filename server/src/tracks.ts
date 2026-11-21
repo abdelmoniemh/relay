@@ -6,7 +6,18 @@ import { lang2, sameLang } from '../../shared/domain.ts';
 export interface AudioTrack { n: number; lang: string | null; title: string | null; codec: string; channels: number | null; def: boolean }
 export interface SubTrack { n: number; lang: string | null; title: string | null; codec: string; forced: boolean; sdh: boolean; text: boolean }
 export interface Chapter { start: number; end: number; title: string }
-export interface Tracks { vcodec: string | null; audio: AudioTrack[]; subs: SubTrack[]; chapters?: Chapter[]; duration?: number | null }
+export interface Tracks {
+  vcodec: string | null; audio: AudioTrack[]; subs: SubTrack[]; chapters?: Chapter[]; duration?: number | null;
+  video?: { width: number | null; height: number | null; hdr: 'dv' | 'hdr10' | 'hlg' | 'sdr' } | null;
+}
+
+/** HDR format of a video stream: Dolby Vision is in its side data, HDR10 / HLG in its transfer. */
+export function hdrOf(s: any): 'dv' | 'hdr10' | 'hlg' | 'sdr' {
+  if ((s.side_data_list ?? []).some((d: any) => /DOVI|Dolby Vision/i.test(d.side_data_type ?? ''))) return 'dv';
+  if (s.color_transfer === 'smpte2084') return 'hdr10';
+  if (s.color_transfer === 'arib-std-b67') return 'hlg';
+  return 'sdr';
+}
 
 /** Where to offer "skip intro" / "skip recap", and where the credits start (next episode shows from there). */
 export interface Markers { intro?: [number, number]; recap?: [number, number]; credits?: number }
@@ -52,14 +63,15 @@ export function parseTracks(json: string): Tracks {
         sdh: !!st.disposition?.hearing_impaired || /\bsdh\b|\bcc\b|hearing/.test(t), text: TEXT_SUBS.has(st.codec_name) });
     }
   }
-  return { vcodec: video?.codec_name ?? null, audio, subs, chapters, duration };
+  return { vcodec: video?.codec_name ?? null, audio, subs, chapters, duration,
+    video: video ? { width: video.width ?? null, height: video.height ?? null, hdr: hdrOf(video) } : null };
 }
 
 /** Reads the track list (only the start of the file is needed: through the VOD proxy this is usually from memory). */
 export function probeTracks(url: string, timeoutMs = 12_000): Promise<Tracks> {
   return new Promise((resolve, reject) => {
     execFile('ffprobe', ['-v', 'error', '-user_agent', USER_AGENT, '-probesize', '2M', '-analyzeduration', '0',
-      '-show_chapters', '-show_entries', 'format=duration:stream=index,codec_type,codec_name,channels:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,attached_pic',
+      '-show_chapters', '-show_entries', 'format=duration:stream=index,codec_type,codec_name,channels,width,height,color_transfer,side_data_list:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired,attached_pic',
       '-of', 'json', url], { timeout: timeoutMs, maxBuffer: 4 << 20 }, (err, out) => {
       if (err) return reject(err);
       try { resolve(parseTracks(out)); } catch (e) { reject(e); }
@@ -74,9 +86,12 @@ export function probeTracks(url: string, timeoutMs = 12_000): Promise<Tracks> {
 export class TrackStore {
   private cache: Map<string, Tracks>;
   private save: (entries: [string, Tracks][]) => void;
-  constructor(initial: Record<string, Tracks>, save: (entries: [string, Tracks][]) => void) {
+  private onProbed: (id: string, t: Tracks) => void;
+
+  /** `onProbed`: told about every fresh probe (MediaFacts keeps the movie's quality facts from it). */
+  constructor(initial: Record<string, Tracks>, save: (entries: [string, Tracks][]) => void, onProbed: (id: string, t: Tracks) => void = () => {}) {
     this.cache = new Map(Object.entries(initial));
-    this.save = save;
+    this.save = save; this.onProbed = onProbed;
   }
   /** Known, and read with chapters/duration (older entries were not). */
   get(id: string): Tracks | undefined { const t = this.cache.get(id); return t && t.chapters ? t : undefined; }
@@ -84,6 +99,7 @@ export class TrackStore {
     const t = await probeTracks(url);
     this.cache.set(id, t);
     this.save([...this.cache].slice(-3000));
+    this.onProbed(id, t);
     return t;
   }
 }
