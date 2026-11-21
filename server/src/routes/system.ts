@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { type ApiCtx, isLocal } from './http.ts';
 
 export function registerSystemRoutes(app: FastifyInstance, ctx: ApiCtx) {
-  const { db, catalog, auth, hub, provider, tmdb, library, tmdbTick, letterboxd, lbTick, catalogChanged } = ctx;
+  const { db, catalog, auth, hub, provider, tmdb, library, letterboxd, lbTick, catalogChanged } = ctx;
   app.get('/api/ping', async () => ({ ok: true, name: 'relay' }));
 
   app.post('/api/pair', async (req, reply) => {
@@ -31,17 +31,14 @@ export function registerSystemRoutes(app: FastifyInstance, ctx: ApiCtx) {
 
   app.put('/api/settings', async (req, reply) => {
     const b = req.body as { regions?: string[]; vodLangs?: string[]; tmdbKey?: string; letterboxd?: string };
-    if (typeof b.letterboxd === 'string') { letterboxd.setUser(b.letterboxd); library.invalidate(); if (letterboxd.user) lbTick(); }
-    if (Array.isArray(b.vodLangs)) { library.setLangs(b.vodLangs.map(String)); tmdbTick(); }
-    if (typeof b.tmdbKey === 'string') {
-      const k = b.tmdbKey.trim();
-      if (k && !(await tmdb.verify(k))) return reply.code(400).send({ error: 'TMDB rejected that key' });
-      tmdb.setKey(k);
-      library.invalidate();
-      if (k) tmdbTick();
-    }
+    // check first, so a rejected key doesn't leave the other changes half applied
+    const key = typeof b.tmdbKey === 'string' ? b.tmdbKey.trim() : null;
+    if (key && !(await tmdb.verify(key))) return reply.code(400).send({ error: 'TMDB rejected that key' });
+    if (typeof b.letterboxd === 'string') { letterboxd.setUser(b.letterboxd); if (letterboxd.user) lbTick(); }
+    if (Array.isArray(b.vodLangs)) library.setLangs(b.vodLangs.map(String));
+    if (key != null) tmdb.setKey(key);
     if (Array.isArray(b.regions)) catalog.setRegions(b.regions.map(String));
-    catalogChanged();
+    catalogChanged(); // what clients see may have changed: new version, rebuilt rows, titles to enrich
     return { ok: true };
   });
 

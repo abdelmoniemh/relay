@@ -100,14 +100,14 @@ export class Catalog {
   nowNext(chs: string[], now = Math.floor(Date.now() / 1000)): Record<string, Programme[]> {
     const out: Record<string, Programme[]> = {};
     const q = this.st(`SELECT start, stop, title, descr AS desc FROM epg WHERE ch = ? AND stop > ? ORDER BY start LIMIT 2`);
-    for (const ch of chs) out[ch] = q.all(ch, now) as unknown as Programme[];
+    for (const ch of chs) out[ch] = q.all(ch.toLowerCase(), now) as unknown as Programme[]; // guide ids are stored lowercased
     return out;
   }
 
   guide(chs: string[], from: number, to: number): Record<string, Programme[]> {
     const out: Record<string, Programme[]> = {};
     const q = this.st(`SELECT start, stop, title, descr AS desc FROM epg WHERE ch = ? AND stop > ? AND start < ? ORDER BY start`);
-    for (const ch of chs) out[ch] = q.all(ch, from, to) as unknown as Programme[];
+    for (const ch of chs) out[ch] = q.all(ch.toLowerCase(), from, to) as unknown as Programme[];
     return out;
   }
 

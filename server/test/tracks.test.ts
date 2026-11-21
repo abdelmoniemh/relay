@@ -85,7 +85,6 @@ test('subtitle playlists mirror the video segments; cues land in every segment t
 test('movie session end to end: all audio languages, subtitles in sync, readable names', { skip: !ok }, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'tracks-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  process.env.XDG_CACHE_HOME = dir; // the Transcoder clears its HLS folder on start: never the real one
   const { Transcoder } = await import('../src/transcode.ts');
   const { vodLayout } = await import('../src/hls.ts');
   const srt = join(dir, 's.srt'), mkv = join(dir, 'm.mkv');
@@ -98,7 +97,7 @@ test('movie session end to end: all audio languages, subtitles in sync, readable
   const layout = vodLayout(tracks, pickAudio(tracks, 'en'));
   assert.deepEqual(layout.audio, [1, 0], 'preferred language first (it becomes the default rendition)');
 
-  const tx = new Transcoder();
+  const tx = new Transcoder(undefined, join(dir, 'hls')); // its own folder: the constructor empties it
   const r = await tx.startHls({ src: mkv, guess: tracks.vcodec, owner: null, layout });
   t.after(() => tx.stop());
   assert.equal(r.entry, 'master.m3u8');

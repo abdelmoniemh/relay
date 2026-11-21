@@ -20,11 +20,20 @@ const RELEASE_MS = 400;
 export class ProviderSlot {
   private holders: Holder[] = [];
   private workers: Worker[] = [];
+  /** Foreground uses about to start (between clearing the slot and holding it): background work waits. */
+  private claims = 0;
 
   hold(h: Holder) { this.holders.push(h); }
   work(w: Worker) { this.workers.push(w); }
 
-  mayRun(w: Worker) { return !this.holders.some((h) => h.active()) && !this.workers.some((o) => o !== w && o.busy); }
+  mayRun(w: Worker) { return !this.claims && !this.holders.some((h) => h.active()) && !this.workers.some((o) => o !== w && o.busy); }
+
+  /** Keep background work out until the returned function is called (e.g. while a device is being granted). */
+  claim(): () => void {
+    this.claims++;
+    let done = false;
+    return () => { if (done) return; done = true; this.claims--; if (!this.claims) this.released(); };
+  }
 
   /** A foreground use is starting: stop background work; resolves once its connection is closed (and let go). */
   async clear(): Promise<void> {

@@ -1,7 +1,7 @@
 import type { Item } from '../../../shared/protocol.ts';
 import { parseId } from '../../../shared/domain.ts';
 import type { FastifyInstance } from 'fastify';
-import { type ApiCtx } from './http.ts';
+import { type ApiCtx, clamp } from './http.ts';
 
 export function registerLibraryRoutes(app: FastifyInstance, ctx: ApiCtx) {
   const { db, userData, catalog, provider, prober, library, letterboxd, details } = ctx;
@@ -26,7 +26,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: ApiCtx) {
   app.get('/api/genres/:kind', async (req) => library.genres(vkind((req.params as any).kind)));
   app.get('/api/titles/:kind', async (req) => {
     const q = req.query as Record<string, string>;
-    return library.grid(vkind((req.params as any).kind), q, Math.max(0, Number(q.offset) || 0), Math.min(200, Number(q.limit) || 60));
+    return library.grid(vkind((req.params as any).kind), q, Math.max(0, Number(q.offset) || 0), clamp(q.limit, 1, 200, 60));
   });
   app.get('/api/title-search', async (req) => {
     const q = req.query as Record<string, string>;

@@ -38,3 +38,14 @@ test('clear() stops busy workers and waits; released() lets them start again', a
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(a.kicks, 2);
 });
+
+test('a claim keeps background work out until released (a device is being granted)', async () => {
+  const slot = new ProviderSlot();
+  const a = worker(slot);
+  const release = slot.claim();
+  a.kick();
+  assert.equal(a.kicks, 0);
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(a.kicks, 1, 'released: the worker is told it may run');
+});

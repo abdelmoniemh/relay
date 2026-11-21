@@ -199,7 +199,7 @@ async function syncEpg() {
   db.exec('BEGIN');
   try {
     db.exec('DELETE FROM epg');
-    const n = await parseXmltv(body, (r) => ins.run(r.ch, r.start, r.stop, r.title, r.desc ?? null), {
+    const n = await parseXmltv(body, (r) => ins.run(r.ch.toLowerCase(), r.start, r.stop, r.title, r.desc ?? null), {
       from: now - 36 * 3600, to: now + 3 * 86400, keep: used.size ? (ch) => used.has(ch.toLowerCase()) : undefined,
     });
     db.exec('COMMIT');

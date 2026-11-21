@@ -16,7 +16,7 @@ import { join } from 'node:path';
  * Where HLS sessions (iPhone movie playback) write their segments. On disk, not /tmp: /tmp is RAM here and
  * a whole movie (4K ≈ 20–40 GB) would fill it. Old segments are pruned while playing (HLS_KEEP_BEHIND).
  */
-const HLS_ROOT = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'relay-hls');
+export const DEFAULT_HLS_ROOT = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'relay-hls');
 /** Segments (4s each, so ≈20 min) kept behind the newest one the player asked for; seeking further back restarts. */
 const HLS_KEEP_BEHIND = 300;
 /** No playlist/segment request for this long (app closed, phone locked): free the provider connection. */
@@ -67,14 +67,17 @@ export class Transcoder {
   /** Current HLS session (iPhone/iPad Safari can't play MKV/AVI, raw MPEG-TS or HEVC in TS-based HLS, but plays fMP4 HLS natively). */
   private hls: { sid: string; dir: string; proc: Proc; lastHit: number; pruned: number; layout: VodLayout | null } | null = null;
 
-  constructor(slot: ProviderSlot = new ProviderSlot()) {
-    this.slot = slot;
+  private root: string;
+
+  /** `root`: where sessions write their segments (tests use their own folder: it's emptied on start). */
+  constructor(slot: ProviderSlot = new ProviderSlot(), root = DEFAULT_HLS_ROOT) {
+    this.slot = slot; this.root = root;
     slot.hold({ active: () => !!this.current || this.claims > 0 });
     let ok = true;
     try { execFileSync('ffmpeg', ['-version'], { timeout: 5000 }); } catch { ok = false; }
     this.available = ok;
     this.gpu = ok && detectGpu();
-    for (const d of [HLS_ROOT, join(tmpdir(), 'relay-hls')]) { try { rmSync(d, { recursive: true, force: true }); } catch {} }
+    for (const d of root === DEFAULT_HLS_ROOT ? [root, join(tmpdir(), 'relay-hls')] : [root]) { try { rmSync(d, { recursive: true, force: true }); } catch {} }
     setInterval(() => {
       const h = this.hls;
       if (h && h.proc.exitCode === null && h.proc.signalCode === null && Date.now() - h.lastHit > HLS_IDLE_MS) this.stop();
@@ -94,15 +97,19 @@ export class Transcoder {
     const log = o.log ?? (() => {});
     const startAt = live ? 0 : o.startAt ?? 0;
     const files = sessionFiles(layout);
+    // A newer start (seek, switch) supersedes this one: it must give up, never kill the newer one's process.
+    const my = ++this.startGen;
+    const gone = () => my !== this.startGen;
     await this.stop();
     await Promise.all([...this.dying]);
     await this.slot.clear();
     let vcodec = o.guess, lastErr = '', corrected = false;
     for (let attempt = 0; attempt < 3;) {
       if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
+      if (gone()) throw new Error('superseded');
       const t0 = Date.now();
       const sid = randomBytes(12).toString('base64url');
-      const dir = join(HLS_ROOT, sid);
+      const dir = join(this.root, sid);
       mkdirSync(dir, { recursive: true });
       const gpu = this.gpu && attempt < 2;
       const plan = videoPlan(vcodec, low);
@@ -142,7 +149,8 @@ export class Transcoder {
         log(`hls started in ${Date.now() - t0}ms (${live ? 'live, ' : ''}${how}${langs}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
         return { sid, vcodec: detected ?? vcodec, entry: files.entry };
       } catch (e) {
-        await this.stop();
+        if (this.current === proc) await this.stop(); else if (proc.exitCode === null) proc.kill('SIGKILL');
+        if (gone()) throw new Error('superseded');
         if ((e as Error).message === 'codec' && !corrected) {
           log(`hls: source is ${detected}, not ${vcodec ?? 'unknown'}: restarting`);
           vcodec = detected!; corrected = true;
@@ -250,7 +258,7 @@ export class Transcoder {
           proc.once('exit', (code, sig) => { clearTimeout(timer); reject(new Error(`ffmpeg exited ${code ?? sig}: ${stderr.trim().split('\n').pop() ?? ''}`)); });
         });
         if (gone()) { if (this.current === proc) await this.stop(); else proc.kill('SIGKILL'); throw new Error('superseded'); }
-        log(`transcode started (${opts.mode === 'audio' ? 'audio only' : gpu ? 'nvenc' : 'x264'}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
+        log(`transcode started (${!opts.low && opts.mode === 'audio' ? 'audio only' : `${opts.low ? 'data saver ' : ''}${gpu ? 'nvenc' : 'x264'}`}${startAt ? ` @${Math.round(startAt)}s` : ''}, attempt ${attempt + 1})`);
         return { proc, first };
       } catch (e) {
         lastErr = (e as Error).message;

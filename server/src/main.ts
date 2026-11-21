@@ -32,6 +32,8 @@ import { Library } from './library.ts';
 import { Letterboxd } from './letterboxd.ts';
 import type { Item } from '../../shared/protocol.ts';
 
+// first: every service below logs through it
+const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transport: undefined }, trustProxy: false });
 const provider = new Provider(parseProvider());
 const db = openDb(config.dbPath);
 const catalog = new Catalog(db);
@@ -83,8 +85,9 @@ const hub = new Hub({
   urls: (item) => provider.urls(item),
   leaseMoved: async (deviceId) => {
     // Free every server-side use of the provider connection before the new device starts.
-    await slot.clear();
-    await transcoder.releaseExcept(deviceId);
+    // held until the hub has set the lease (it then counts as a holder): no probe can slip in meanwhile
+    const release = slot.claim();
+    try { await slot.clear(); await transcoder.releaseExcept(deviceId); } finally { release(); }
   },
   txMode: (item) => facts.browserNeeds(item.id),
   interlaced: (item) => item.kind === 'live' && !!prober.results([Number(item.id.slice(1))]).get(Number(item.id.slice(1)))?.interlaced,
@@ -94,7 +97,6 @@ const hub = new Hub({
 // A device streaming straight from the provider holds the connection too.
 slot.hold({ active: () => hub.streamActive() });
 
-const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transport: undefined }, trustProxy: false });
 await app.register(cors, { origin: true });
 await app.register(compress, { threshold: 1024, brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 4 } }, zlibOptions: { level: 5 } });
 await app.register(websocket);

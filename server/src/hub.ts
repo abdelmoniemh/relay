@@ -152,7 +152,12 @@ export class Hub {
           this.persist(l);
           const waiter = this.stopWaiters.get(deviceId);
           if (waiter) waiter(); // handoff in progress: play() will replace the lease
-          else { this.lease = null; this.deps.leaseMoved?.(null); this.broadcastState(); }
+          else {
+            this.lease = null;
+            this.broadcastState();
+            // freeing the server's own uses of the connection is a lease change like any other: serialized with play()
+            await this.exclusive(async () => { await this.deps.leaseMoved?.(null); });
+          }
         } else {
           this.stopWaiters.get(deviceId)?.();
         }

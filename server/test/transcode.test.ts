@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Transcoder } from '../src/transcode.ts';
 
-const tx = new Transcoder();
+// its own HLS folder: the constructor empties it, and the real one may be in use by the running server
+const tx = new Transcoder(undefined, mkdtempSync(join(tmpdir(), 'relay-hls-test-')));
 
 test('end to end: an interlaced live source comes out progressive at field rate, playable', { skip: !tx.available, timeout: 60_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'relay-tx-'));
@@ -46,4 +47,18 @@ test('a newer start supersedes one still starting (no fight over the provider co
     const ac = new AbortController(); ac.abort();
     await assert.rejects(tx.start(src, 0, () => {}, 'pc', { vod: true, signal: ac.signal }), /superseded/);
   } finally { await tx.stop(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('two HLS starts in a row (a seek): the older gives up, the newer plays', { skip: !tx.available, timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'relay-hls-'));
+  try {
+    const src = join(dir, 'in.mkv');
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=25', '-t', '30', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '25', src]);
+    const a = tx.startHls({ src, startAt: 2, guess: 'h264', owner: 'ph' });
+    const b = tx.startHls({ src, startAt: 12, guess: 'h264', owner: 'ph' });
+    await assert.rejects(a, /superseded/);
+    const r = await b;
+    assert.ok(tx.hlsFile(r.sid, r.entry), 'the newer session is the one running');
+    await tx.stop();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

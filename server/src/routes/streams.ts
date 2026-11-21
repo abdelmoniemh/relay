@@ -131,7 +131,10 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
         // Movie position at the stream's 0:00 (a keyframe at or before what was asked for).
         offset: from,
       };
-    } catch (e) { return reply.code(502).send({ error: `Conversion failed: ${(e as Error).message}` }); }
+    } catch (e) {
+      if ((e as Error).message === 'superseded') return reply.code(409).send({ error: 'superseded by a newer request' });
+      return reply.code(502).send({ error: `Conversion failed: ${(e as Error).message}` });
+    }
   });
   app.get('/api/hls/:sid/:file', async (req, reply) => {
     const { sid, file } = req.params as { sid: string; file: string };
