@@ -1,8 +1,8 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { Item } from '@shared/protocol.ts';
+import type { Item, TitleCard } from '@shared/protocol.ts';
 import { Icon, type IconName } from './Icon.tsx';
-import { Logo, NowLine } from './common.tsx';
+import { Logo, NowLine, stars, diaryStars } from './common.tsx';
 import { displayName } from '@shared/domain.ts';
 import { img } from '../env.ts';
 import { t } from '../i18n.ts';
@@ -173,5 +173,20 @@ export function EditSheet({ title, hint, initial, onSave, onClose }: {
         <Btn a={{ label: t('Save'), primary: true, act: () => { onSave(v.trim()); onClose(); } }} />
       </div>
     </Sheet>
+  );
+}
+
+/** A film / show as a poster: rating, progress, Letterboxd marks. */
+export function Card({ c, focused, onClick }: { c: TitleCard; focused: boolean; onClick?: () => void }) {
+  const sub = [c.progress?.label, c.year, stars(c.rating)].filter(Boolean).join(' · ');
+  return (
+    <PosterTile src={c.poster} title={c.name} sub={sub} focused={focused} onClick={onClick}
+      progress={c.progress && c.progress.duration > 0 ? c.progress.position / c.progress.duration : undefined}
+      badges={<>
+        {c.uhd && <span class="badge-4k">4K</span>}
+        {c.fresh && c.wl && <span class="badge-new">{t('NEW')}</span>}
+        {c.wl && !c.watched && <span class="badge-wl" title={t('On your Letterboxd watchlist')} />}
+        {c.watched ? <span class="badge-seen"><Icon n="check" />{typeof c.watched === 'number' ? ` ${diaryStars(c.watched)}` : ''}</span> : null}
+      </>} />
   );
 }

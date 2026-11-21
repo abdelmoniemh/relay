@@ -11,7 +11,7 @@ import {
   showToast,
 } from '../playback.ts';
 import { Sheet } from '../ui/kit.tsx';
-import { ProgrammesSheet } from '../ui/programmes.tsx';
+import { ProgrammesSheet } from '../features/programmes.tsx';
 import { useKeys, nowNext, epgVersion } from '../ui/hooks.ts';
 import { Logo } from '../ui/common.tsx';
 import { displayName } from '@shared/domain.ts';

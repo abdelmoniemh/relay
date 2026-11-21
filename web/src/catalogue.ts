@@ -14,3 +14,4 @@ export function openItem(it: Item) {
     .catch(() => push(it.kind === 'series' || it.kind === 'episode' ? { name: 'show', item: it } : { name: 'movie', item: it }));
 }
 
+export const openTitle = (tid: number) => push({ name: 'title', tid });

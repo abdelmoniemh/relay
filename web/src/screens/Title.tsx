@@ -11,7 +11,8 @@ import { Btn, IconBtn, Row, Sheet, type Action } from '../ui/kit.tsx';
 import { Icon } from '../ui/Icon.tsx';
 import { fmtTime, img, isTizen } from '../env.ts';
 import { t as tr, languageName } from '../i18n.ts';
-import { Card, openTitle } from './Browse.tsx';
+import { Card } from '../ui/kit.tsx';
+import { openTitle } from '../catalogue.ts';
 import { versionItem } from '@shared/domain.ts';
 
 type Ep = Item & { plot?: string; duration?: number };

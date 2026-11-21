@@ -11,7 +11,7 @@ import { clock, isMobile } from '../env.ts';
 import { Icon } from '../ui/Icon.tsx';
 import { t } from '../i18n.ts';
 import { previewBox, numbered } from '../player/placement.ts';
-import { ProgrammesSheet } from '../ui/programmes.tsx';
+import { ProgrammesSheet } from '../features/programmes.tsx';
 
 const FAV: Category = { id: '__fav', name: 'Favourites', count: 0 };
 const RECENT: Category = { id: '__recent', name: 'Recently watched', count: 0 };

@@ -1,32 +1,19 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { stars, diaryStars } from '../ui/common.tsx';
+import { stars } from '../ui/common.tsx';
+import { openTitle } from '../catalogue.ts';
 import { api, type BrowseRow, type TitleCard } from '../api.ts';
 import { push, go, back, navFocused, compact } from '../router.ts';
 import { play } from '../playback.ts';
 import { useAsync, useKeys, usePaged } from '../ui/hooks.ts';
 import { VList } from '../ui/VList.tsx';
-import { Billboard, PosterTile, Row, Segmented, SkeletonRow, IconBtn, type Action } from '../ui/kit.tsx';
+import { Billboard, Row, Segmented, SkeletonRow, IconBtn, type Action, Card } from '../ui/kit.tsx';
 import { Icon } from '../ui/Icon.tsx';
 import { isMobile, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
 import { versionItem } from '@shared/domain.ts';
 
 const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-export const openTitle = (tid: number) => push({ name: 'title', tid });
 
-export function Card({ c, focused, onClick }: { c: TitleCard; focused: boolean; onClick?: () => void; size?: 'md' | 'lg' }) {
-  const sub = [c.progress?.label, c.year, stars(c.rating)].filter(Boolean).join(' · ');
-  return (
-    <PosterTile src={c.poster} title={c.name} sub={sub} focused={focused} onClick={onClick}
-      progress={c.progress && c.progress.duration > 0 ? c.progress.position / c.progress.duration : undefined}
-      badges={<>
-        {c.uhd && <span class="badge-4k">4K</span>}
-        {c.fresh && c.wl && <span class="badge-new">{t('NEW')}</span>}
-        {c.wl && !c.watched && <span class="badge-wl" title={t('On your Letterboxd watchlist')} />}
-        {c.watched ? <span class="badge-seen"><Icon n="check" />{typeof c.watched === 'number' ? ` ${diaryStars(c.watched)}` : ''}</span> : null}
-      </>} />
-  );
-}
 
 /** Movies & TV: Movies | Series toggle, filter chips, billboard, then rows (Netflix-style). */
 export function Browse({ kind }: { kind: 'movie' | 'series' }) {

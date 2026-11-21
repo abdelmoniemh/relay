@@ -10,7 +10,7 @@ import { useAsync, useKeys, epgVersion } from '../ui/hooks.ts';
 import { displayName } from '@shared/domain.ts';
 import { Billboard, ChannelTile, IconBtn, PosterTile, Row, SkeletonRow, LivePill, QualityChip, type Action } from '../ui/kit.tsx';
 import { Icon, type IconName } from '../ui/Icon.tsx';
-import { Card } from './Browse.tsx';
+import { Card } from '../ui/kit.tsx';
 import { fmtTime, clock } from '../env.ts';
 import { t } from '../i18n.ts';
 import { openItem } from '../catalogue.ts';

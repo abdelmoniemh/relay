@@ -11,7 +11,7 @@ import { isMobile, startsAt } from '../env.ts';
 import { Btn, IconBtn, LivePill, QualityChip } from '../ui/kit.tsx';
 import { Icon } from '../ui/Icon.tsx';
 import { t, tn } from '../i18n.ts';
-import { RemindSheet } from '../ui/programmes.tsx';
+import { RemindSheet } from '../features/programmes.tsx';
 import { reminders, loadReminders, unremind } from '../notify.ts';
 
 const LABEL: Record<string, string> = {

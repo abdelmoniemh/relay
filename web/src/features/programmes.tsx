@@ -8,8 +8,8 @@ import { reminders, loadReminders, remind, unremind } from '../notify.ts';
 import { devices, deviceName } from '../ws.ts';
 import { clock, dayLabel, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
-import { Sheet, Btn } from './kit.tsx';
-import { Icon, deviceIcon } from './Icon.tsx';
+import { Sheet, Btn } from '../ui/kit.tsx';
+import { Icon, deviceIcon } from '../ui/Icon.tsx';
 
 import { displayName } from '@shared/domain.ts';
 
