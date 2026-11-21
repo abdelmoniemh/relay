@@ -260,12 +260,38 @@ change only, episode queue from the show page, seekBy, AVPlay paused, reminders 
 titleId. Final smoke test (real provider): catalogue, search, guide, events, titles, movie HLS start/seek/stop,
 4K HEVC live, catch-up, desktop conversion, extras, reminders, app served: all OK; 73 tests pass.
 
+## Round 2: applied (all of round 1's "left open")
+
+- Bugs: Send to TV ranked versions/sources for the sender (the receiver now picks); digit zap in Favourites/Recent.
+- Server: one movie header read (TrackStore → facts.recordProbe, also picture size/HDR); prober takes item ids;
+  workers take turns in the slot; routes off the db; one encoder profile choice; hls.servePlaylist; catalog.titleOf/syncedAt.
+- Web: shared/streams.ts (paths + query, wire format pinned by a test; players build URLs); one rating scale
+  (stars/diaryStars); languageName; dayLabel/startsAt; one breakpoint; toasts translated; Card → ui/kit,
+  programmes sheet → features/; granted.uhd from the server.
+
+## Re-check round 2 (subagents): fixed
+
+- slot.mayRun() changed state and was called several times per job: the prefetcher never ran while the prober had work
+  (mayRun only asks now; takeTurn once per job). Verified live: probes and file reads alternate.
+- Prober: wants() true while at its hourly cap; a "no data" abort taken for "someone pressed play" (dead channels retried
+  forever). Track reads couldn't be aborted (Play waited up to 12s). Old track cache entries never re-read.
+- Ratings out of 10 stored as out of 5 by the sync (rating5()). uhd: measurement before the name. Background event checks
+  take the best-claimed 25 copies.
+- Web: a sent film reached an older TV build as t123 (server now resolves to a version + titleId; verified over WS);
+  Send to lost position and match; a double grant killed the stream; a refused play spun forever; AVPlay reported failures
+  twice; no language names on the TV (no Intl.DisplayNames); digit zap past a list's end played another channel.
+
 ## Left open (worth doing, not done in this pass)
 
-- Stream request contract in shared/ (players building their own URLs; labelled `granted.urls`) — fix 9 remainder.
-- One movie header probe (prober's vod probe and TrackStore both read it); facts.browserNeeds also giving `interlaced`.
-- Prober keyed by numeric sid: ids still split by hand around it; prober/prefetcher still poll (no lease-ended signal).
-- media.ts profile choice duplicated, `maxHeight` implying the mobile profile; isSessionFile re-spelling names.
-- Services.db still lets routes query `items`; client: rating scales, LANG_NAME, day/kickoff formatters,
-  breakpoint copy, ui/programmes.tsx importing playback, Browse exports used by other screens, Remote ranking
-  versions for the phone instead of the TV, digit zap in Favourites/Recent.
+- One provider-prefix regex (shared/domain displayName, quality.claimed, normalize, events differ: {2,4} vs {2,5}, NFKC).
+- One "4K/HEVC from the name" function (quality.claimed, facts.videoCodec, vod.ts vq); the web still also checks
+  src.height for uhd (older TV builds need it; drop once the TV is rebuilt).
+- library.ts builds item ids by hand and reads vod_probes that facts writes (ask facts / use itemId).
+- MediaFacts reads `items` itself and is wired to TrackStore through a closure declared before it (subscribe in its
+  constructor); hub txMode/interlaced/uhd as one grantFlags(item).
+- Workers still poll (1.5s / 20s) as a fallback to slot.released().
+- Web: response types hand-copied in api.ts (LbStatus, Status, Extras); push cache name/key in notify.ts and sw.js
+  (sw.js text English-only); ui/hooks.ts imports api (EPG cache → features/); Remote embeds the Search screen;
+  env.ts imports i18n for the date helpers (move to a format module); 'Home'/'Browse' play a film's version at 0 instead
+  of playTitle; ~15 unused exports (host.tsx fullscreen/pip helpers, playback friendlyError/preconnect/…, notify,
+  features/programmes reminderFor); dead ' · unverified' strip (kit.tsx, host.tsx) and the 'Tmrw' key.
