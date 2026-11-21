@@ -18,7 +18,7 @@ export function rateScore(kbps: number, w: number, h: number, fps: number, hevc:
   return 20 * Math.min(1.25, bpp / 0.08); // ~0.08 bits/pixel = clean H.264 at broadcast rates
 }
 
-function claimed(name: string) {
+export function claimed(name: string) {
   // ignore brand prefixes like "8K:" / "4K|" - they aren't the stream's quality
   const n = name.normalize('NFKC').toUpperCase().replace(/^\s*[A-Z0-9]{2,5}\s*[|:]\s*/, '');
   const height = /\b(UHD|4K|8K|3840|2160)/.test(n) ? 2160 : /\b(FHD|1080)/.test(n) ? 1080 : /\bHD\b|RAW/.test(n) ? 1080 : /\b(SD|LQ|576|480)\b/.test(n) ? 480 : 720;

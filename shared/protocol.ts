@@ -79,7 +79,8 @@ export type ServerMsg =
   | { t: 'state'; devices: DeviceInfo[]; lease: Lease | null }
   // tx: browsers can't play it as it is ('full' = the video, 'audio' = only the audio): use the server's conversion.
   // interlaced: browsers don't deinterlace.
-  | { t: 'granted'; item: Item; startAt: number; urls: string[]; tx?: 'full' | 'audio'; interlaced?: boolean }
+  // uhd: a 4K stream (measured, or claimed by the name): the TV must switch its player to 4K mode.
+  | { t: 'granted'; item: Item; startAt: number; urls: string[]; tx?: 'full' | 'audio'; interlaced?: boolean; uhd?: boolean }
   | { t: 'stop'; reason: 'handoff' | 'remote'; to?: string }
   | { t: 'play'; item: Item; startAt?: number; from: string; eventId?: string } // asked to start playing (send-to)
   | { t: 'remote'; cmd: RemoteCmd; arg?: number | string; from: string }

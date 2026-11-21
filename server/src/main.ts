@@ -17,6 +17,7 @@ import { scheduleSync } from './sync.ts';
 import { Provider } from './xtream.ts';
 import { Transcoder } from './transcode.ts';
 import { MediaFacts } from './facts.ts';
+import { claimed } from './quality.ts';
 import { UserData } from './userdata.ts';
 import { ProviderDetails } from './details.ts';
 import { kvGet, kvSet } from './db.ts';
@@ -86,6 +87,7 @@ const hub = new Hub({
   },
   txMode: (item) => facts.browserNeeds(item.id),
   interlaced: (item) => item.kind === 'live' && !item.catchup && !!facts.source(item.id)?.interlaced,
+  uhd: (item) => (facts.source(item.id)?.height ?? 0) >= 2000 || claimed(item.name).height >= 2160,
   allowed: (item) => catalog.playable(item),
   log: (m) => app.log.info(m),
 });

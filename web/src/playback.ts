@@ -101,6 +101,7 @@ let lastStart = 0;
 let lastHevc = false;
 let lastTx: 'full' | 'audio' | undefined;
 let lastInterlaced = false;
+let lastUhd = false;
 
 export function showToast(msg: string, ms = 3500) {
   toast.value = msg;
@@ -175,7 +176,7 @@ function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
   const src = sources.value.find((s) => s.item.id === item.id);
   return {
     // 4K by measurement, not just by name (the TV needs SET_MODE_4K for a 4K stream)
-    startAt, live: isLiveNow(item), uhd: /4K|UHD|2160/i.test(item.name) || (src?.height ?? 0) >= 2000, id: item.id,
+    startAt, live: isLiveNow(item), uhd: lastUhd || (src?.height ?? 0) >= 2000, id: item.id,
     stream: { base: server.value, id: item.id, query: { token: token.value ?? '', ext: item.ext, cs: cu?.start, ce: cu?.stop, q: low ? 'low' as const : undefined } },
     catchup: !!cu, hevc: hevc || !!src?.hevc,
     lowLatency: isLiveNow(item) && !!sourceEvent.value && lowLatencySports.value,
@@ -369,7 +370,7 @@ function onGranted(m: Extract<ServerMsg, { t: 'granted' }>, player: Player) {
   if (pending) mode.value = pending.mode;
   pending = null;
   status.value = 'loading';
-  lastUrls = m.urls; lastStart = m.startAt; lastHevc = m.tx === 'full'; lastTx = m.tx; lastInterlaced = !!m.interlaced; retried = false;
+  lastUrls = m.urls; lastStart = m.startAt; lastHevc = m.tx === 'full'; lastTx = m.tx; lastInterlaced = !!m.interlaced; lastUhd = !!m.uhd; retried = false;
   extras.value = null; creditsShown = null;
   if (item.kind === 'movie' || item.kind === 'episode') {
     api.extras(item.id).then((x) => { if (current.value?.id === item.id) extras.value = x; }).catch(() => {});
