@@ -5,6 +5,7 @@ import { pickAudio, pickSub, trackName, keyframeAt, type Tracks } from '../track
 import { vodLayout, sessionFiles, parseSubName, subName, subtitlePlaylist, subtitleSegment, servePlaylist } from '../hls.ts';
 import { videoPlan } from '../media.ts';
 import type { FastifyInstance } from 'fastify';
+import { readStreamQuery, type StreamQuery, type HlsStarted } from '../../../shared/streams.ts';
 import { type ApiCtx } from './http.ts';
 
 export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
@@ -20,26 +21,26 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
   /** A movie/episode's file through the proxy, for the background prefetcher. */
   const vodSrc = (id: string, ext?: string) => () => { const { kind } = parseId(id); return vodProxy.url(provider.source({ id, kind: kind ?? 'movie', ext })); };
   // Catch-up: a programme from a channel's archive (?cs=<start>&ce=<stop>, unix seconds; ?start= seconds into it).
-  const catchupOf = (sid: number, q: Record<string, string>) => {
-    const cs = Number(q.cs), ce = Number(q.ce);
+  const catchupOf = (sid: number, q: StreamQuery) => {
+    const { cs, ce } = q;
     if (!cs || !ce) return null;
     const days = catalog.get(itemId('live', sid))?.archive ?? 0;
     const now = Date.now() / 1000;
     if (!days || ce <= cs || cs > now || cs < now - days * 86400 - 600) throw new Error(days ? 'That programme is outside this channel\'s archive' : 'This channel has no catch-up');
-    return provider.catchup(sid, { start: cs, stop: ce }, Number(q.start) || 0, now);
+    return provider.catchup(sid, { start: cs, stop: ce }, q.start ?? 0, now);
   };
   // For the TV, which plays the archive stream itself (whole minutes).
   app.get('/api/catchup/:id', async (req, reply) => {
     const id = String((req.params as any).id).replace(/\.ts$/, '');
     const { kind, sid } = parseId(id);
     if (kind !== 'live') return reply.code(400).send({ error: 'bad id' });
-    try { const c = catchupOf(sid, req.query as Record<string, string>); return c ? reply.redirect(c.url) : reply.code(400).send({ error: 'cs/ce required' }); }
+    try { const c = catchupOf(sid, readStreamQuery(req.query as Record<string, string>)); return c ? reply.redirect(c.url) : reply.code(400).send({ error: 'cs/ce required' }); }
     catch (e) { return reply.code(404).send({ error: (e as Error).message }); }
   });
 
   // HEVC -> H.264 stream for browsers without an HEVC decoder. Raw MPEG-TS, consumed by mpegts.js.
   /** A stream request, checked, and the source the server reads (catch-up from the archive, files via the proxy). */
-  async function resolveSource(id: string, q: Record<string, string>) {
+  async function resolveSource(id: string, q: StreamQuery) {
     const { kind, sid } = parseId(id);
     if (!kind || kind === 'series') return { fail: [400, 'bad id'] as const };
     if (kind !== 'episode' && !catalog.playable({ id, kind })) return { fail: [404, 'not found'] as const };
@@ -54,21 +55,21 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
 
   app.get('/api/transcode/:id', async (req, reply) => {
     const id = String((req.params as any).id).replace(/\.ts$/, '');
-    const q = req.query as Record<string, string>;
+    const q = readStreamQuery(req.query as Record<string, string>);
     const r = await resolveSource(id, q);
     if (r.fail) return reply.code(r.fail[0]).send({ error: r.fail[1] });
     const { kind, live, catchup: cu, src } = r;
     const mode = q.mode === 'audio' ? 'audio' : 'full';
-    if (q.failed === '1') facts.learn(id, mode); // this browser couldn't play the original
+    if (q.failed) facts.learn(id, mode); // this browser couldn't play the original
     let started;
     // The player gave up on this request (seeked, switched, closed): don't keep starting ffmpeg for it.
     const ac = new AbortController();
     req.raw.socket?.once('close', () => ac.abort());
     // Movies: the preferred audio language when the file's track list is known (from an earlier play).
     const known = kind !== 'live' ? trackStore.get(id) : undefined;
-    if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext)); // markers & thumbnails, once it's idle
+    if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext ?? undefined)); // markers & thumbnails, once it's idle
     const audio = known && q.alang ? pickAudio(known, q.alang) : undefined;
-    try { started = await transcoder.start(src, cu ? 0 : Number(q.start) || 0, (m) => app.log.warn(m), req.deviceId, { vod: !live, mode, info: facts.source(id), signal: ac.signal, audio, skip: cu?.skip, low: q.q === 'low' }); }
+    try { started = await transcoder.start(src, cu ? 0 : q.start ?? 0, (m) => app.log.warn(m), req.deviceId, { vod: !live, mode, info: facts.source(id), signal: ac.signal, audio, skip: cu?.skip, low: q.q === 'low' }); }
     catch (e) {
       if ((e as Error).message === 'superseded') return reply.code(409).send({ error: 'superseded by a newer request' });
       return reply.code(502).send({ error: `Transcode failed: ${(e as Error).message}` });
@@ -91,7 +92,7 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
   // Video codec per title, learned from earlier plays/probes; decides copy (instant, lossless) vs conversion.
   app.post('/api/hls/:id', async (req, reply) => {
     const id = String((req.params as any).id);
-    const q = req.query as Record<string, string>;
+    const q = readStreamQuery(req.query as Record<string, string>);
     const r = await resolveSource(id, q);
     if (r.fail) return reply.code(r.fail[0]).send({ error: r.fail[1] });
     const { kind, live, catchup: cu, src } = r;
@@ -99,7 +100,7 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
     const guess = cu ? (facts.source(id)?.vcodec ?? 'h264') : facts.videoCodec(id, q.ext);
     // Movies: every audio language (iOS lists them in its menu), subtitles, the preferred ones selected.
     const tracks = kind === 'live' ? null : await tracksOf(id, src);
-    if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext));
+    if (kind !== 'live') prefetcher.want(id, vodSrc(id, q.ext ?? undefined));
     const defAudio = tracks ? pickAudio(tracks, q.alang || null) : -1;
     const layout = tracks?.vcodec ? vodLayout(tracks, defAudio) : null;
     const defSub = tracks ? pickSub(tracks, q.slang || null, tracks.audio.find((a) => a.n === defAudio)?.lang ?? null) : -1;
@@ -108,7 +109,7 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
     // Data saver: always re-encoded (720p ~3 Mbps), which also makes seeks exact without the keyframe step.
     const low = q.q === 'low';
     const info = facts.source(id) ?? (tracks ? { vcodec: tracks.vcodec } : null);
-    const want = !live && !cu ? Math.max(0, Number(q.start) || 0) : 0;
+    const want = !live && !cu ? Math.max(0, q.start ?? 0) : 0;
     let from = want;
     if (want > 0 && videoPlan(tracks?.vcodec ?? guess, low) === 'copy') {
       try { from = await transcoder.withConnection(() => keyframeAt(src, Math.max(0, want - SEEK_PREROLL))); } catch (e) { app.log.warn(`keyframe ${id} @${want}: ${(e as Error).message.split('\n')[0]}`); }
@@ -119,7 +120,7 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
       // often fails only because the provider still counts the previous connection.)
       if (live && r.vcodec === 'hevc') facts.learn(id, 'full');
       const tok = encodeURIComponent(String(q.token ?? ''));
-      return {
+      const started: HlsStarted = {
         url: `/api/hls/${r.sid}/${r.entry}?token=${tok}${layout && defSub >= 0 && layout.subs.includes(defSub) ? `&ds=${defSub}` : ''}`,
         /** DELETE this to end the session (frees the provider connection right away). */
         stop: `/api/hls/${r.sid}?token=${tok}`,
@@ -130,6 +131,7 @@ export function registerStreamsRoutes(app: FastifyInstance, ctx: ApiCtx) {
         // Movie position at the stream's 0:00 (a keyframe at or before what was asked for).
         offset: from,
       };
+      return started;
     } catch (e) {
       if ((e as Error).message === 'superseded') return reply.code(409).send({ error: 'superseded by a newer request' });
       return reply.code(502).send({ error: `Conversion failed: ${(e as Error).message}` });

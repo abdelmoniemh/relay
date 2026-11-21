@@ -1,4 +1,5 @@
 import type { LoadOpts, MediaTracks, Player, PlayerEvent, PlayError } from './types.ts';
+import { streamUrl, type StreamQuery, type HlsStarted } from '@shared/streams.ts';
 import { isIOS, canHevc } from '../env.ts';
 import { api } from '../api.ts';
 
@@ -17,6 +18,11 @@ export class Html5Player implements Player {
   private engine: { destroy(): void } | null = null;
   private cb: (e: PlayerEvent, d?: string, raw?: string) => void = () => {};
   private fail(why: PlayError, raw?: string) { this.cb('error', why, raw); }
+  /** A server version of what's loaded (conversion, HLS session), with this request's own fields. */
+  private url(kind: 'transcode' | 'hls', extra: StreamQuery = {}) {
+    const st = this.opts!.stream!;
+    return streamUrl(st.base, kind, st.id, { ...st.query, ...extra });
+  }
   private gen = 0;
   private mse = typeof MediaSource !== 'undefined' || typeof (window as any).ManagedMediaSource !== 'undefined';
   private nativeHls: boolean;
@@ -89,7 +95,7 @@ export class Html5Player implements Player {
    * (Apple only takes HEVC in fMP4), which is how the provider sends its 4K channels: fall back to the server,
    * which repackages them into fMP4 HLS without re-encoding.
    */
-  private isDirectLiveHls() { return !!this.opts?.live && this.nativeHls && !!this.opts.hlsUrl && !this.hlsSession; }
+  private isDirectLiveHls() { return !!this.opts?.live && this.nativeHls && !!this.opts.stream && !this.hlsSession; }
 
   private toLiveHls() {
     this.cb('waiting');
@@ -136,7 +142,7 @@ export class Html5Player implements Player {
   }
 
   /** Playing a movie file as-is, with a conversion to fall back on if this browser can't decode it. */
-  private isDirectVod() { return !!this.opts && !this.opts.live && this.txOffset === null && !!(this.nativeHls ? this.opts.hlsUrl : this.opts.transcodeUrl); }
+  private isDirectVod() { return !!this.opts && !this.opts.live && this.txOffset === null && !!this.opts.stream; }
 
   async load(urls: string[], o: LoadOpts) {
     this.stop();
@@ -150,21 +156,21 @@ export class Html5Player implements Player {
     if (o.live && ts && this.mse && !this.nativeHls) {
       // Channels we already know are HEVC go straight to the server's GPU transcode: no failed first attempt.
       // Data saver: always the server's (smaller) version.
-      const useTx = !!o.transcodeUrl && (!!o.lowData || (!canHevc && !!o.hevc) || !!o.interlaced);
-      if (await this.mpegts(useTx ? o.transcodeUrl! : ts, gen, useTx ? undefined : o)) return;
+      const useTx = !!o.stream && (!!o.lowData || (!canHevc && !!o.hevc) || !!o.interlaced);
+      if (await this.mpegts(useTx ? this.url('transcode') : ts, gen, useTx ? undefined : o)) return;
     }
-    if (o.live && this.nativeHls && o.hlsUrl && (o.hevc || o.lowData)) {
+    if (o.live && this.nativeHls && o.stream && (o.hevc || o.lowData)) {
       // iPhone, channel known to be HEVC (the provider's HLS won't play) or data saver: the server's version.
       this.startLiveHls();
       return;
     }
-    if (!o.live && this.nativeHls && o.hlsUrl && (o.lowData || !/\.(mp4|m4v|mov)$/i.test(urls[0] ?? ''))) {
+    if (!o.live && this.nativeHls && o.stream && (o.lowData || !/\.(mp4|m4v|mov)$/i.test(urls[0] ?? ''))) {
       // iPhone Safari can't open MKV/AVI at all: straight to the server's HLS version.
       this.startVodTranscode('full', o.startAt);
       return;
     }
-    if (!o.live && o.lowData && o.transcodeUrl && this.mse && !this.nativeHls) { this.startVodTranscode('full', o.startAt); return; }
-    if (!o.live && o.tx && o.transcodeUrl && this.mse && !this.nativeHls && !(o.tx === 'full' && canHevc)) {
+    if (!o.live && o.lowData && o.stream && this.mse && !this.nativeHls) { this.startVodTranscode('full', o.startAt); return; }
+    if (!o.live && o.tx && o.stream && this.mse && !this.nativeHls && !(o.tx === 'full' && canHevc)) {
       // Known not to play directly here: go straight to the conversion.
       this.startVodTranscode(o.tx, o.startAt);
       return;
@@ -210,7 +216,7 @@ export class Html5Player implements Player {
 
   /** The original didn't play here: convert it, and tell the server (every device skips the failed try next time). */
   private toVodTranscode(mode: TxMode, at: number) {
-    if (!this.opts?.transcodeUrl) return;
+    if (!this.opts?.stream) return;
     this.failed = true;
     this.cb('waiting');
     this.startVodTranscode(mode, at);
@@ -226,18 +232,17 @@ export class Html5Player implements Player {
     this.txOffset = Math.max(0, Math.floor(at));
     this.parked = null;
     if (this.nativeHls) { this.releaseHls(); this.startHls(gen, this.txOffset); return; }
-    const url = `${this.opts!.transcodeUrl}&mode=${mode}&start=${this.txOffset}${this.failed ? '&failed=1' : ''}${this.opts!.alang ? `&alang=${encodeURIComponent(this.opts!.alang)}` : ''}`;
+    const url = this.url('transcode', { mode, start: this.txOffset, failed: this.failed, alang: this.opts!.alang });
     this.mpegts(url, gen);
   }
 
   /** iPhone/iPad: ask the server for an HLS version (of a movie from `start`, or of a channel) and play it natively. */
   private async startHls(gen: number, start: number) {
-    const base = this.opts!.hlsUrl!;
+    const o = this.opts!;
+    const base = o.stream!.base || location.origin;
     try {
-      const o = this.opts!;
-      const prefs = o.live ? '' : `&alang=${encodeURIComponent(o.alang ?? '')}&slang=${encodeURIComponent(o.slang ?? 'off')}`;
-      const r = await fetch(`${base}&start=${start}${prefs}`, { method: 'POST' });
-      const j = await r.json().catch(() => ({})) as { url?: string; error?: string; audio?: MediaTracks['audio']; subs?: MediaTracks['subs']; defSub?: number; offset?: number; stop?: string };
+      const r = await fetch(this.url('hls', { start, ...(o.live ? {} : { alang: o.alang, slang: o.slang ?? 'off' }) }), { method: 'POST' });
+      const j = await r.json().catch(() => ({})) as Partial<HlsStarted> & { error?: string };
       const url = j.url ? new URL(j.url, base).href : null;
       const stopUrl = j.stop ? new URL(j.stop, base).href : null;
       if (gen !== this.gen) { if (stopUrl) this.deleteHls(stopUrl); return; } // stopped/seeked meanwhile: don't hold the connection
@@ -343,18 +348,18 @@ export class Html5Player implements Player {
       // Free the provider connection first, then let the server open its own.
       this.engine?.destroy();
       this.engine = null;
-      this.mpegts(`${fallback!.transcodeUrl!}&failed=1`, gen);
+      this.mpegts(this.url('transcode', { failed: true }), gen);
     };
     p.on(mpegts.Events.ERROR, (type: string, detail: string, info: any) => {
       if (gen !== this.gen || switched) return;
-      if (fallback?.transcodeUrl && /hvc|hev|unsupported/i.test(`${detail} ${info?.msg ?? ''}`)) return toTranscode();
+      if (fallback?.stream && /hvc|hev|unsupported/i.test(`${detail} ${info?.msg ?? ''}`)) return toTranscode();
       this.fail(type === 'NetworkError' ? 'network' : type === 'MediaError' ? 'format' : 'other', `${type}: ${detail}`);
     });
     p.on(mpegts.Events.MEDIA_INFO, (mi: any) => {
       const codec = String(mi?.videoCodec ?? '');
       if (gen === this.gen) this.media = { fps: mi?.fps || undefined, vcodec: codec.startsWith('hvc') || codec.startsWith('hev') ? 'hevc' : codec.startsWith('avc') ? 'h264' : codec || undefined, transcoded: !fallback && url.includes('/api/transcode/') };
       if (gen !== this.gen || !codec || MediaSource.isTypeSupported(`video/mp4; codecs="${codec}"`)) return;
-      if (fallback?.transcodeUrl) return toTranscode();
+      if (fallback?.stream) return toTranscode();
       this.fail('format', `can't decode ${codec}`);
     });
     p.attachMediaElement(v);

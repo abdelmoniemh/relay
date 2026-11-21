@@ -1,4 +1,5 @@
 import { sameLang } from '@shared/domain.ts';
+import { streamUrl } from '@shared/streams.ts';
 import type { LoadOpts, Player, PlayerEvent } from './types.ts';
 
 /** Samsung Tizen hardware player: decodes TS/HLS/MKV natively, 4K capable, renders on a plane behind the web layer. */
@@ -25,10 +26,10 @@ export class AvPlayer implements Player {
   async load(urls: string[], o: LoadOpts) {
     this.stop();
     const gen = ++this.gen;
-    this.catchup = o.catchupUrl ? { urls, opts: o } : null;
-    this.base = o.catchupUrl ? Math.max(0, Math.floor(o.startAt)) : 0;
+    this.catchup = o.catchup && o.stream ? { urls, opts: o } : null;
+    this.base = this.catchup ? Math.max(0, Math.floor(o.startAt)) : 0;
     // TS for live: the hardware demuxer starts instantly without waiting for an HLS segment.
-    const url = o.catchupUrl ? `${o.catchupUrl}&start=${this.base}` : o.live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
+    const url = this.catchup ? streamUrl(o.stream!.base, 'catchup', o.stream!.id, { ...o.stream!.query, start: this.base }) : o.live ? (urls.find((u) => u.endsWith('.ts')) ?? urls[0]) : urls[0];
     const av = this.av;
     av.open(url);
     av.setListener({
@@ -45,7 +46,7 @@ export class AvPlayer implements Player {
     await new Promise<void>((resolve, reject) => av.prepareAsync(resolve, reject)).catch((e) => { if (gen === this.gen) this.cb('error', 'other', String(e)); throw e; });
     if (gen !== this.gen) return;
     if (!o.live && o.alang) this.pickAudio(o.alang);
-    if (o.startAt > 0 && !o.catchupUrl) await new Promise<void>((r) => av.seekTo(o.startAt * 1000, r, r));
+    if (o.startAt > 0 && !this.catchup) await new Promise<void>((r) => av.seekTo(o.startAt * 1000, r, r));
     av.play();
     this.isPaused = false;
     this.cb('playing');

@@ -172,17 +172,16 @@ export function friendlyError(why?: PlayError, raw?: string): string {
 function loadOpts(item: Item, startAt: number, hevc = lastHevc) {
   const cu = item.kind === 'live' ? item.catchup : null;
   const low = lowDataNow();
-  const q = new URLSearchParams({ token: token.value ?? '', ...(item.ext ? { ext: item.ext } : {}), ...(cu ? { cs: String(cu.start), ce: String(cu.stop) } : {}), ...(low ? { q: 'low' } : {}) });
   const src = sources.value.find((s) => s.item.id === item.id);
   return {
     // 4K by measurement, not just by name (the TV needs SET_MODE_4K for a 4K stream)
     startAt, live: isLiveNow(item), uhd: /4K|UHD|2160/i.test(item.name) || (src?.height ?? 0) >= 2000, id: item.id,
-    transcodeUrl: `${server.value}/api/transcode/${item.id}.ts?${q}`, hlsUrl: `${server.value}/api/hls/${item.id}?${q}`, hevc: hevc || !!src?.hevc,
+    stream: { base: server.value, id: item.id, query: { token: token.value ?? '', ext: item.ext, cs: cu?.start, ce: cu?.stop, q: low ? 'low' as const : undefined } },
+    catchup: !!cu, hevc: hevc || !!src?.hevc,
     lowLatency: isLiveNow(item) && !!sourceEvent.value && lowLatencySports.value,
     duration: cu ? cu.stop - cu.start : item.duration ?? undefined,
     // Catch-up in a browser: always the server's conversion (raw MPEG-TS, and it seeks by restarting)
     tx: cu ? ((hevc || src?.hevc) ? 'full' as const : 'audio' as const) : lastTx,
-    catchupUrl: cu ? `${server.value}/api/catchup/${item.id}.ts?${q}` : undefined,
     interlaced: item.kind === 'live' && (lastInterlaced || !!src?.interlaced),
     alang: audioLang.value, slang: subLang.value, lowData: low,
   };

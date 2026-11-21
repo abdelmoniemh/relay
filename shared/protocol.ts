@@ -155,3 +155,6 @@ export interface TitleDetail extends TitleCard {
   runtime: number | null; votes: number | null; top250: number | null; origLang: string | null;
   versions: VersionInfo[]; similar: TitleCard[]; collection: TitleCard[];
 }
+
+/** An audio or subtitle track of a movie, as players list them. */
+export interface MediaTrackInfo { n: number; lang: string | null; name: string }

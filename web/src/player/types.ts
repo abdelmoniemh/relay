@@ -1,3 +1,5 @@
+import type { StreamQuery } from '@shared/streams.ts';
+import type { MediaTrackInfo } from '@shared/protocol.ts';
 export type PlayerEvent = 'playing' | 'paused' | 'waiting' | 'ended' | 'error' | 'time';
 /**
  * Why playback failed, said where it happens (playback.ts puts it in words). 'server': the server explained it
@@ -5,14 +7,14 @@ export type PlayerEvent = 'playing' | 'paused' | 'waiting' | 'ended' | 'error' |
  */
 export type PlayError = 'stalled' | 'unreachable' | 'unpaired' | 'conversion' | 'network' | 'format' | 'server' | 'other';
 export interface LoadOpts {
+  /** The server's versions of this item (conversion, HLS, archive): built with streamUrl() from these. */
+  stream?: { base: string; id: string; query: StreamQuery };
+  /** A programme from a channel's archive. */
+  catchup?: boolean;
   startAt: number;
   live: boolean;
   uhd?: boolean;
   id?: string;
-  /** Server-side HEVC->H.264 stream, used when this browser can't decode the original. */
-  transcodeUrl?: string;
-  /** Server-side HLS for movies on iPhone/iPad Safari (POST it to start a session). */
-  hlsUrl?: string;
   hevc?: boolean;
   /** Live sports: jump to the live edge instead of playing the provider's backlog. */
   lowLatency?: boolean;
@@ -25,16 +27,14 @@ export interface LoadOpts {
   /** Preferred audio language (ISO code) and subtitle language ('off' = none), for movies/episodes. */
   alang?: string | null;
   slang?: string;
-  /** Catch-up programme (TV plays the archive itself): this URL + `&start=<seconds into the programme>`. */
-  catchupUrl?: string;
   /** Data saver: everything through the server's 720p ~3 Mbps conversion (away from home / mobile data). */
   lowData?: boolean;
 }
 
 /** Audio / subtitle tracks of what's playing (movies through the server's HLS). */
 export interface MediaTracks {
-  audio: { n: number; lang: string | null; name: string }[];
-  subs: { n: number; lang: string | null; name: string; forced?: boolean }[];
+  audio: MediaTrackInfo[];
+  subs: (MediaTrackInfo & { forced?: boolean })[];
   /** Index into `audio` / `subs` of the one playing / shown (-1 = subtitles off). */
   audioSel: number;
   subSel: number;
