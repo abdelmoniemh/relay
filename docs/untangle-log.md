@@ -250,3 +250,22 @@ Structure still open: stream contract not shared (fix 9), ids split by hand arou
 probes, facts vs hub `interlaced`, profile choice / maxHeight implicit in media.ts, isSessionFile re-spells names,
 Services.db lets routes query items, client-side duplicates (rating scale, LANG_NAME, kickoff/day formatters,
 breakpoint, isIOS/isTizen/HEVC probes), ui/programmes importing playback, Browse exports used by other screens.
+
+## Re-check round 1: applied
+
+Server: slot claim during grants, HLS start generation guard (409), lowercase guide ids (migrated), titles limit,
+settings validate-first, hub stop path serialized, app created first, test HLS folders isolated.
+Web: late/early grants, load failures shown, Media Session per programme + resume + states, persisted writes on
+change only, episode queue from the show page, seekBy, AVPlay paused, reminders refresh, one canHevc, env flags,
+titleId. Final smoke test (real provider): catalogue, search, guide, events, titles, movie HLS start/seek/stop,
+4K HEVC live, catch-up, desktop conversion, extras, reminders, app served: all OK; 73 tests pass.
+
+## Left open (worth doing, not done in this pass)
+
+- Stream request contract in shared/ (players building their own URLs; labelled `granted.urls`) — fix 9 remainder.
+- One movie header probe (prober's vod probe and TrackStore both read it); facts.browserNeeds also giving `interlaced`.
+- Prober keyed by numeric sid: ids still split by hand around it; prober/prefetcher still poll (no lease-ended signal).
+- media.ts profile choice duplicated, `maxHeight` implying the mobile profile; isSessionFile re-spelling names.
+- Services.db still lets routes query `items`; client: rating scales, LANG_NAME, day/kickoff formatters,
+  breakpoint copy, ui/programmes.tsx importing playback, Browse exports used by other screens, Remote ranking
+  versions for the phone instead of the TV, digit zap in Favourites/Recent.
