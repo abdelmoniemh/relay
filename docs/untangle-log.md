@@ -232,3 +232,21 @@ argument builder · 6 MediaFacts · 7 feature routes + UserData + ProviderDetail
 duplicates) · web: four bugs, storage module, stable UI deps, error reasons, Media Session module.
 Still open after this pass: players building their own stream URLs from a shared contract (fix 9, partly),
 web response types still hand-copied in web/src/api.ts, `t<tid>` ids now in shared/domain.ts.
+
+## Re-check round 1 (subagents), to fix
+
+Server bugs: slot release window lets a worker grab the connection before the lease is set (slot.ts clear vs hub
+lease); overlapping HLS starts kill each other (doStartHls has no generation guard); guide rows stored in feed case
+but looked up exactly (catalog nowNext/guide); /api/titles negative limit; PUT /api/settings half-applies before
+a TMDB 400; hub leaseMoved(null) unawaited outside exclusive(); transcode log reads opts.mode under data saver;
+main.ts closures before `app` / Letterboxd callback order.
+Web bugs: late grant after stop still plays (onGranted pending check) and earlyGrant not cleared by reset;
+player.load().catch hides failures (spinner forever); Media Session keyed on id (catch-up keeps the channel id),
+lock-screen play after visibility suspend does nothing, playbackState maps loading/error to playing; persisted()
+writes at creation (Tizen default server stored for good); Remote sends titles ranked for the phone to the TV;
+Detail.tsx episodes lack the queue; digit zap in fav/recent lists; seekBy double offset; AvPlay buffering-complete
+reports playing while paused; reminders list not refreshed on the WS reminder.
+Structure still open: stream contract not shared (fix 9), ids split by hand around Prober, two movie header
+probes, facts vs hub `interlaced`, profile choice / maxHeight implicit in media.ts, isSessionFile re-spells names,
+Services.db lets routes query items, client-side duplicates (rating scale, LANG_NAME, kickoff/day formatters,
+breakpoint, isIOS/isTizen/HEVC probes), ui/programmes importing playback, Browse exports used by other screens.
