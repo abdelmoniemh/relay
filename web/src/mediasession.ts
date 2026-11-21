@@ -3,7 +3,7 @@
 import { effect } from '@preact/signals';
 import { displayName } from '@shared/domain.ts';
 import { isTizen } from './env.ts';
-import { current, status, position, duration, seekBy, seekTo, nextSource, zap, sourceEvent, playNextEpisode, togglePause, stop, isLiveNow } from './playback.ts';
+import { current, status, position, duration, seekBy, seekTo, nextSource, zap, sourceEvent, playNextEpisode, togglePause, stop, isLiveNow, resume } from './playback.ts';
 
 const ms = typeof navigator !== 'undefined' && 'mediaSession' in navigator && !isTizen ? navigator.mediaSession : null;
 if (ms) {
@@ -12,8 +12,9 @@ if (ms) {
   effect(() => {
     const it = current.value;
     if (!it) { if (shownId) { ms.metadata = null; ms.playbackState = 'none'; shownId = null; } return; }
-    if (it.id === shownId) return;
-    shownId = it.id;
+    const key = `${it.id}@${it.catchup?.start ?? ''}`; // start over / catch-up keep the channel's id
+    if (key === shownId) return;
+    shownId = key;
     const live = isLiveNow(it);
     ms.metadata = new MediaMetadata({
       title: it.catchup?.title ? `${it.catchup.title}` : displayName(it.name),
@@ -30,7 +31,7 @@ if (ms) {
   });
   effect(() => {
     const s = status.value;
-    if (current.value) ms.playbackState = s === 'paused' ? 'paused' : 'playing';
+    if (current.value) ms.playbackState = s === 'paused' || s === 'error' ? 'paused' : s === 'idle' ? 'none' : 'playing';
   });
   // Keep the lock screen's progress bar right (movies/episodes only).
   effect(() => {
@@ -38,7 +39,7 @@ if (ms) {
     if (!current.value || isLiveNow(current.value) || !d || !('setPositionState' in ms)) return;
     try { ms.setPositionState({ duration: d, position: Math.min(Math.max(0, p), d), playbackRate: 1 }); } catch {}
   });
-  on('play', () => { if (status.value === 'paused') togglePause(); });
+  on('play', () => resume());
   on('pause', () => { if (status.value === 'playing' || status.value === 'buffering') togglePause(); });
   on('stop', () => stop());
 }

@@ -10,6 +10,7 @@ export const storage = {
 export function persisted<T>(key: string, read: (raw: string | null) => T, write: (v: T) => string | null = (v) => (v == null ? null : String(v))): Signal<T> {
   const k = `relay.${key}`;
   const s = signal<T>(read(storage.get(k)));
-  effect(() => storage.set(k, write(s.value)));
+  let first = true; // what was read (or the default) isn't saved: only changes are
+  effect(() => { const v = write(s.value); if (first) { first = false; return; } storage.set(k, v); });
   return s;
 }

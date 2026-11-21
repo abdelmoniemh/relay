@@ -33,7 +33,7 @@ export class AvPlayer implements Player {
     av.open(url);
     av.setListener({
       onbufferingstart: () => this.cb('waiting'),
-      onbufferingcomplete: () => this.cb('playing'),
+      onbufferingcomplete: () => this.cb(this.isPaused ? 'paused' : 'playing'),
       oncurrentplaytime: () => this.cb('time'),
       onstreamcompleted: () => this.cb('ended'),
       onerror: (e: string) => gen === this.gen && this.cb('error', /NETWORK|CONNECTION/i.test(String(e)) ? 'network' : /UNSUPPORTED|NOT_SUPPORTED/i.test(String(e)) ? 'format' : 'other', String(e)),

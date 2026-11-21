@@ -80,7 +80,11 @@ export function SeriesDetail({ item }: { item: Item }) {
     if (best) { setSi((best as any).s); setEi((best as any).e); }
   }, [prog.data, seasons.length]);
 
-  const playEp = (e: Item & { duration?: number }) => { const pr = prog.data?.[e.id]; play({ ...e, duration: e.duration ?? (pr?.[1] || null) }, pr && !isFinished(pr[0], pr[1]) ? { startAt: pr[0] } : {}); };
+  const playEp = (e: Item & { duration?: number }) => {
+    const pr = prog.data?.[e.id];
+    // the whole series in order, so the next episode can follow
+    play({ ...e, duration: e.duration ?? (pr?.[1] || null) }, { episodes: seasons.flatMap((x) => x.episodes), ...(pr && !isFinished(pr[0], pr[1]) ? { startAt: pr[0] } : {}) });
+  };
 
   useBackKey((k) => {
     if (navFocused.value) return false;

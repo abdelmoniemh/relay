@@ -10,6 +10,7 @@ import { isTizen } from './env.ts';
 import { t } from './i18n.ts';
 import { displayName } from '@shared/domain.ts';
 import { persisted } from './storage.ts';
+import { loadReminders } from './notify.ts';
 
 export type Mode = 'off' | 'mini' | 'full';
 export type Status = 'idle' | 'requesting' | 'loading' | 'playing' | 'paused' | 'buffering' | 'error';
@@ -140,7 +141,7 @@ export function attachPlayer(p: Player) {
       if (!retried && current.value) {
         retried = true; status.value = 'loading';
         const item = current.value;
-        setTimeout(() => { if (current.value === item) p.load(lastUrls, loadOpts(item, p.position() || lastStart)).catch(() => {}); }, 1200);
+        setTimeout(() => { if (current.value === item) p.load(lastUrls, loadOpts(item, p.position() || lastStart)).catch(loadFailed); }, 1200);
         return;
       }
       if (isLiveNow(current.value) && nextSource(1, true)) return;
@@ -264,8 +265,21 @@ export function stop() {
   reset();
 }
 
+/** The player couldn't even start (an engine chunk failed to load, the TV player threw): say so, don't spin. */
+function loadFailed(e: unknown) {
+  if (!current.value) return;
+  status.value = 'error'; errorMsg.value = friendlyError('other');
+  api.clientLog(`load failed: ${(e as Error)?.message ?? e} (${current.value.id})`);
+}
+
+/** Lock screen / headphones play: also brings back a stream released while the app was in the background. */
+export function resume() {
+  if (suspended) { const s = suspended; suspended = null; play(s.item, { startAt: s.position, mode: mode.value === 'off' ? 'full' : mode.value }); return; }
+  if (player?.paused()) togglePause();
+}
+
 function reset() {
-  current.value = null; mode.value = 'off'; status.value = 'idle'; pending = null; errorMsg.value = null;
+  current.value = null; mode.value = 'off'; status.value = 'idle'; pending = null; errorMsg.value = null; earlyGrant = null; suspended = null;
   sources.value = []; sourceEvent.value = null; episodeQueue.value = []; cancelNextUp();
 }
 
@@ -284,7 +298,7 @@ export const selectAudio = (i: number) => player?.setAudio?.(i);
 export const selectSub = (i: number) => player?.setSub?.(i);
 
 export const togglePause = () => { if (!player || !current.value) return; player.paused() ? player.play() : player.pause(); };
-export const seekBy = (d: number) => { if (player && current.value && !isLiveNow(current.value)) { player.seek(player.position() + d); position.value = player.position() + d; } };
+export const seekBy = (d: number) => { if (player && current.value && !isLiveNow(current.value)) { const to = player.position() + d; player.seek(to); position.value = to; } };
 export const seekTo = (t: number) => { if (player && current.value && !isLiveNow(current.value)) { player.seek(t); position.value = t; } };
 
 /** Watch a past programme of a catch-up channel from its start (or `at` seconds in). */
@@ -341,7 +355,9 @@ export function preconnect(url: string) {
 /** The server says go: this device has the stream. */
 function onGranted(m: Extract<ServerMsg, { t: 'granted' }>, player: Player) {
   const item = m.item;
-  if (pending && pending.item.id !== item.id) return; // a newer request is in flight
+  // stopped meanwhile (play, then stop before the server answered): hand the stream straight back
+  if (!pending) { send({ t: 'stopped', position: 0, duration: 0 }); return; }
+  if (pending.item.id !== item.id) return; // a newer request is in flight
   current.value = item;
   if (pending) mode.value = pending.mode;
   pending = null;
@@ -355,7 +371,7 @@ function onGranted(m: Extract<ServerMsg, { t: 'granted' }>, player: Player) {
   }
   position.value = m.startAt;
   if (m.urls[0]) preconnect(m.urls[0]);
-  player.load(m.urls, loadOpts(item, m.startAt, m.tx === 'full')).catch(() => {});
+  player.load(m.urls, loadOpts(item, m.startAt, m.tx === 'full')).catch(loadFailed);
 }
 let earlyGrant: Extract<ServerMsg, { t: 'granted' }> | null = null;
 
@@ -395,6 +411,7 @@ onServer((m: ServerMsg) => {
     case 'reminder': {
       const r = m.reminder;
       showToast(`${t('Starting now')}: ${r.title} · ${displayName(r.item.name)}`, 8000);
+      loadReminders(); // it fired: lists stop showing "Reminder set"
       return;
     }
   }
