@@ -12,7 +12,7 @@ import { Icon } from '../ui/Icon.tsx';
 import { fmtTime, img, isTizen } from '../env.ts';
 import { t as tr } from '../i18n.ts';
 import { Card, openTitle } from './Browse.tsx';
-import { versionItem } from '../catalogue.ts';
+import { versionItem } from '@shared/domain.ts';
 
 type Ep = Item & { plot?: string; duration?: number };
 const LANG_NAME: Record<string, string> = { eng: 'English', en: 'English', ara: 'Arabic', ar: 'Arabic', fre: 'French', fra: 'French', ger: 'German', deu: 'German', spa: 'Spanish', ita: 'Italian', tur: 'Turkish', hin: 'Hindi', por: 'Portuguese', dut: 'Dutch', nld: 'Dutch', rus: 'Russian', pol: 'Polish', jpn: 'Japanese', kor: 'Korean', chi: 'Chinese', zho: 'Chinese', heb: 'Hebrew', per: 'Persian', fas: 'Persian' };

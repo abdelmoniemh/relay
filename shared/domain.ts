@@ -1,5 +1,5 @@
 // Domain rules both the server and the clients follow. One definition each, so they can't drift apart.
-import type { Kind } from './protocol.ts';
+import type { Item, Kind, TitleDetail } from './protocol.ts';
 
 // ---- ids ----
 // Catalog items: l123 (live), m123 (movie), s123 (series), e123 (episode).
@@ -43,3 +43,10 @@ export function lang2(code: string | null | undefined): string | null {
 export const sameLang = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && lang2(a) === lang2(b);
 /** Languages offered as playback preferences (others still play). */
 export const PREFERRED_LANGS = ['en', 'ar', 'fr', 'es', 'de', 'it', 'pt', 'tr', 'hi', 'ur', 'ru', 'ja', 'ko', 'zh'];
+
+// ---- titles ----
+/** A film's version to play, carrying the title's runtime (the provider's file rarely says). */
+export function versionItem(t: Pick<TitleDetail, 'kind' | 'runtime' | 'versions'>, i = 0, knownDuration?: number | null): Item | null {
+  const v = t.versions[i];
+  return t.kind === 'movie' && v ? { ...v.item, duration: (t.runtime ?? 0) * 60 || knownDuration || null } : null;
+}

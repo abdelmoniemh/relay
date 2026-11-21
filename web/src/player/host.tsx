@@ -18,7 +18,7 @@ import { api, myDeviceId, toggleFavorite, favorites } from '../api.ts';
 import { devices, send } from '../ws.ts';
 import { route, go } from '../router.ts';
 import { Icon } from '../ui/Icon.tsx';
-import { previewBox } from './placement.ts';
+import { previewBox, numbered } from './placement.ts';
 import { t } from '../i18n.ts';
 
 
@@ -232,9 +232,10 @@ function Overlay() {
       digitT.current = setTimeout(async () => {
         setDigits('');
         const n = Number(d);
-        if (!n || !it.cat) return;
-        const r = await api.items('live', it.cat, 'default', n - 1, 1);
-        if (r.items[0]) play(r.items[0], { mode: 'full' });
+        if (!n) return;
+        // the list whose numbers were on screen (Favourites, Recent, a category), else this channel's category
+        const pick = numbered.value?.at(n - 1) ?? (it.cat ? (await api.items('live', it.cat, 'default', n - 1, 1)).items[0] : undefined);
+        if (pick) play(pick, { mode: 'full' });
       }, 1300);
       return true;
     }

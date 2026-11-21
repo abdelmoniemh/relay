@@ -8,7 +8,7 @@ import { Billboard, PosterTile, Row, Segmented, SkeletonRow, IconBtn, type Actio
 import { Icon } from '../ui/Icon.tsx';
 import { isMobile, isTizen } from '../env.ts';
 import { t } from '../i18n.ts';
-import { versionItem } from '../catalogue.ts';
+import { versionItem } from '@shared/domain.ts';
 
 const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 export const openTitle = (tid: number) => push({ name: 'title', tid });

@@ -1,7 +1,7 @@
 // What happens when someone picks something in the catalogue: one place for every screen.
 import type { Item } from '@shared/protocol.ts';
 import { parseTitleId } from '@shared/domain.ts';
-import { api, type TitleDetail } from './api.ts';
+import { api } from './api.ts';
 import { push } from './router.ts';
 import { play } from './playback.ts';
 
@@ -14,8 +14,3 @@ export function openItem(it: Item) {
     .catch(() => push(it.kind === 'series' || it.kind === 'episode' ? { name: 'show', item: it } : { name: 'movie', item: it }));
 }
 
-/** A film's version to play, carrying the title's runtime (the provider's file rarely says). */
-export function versionItem(t: Pick<TitleDetail, 'kind' | 'runtime' | 'versions'>, i = 0, knownDuration?: number | null): Item | null {
-  const v = t.versions[i];
-  return t.kind === 'movie' && v ? { ...v.item, duration: (t.runtime ?? 0) * 60 || knownDuration || null } : null;
-}

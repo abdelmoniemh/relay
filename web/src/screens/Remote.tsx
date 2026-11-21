@@ -13,8 +13,6 @@ import { fmtTime, img } from '../env.ts';
 import { Btn, IconBtn, LivePill, Segmented } from '../ui/kit.tsx';
 import { Icon, type IconName, deviceIcon } from '../ui/Icon.tsx';
 import { t } from '../i18n.ts';
-import { versionItem } from '../catalogue.ts';
-import { parseTitleId } from '@shared/domain.ts';
 
 let lastTarget: string | null = null;
 
@@ -115,15 +113,8 @@ export function Remote() {
           })}
         </div>
       ) : (
-        <Search onPick={async (it) => {
-          const tid = parseTitleId(it.id);
-          if (tid != null) {
-            // A movie title: send its best version. (Series: pick the episode on the TV.)
-            const d = await api.title(tid).catch(() => null);
-            const v = d && versionItem(d);
-            if (v) sendItem(v);
-            return;
-          }
+        <Search onPick={(it) => {
+          // a film title goes as itself: the TV picks the version that suits it (series: pick the episode on the TV)
           if (it.kind === 'series') return;
           sendItem(it);
         }} autoFocus={false} />

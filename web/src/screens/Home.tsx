@@ -12,7 +12,8 @@ import { Icon, type IconName } from '../ui/Icon.tsx';
 import { Card } from './Browse.tsx';
 import { fmtTime } from '../env.ts';
 import { t } from '../i18n.ts';
-import { openItem, versionItem } from '../catalogue.ts';
+import { openItem } from '../catalogue.ts';
+import { versionItem } from '@shared/domain.ts';
 
 interface Tile { key: string; render: (f: boolean) => any; act: () => void }
 interface HRow { title: string; tiles: Tile[]; wide?: boolean; more?: () => void }

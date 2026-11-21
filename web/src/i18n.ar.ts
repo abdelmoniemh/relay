@@ -141,4 +141,6 @@ export const AR: Record<string, string> = {
   "On iPhone, add Relay to the Home Screen first (Share → Add to Home Screen) and open it from there.": "على iPhone، أضف Relay إلى الشاشة الرئيسية أولًا (مشاركة ← إضافة إلى الشاشة الرئيسية) وافتحه من هناك.",
   "This browser does not support notifications.": "هذا المتصفح لا يدعم الإشعارات.",
   "Notifications are blocked for Relay in this browser's settings.": "الإشعارات محظورة لـ Relay في إعدادات هذا المتصفح.",
+  "Sent from {name}": "أُرسل من {name}",
+  "Couldn't open that title": "تعذّر فتح هذا العنوان",
 };

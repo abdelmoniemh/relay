@@ -8,7 +8,7 @@ import { dispatchKey, type Key } from './keys.ts';
 import type { Player, PlayError } from './player/types.ts';
 import { isTizen } from './env.ts';
 import { t } from './i18n.ts';
-import { displayName } from '@shared/domain.ts';
+import { displayName, parseTitleId, versionItem } from '@shared/domain.ts';
 import { persisted } from './storage.ts';
 import { loadReminders } from './notify.ts';
 
@@ -283,6 +283,14 @@ function reset() {
   sources.value = []; sourceEvent.value = null; episodeQueue.value = []; cancelNextUp();
 }
 
+/** A film by its title: the version that suits this device, from where it was left. */
+export async function playTitle(tid: number) {
+  try {
+    const v = versionItem(await api.title(tid));
+    if (v) play(v, { mode: 'full' });
+  } catch { showToast(t('Couldn\'t open that title')); }
+}
+
 /** Play a sports event: best working source, with every other source one key press away. */
 export async function playEvent(eventId: string, opts: { mode?: Mode; sourceId?: string } = {}) {
   const ev = await api.event(eventId);
@@ -391,9 +399,11 @@ onServer((m: ServerMsg) => {
       return;
     }
     case 'play':
-      if (m.eventId) playEvent(m.eventId, { sourceId: m.item.id }).catch(() => play(m.item, { mode: 'full' }));
+      // Sent from another device: choose what suits *this* one (versions and sources are ranked per device).
+      if (m.eventId) playEvent(m.eventId).catch(() => play(m.item, { mode: 'full' }));
+      else if (parseTitleId(m.item.id) != null) playTitle(parseTitleId(m.item.id)!);
       else play(m.item, { startAt: m.startAt, mode: 'full' });
-      showToast(`Sent from ${deviceName(m.from)}`);
+      showToast(t('Sent from {name}', { name: deviceName(m.from) }));
       return;
     case 'remote': {
       const map: Partial<Record<string, Key>> = { playpause: 'playpause', chup: 'chup', chdown: 'chdown', home: 'back' };
